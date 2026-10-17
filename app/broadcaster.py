@@ -135,6 +135,9 @@ MOST_BEHIND_MS = 2 * 3600 * 1000
 BANNER_WAIT_S = (1.0, 2.0)
 # Recent output kept so a new viewer starts instantly.
 RECENT_BYTES = 3 * 1024 * 1024
+# How many changes of what's sent are kept (see Broadcaster.fed): far more
+# than a stream for apps lists.
+FED_KEPT = 500
 # Stream waiting for a viewer that has stopped reading, at most (about two
 # minutes at the default quality) before it's disconnected.
 VIEWER_MAX_BYTES = 64 * 1024 * 1024
@@ -290,6 +293,13 @@ class Broadcaster:
     channel_id: int
     viewers: set[Viewer] = field(default_factory=set)
     now_playing: NowPlaying | None = None
+    # What's being sent to viewers, as it's sent (1.39.0): the program (None:
+    # a commercial, a card, anything else), and from when (time.monotonic),
+    # each change. A station's stream for apps tells by this which of its
+    # pieces hold which program (see hls.py), for programs someone may not
+    # watch (viewing.Viewing.may_watch).
+    fed: deque = field(default_factory=lambda: deque(maxlen=FED_KEPT))
+    _content: Item | None = None
     started_at_ms: int = 0
     _task: asyncio.Task | None = None
     _stop_task: asyncio.Task | None = None
@@ -439,7 +449,9 @@ class Broadcaster:
     def _emit(self, chunk: bytes) -> None:
         if not chunk:
             return
-        self._last_output = time.monotonic()
+        self._last_output = now = time.monotonic()
+        if not self.fed or self.fed[-1][1] is not self._content:
+            self.fed.append((now, self._content))
         self._recent.append(chunk)
         self._recent_bytes += len(chunk)
         while self._recent_bytes > RECENT_BYTES and len(self._recent) > 1:
@@ -723,20 +735,24 @@ class Broadcaster:
             self._look_ahead(channel, station, slot)
             mark = None if bare else corner_mark(self.ctx, channel)
             up_next = None if bare else self._banner_for(channel, station, slot, mark)
-            result = await self._play_item(
-                item,
-                offset_s,
-                remaining_s,
-                ts,
-                burst,
-                stitcher,
-                channel.name,
-                channel.aspect_mode,
-                mark,
-                mark_from_s=offset_s if self._tuned_in else 0.0,
-                up_next=up_next,
-                subtitles_mode="off" if bare or not self.ctx.subtitling else channel.subtitles,
-            )
+            self._content = item  # (what's sent from now is this program: see fed)
+            try:
+                result = await self._play_item(
+                    item,
+                    offset_s,
+                    remaining_s,
+                    ts,
+                    burst,
+                    stitcher,
+                    channel.name,
+                    channel.aspect_mode,
+                    mark,
+                    mark_from_s=offset_s if self._tuned_in else 0.0,
+                    up_next=up_next,
+                    subtitles_mode="off" if bare or not self.ctx.subtitling else channel.subtitles,
+                )
+            finally:
+                self._content = None
             if self._joining:
                 # (Tuning in, but the program didn't start: said on its own.)
                 log.info("%s: %s", self._named(), self._joining)
@@ -899,12 +915,8 @@ class Broadcaster:
             clip = clip_at(kind, path)
         if clip is None:
             return False  # (gone from the folders since its lineup was made)
-        most = cliprules.cap(viewing.reach(channel.id))
-        # (Allowed for someone with limits by hand: no higher than what's on
-        # in its next 48 hours. The cold audit of 1.39.0.)
-        if viewing.hand_allowed(channel.id):
-            soon = cliprules.cap(viewing.window_reach(channel.id))
-            most = None if soon is None or most is None else min(most, soon)
+        # (No higher than the strictest level it's allowed for by hand: 1.39.0.)
+        most = viewing.clip_most(channel.id, cliprules.cap(viewing.reach(channel.id)))
         return ctx.clip_ratings.rated(kind, clip, most)
 
     async def _play_clip(
@@ -1187,7 +1199,12 @@ class Broadcaster:
         else:
             movie = slot.item
             # (If the movie won't play, another takes its place: it isn't named.)
-            title, year = ("", "") if self._skipped(movie.rating_key) else intro.describe(movie)
+            title, year = (
+                ("", "")
+                if self._skipped(movie.rating_key)
+                or not self.ctx.viewing.named_for_everyone(self.channel_id, movie)
+                else intro.describe(movie)
+            )
             logo = self.ctx.logos.path(channel.logo) if channel.logo else None
             card = intro.Card(
                 "Feature Presentation",
@@ -1295,6 +1312,10 @@ class Broadcaster:
         if following is None:
             return ["", "Stay tuned", ""]
         skipped = self._skipped(following.item.rating_key)
+        # (One shared picture: never naming what someone it's allowed for by
+        # hand may not watch. 1.39.0.)
+        if not self.ctx.viewing.named_for_everyone(self.channel_id, following.item):
+            return ["", "Stay tuned", ""]
         special = specials.starting(station, following)
         if special is not None:
             # (Not naming a program that won't play: another takes its place.)
@@ -1352,19 +1373,10 @@ class Broadcaster:
         own = station.items_for(slot)
         kind = (station.special(slot) or {}).get("kind")
         if kind == specials.BLOCK:
-            pools = [station.era_of(slot).items, own]
-        elif kind == specials.FEATURE:
-            pools = [specials.feature_movies(self.ctx.db, channel, own, set()), own]
-        else:
-            pools = [own]
-        # (Allowed for someone with limits by hand: only what's on in its next
-        # 48 hours, judged for everyone who may watch it now; nothing, if
-        # that can't be told. The cold audit of 1.39.0.)
-        viewing = self.ctx.viewing
-        if viewing.hand_allowed(channel.id):
-            keys = viewing.window_keys(channel.id) or set()
-            pools = [[i for i in pool if i.rating_key in keys] for pool in pools]
-        return pools
+            return [station.era_of(slot).items, own]
+        if kind == specials.FEATURE:
+            return [specials.feature_movies(self.ctx.db, channel, own, set()), own]
+        return [own]
 
     def _choose(
         self,

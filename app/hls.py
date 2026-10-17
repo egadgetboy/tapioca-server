@@ -66,6 +66,18 @@ READY_WAIT_S = 25.0
 IDLE_S = 30.0
 # How often that's checked.
 IDLE_CHECK_S = 2.0
+# Which program each piece holds (1.39.0, so someone with limits never gets a
+# piece of one they may not watch: see Broadcaster.fed). A piece is taken to
+# hold whatever was sent from MARGIN_S before the one before it appeared
+# until a moment after it did, to be safe: a few seconds either side of a
+# program they may not watch are kept from them too. The first pieces hold
+# what the station had already sent (its recent bytes), from up to RECENT_S
+# before the stream began. Looked for every LABEL_EVERY_S.
+MARGIN_S = PIECE_S + 1.0
+RECENT_S = 30.0
+LABEL_EVERY_S = 0.25
+# (What can't be told: as a program no one with limits may watch.)
+UNKNOWN = object()
 # Night mode's sound: it only ever turns sound down, so turning night mode
 # on never makes anything louder (through 1.31, everything was then turned
 # up 8 dB, so most programs got louder: the owner's report). Below -29 dB
@@ -163,6 +175,10 @@ class HlsStream:
         self._stopping = False
         self._left = False
         self._proc: asyncio.subprocess.Process | None = None
+        # Each piece's programs (see MARGIN_S), and when the newest appeared.
+        self.holds: dict[str, tuple] = {}
+        self._newest_at: float | None = None
+        self._born = time.monotonic()
         self._viewer: Viewer = b.subscribe(
             f"night-mode app viewers on {number}" if night else f"app viewers on {number}",
             counted=False,
@@ -282,6 +298,10 @@ class HlsStream:
             await asyncio.sleep(0.25)
         return None
 
+    def listed(self, playlist: str) -> list[str]:
+        """The pieces a playlist lists."""
+        return [line.strip() for line in playlist.splitlines() if PIECE.fullmatch(line.strip())]
+
     async def piece(self, name: str) -> bytes | None:
         """One piece of the stream, if it's still there."""
         if not PIECE.fullmatch(name) or self.ended:
@@ -310,9 +330,54 @@ class HlsStream:
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.shield(self._task)
 
+    def contents(self, since: float, until: float) -> tuple:
+        """What the station sent from `since` to `until` (time.monotonic):
+        programs, None for what isn't one, UNKNOWN where it can't be told."""
+        fed = list(self.b.fed)
+        if not fed or fed[0][0] > since:
+            return (UNKNOWN, *(c for t, c in fed if t <= until))
+        current = None
+        later = []
+        for at, content in fed:
+            if at <= since:
+                current = content
+            elif at <= until:
+                later.append(content)
+        return (current, *later)
+
+    def label_new_pieces(self) -> None:
+        """Notes the programs each piece that's appeared since last time holds
+        (see MARGIN_S), and forgets the pieces that are gone."""
+        try:
+            names = {p.name for p in self.folder.iterdir() if PIECE.fullmatch(p.name)}
+        except OSError:
+            return
+        now = time.monotonic()
+        new = sorted((n for n in names if n not in self.holds), key=lambda n: int(n[1:-3]))
+        for name in new:
+            since = self._newest_at if self._newest_at is not None else self._born - RECENT_S
+            self.holds[name] = self.contents(since - MARGIN_S, now + 0.5)
+            self._newest_at = now
+        for gone in [n for n in self.holds if n not in names]:
+            del self.holds[gone]
+
+    def pieces_hold(self, names: list[str]) -> tuple:
+        """What some pieces hold, together (UNKNOWN for one not yet looked at)."""
+        self.label_new_pieces()
+        out: list = []
+        for name in names:
+            out.extend(self.holds.get(name, (UNKNOWN,)))
+        return tuple(out)
+
+    async def _label_pieces(self) -> None:
+        while True:
+            await asyncio.sleep(LABEL_EVERY_S)
+            self.label_new_pieces()
+
     async def _run(self) -> None:
         said: deque[str] = deque(maxlen=5)
         idle = asyncio.create_task(self._stop_when_idle())
+        labeling = asyncio.create_task(self._label_pieces())
         listening: asyncio.Task | None = None
         try:
             self._proc = proc = await asyncio.create_subprocess_exec(
@@ -347,6 +412,7 @@ class HlsStream:
         finally:
             self.ended = True
             idle.cancel()
+            labeling.cancel()
             self._settle_idle(f"the stream ended: {self.ended_because or 'it stopped'}")
             self._leave()
             await self._end_ffmpeg()

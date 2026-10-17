@@ -102,6 +102,12 @@ class Program(_Shape):
         description="What special it's part of: 'Feature Presentation', a block's name, or a "
         "marathon's"
     )
+    restricted: bool = Field(
+        False,
+        description="For someone with limits, a program they may not watch (from 1.39.0): its "
+        "title is 'Restricted program', with nothing else but its times, and its station's "
+        "stream refuses them while it's on",
+    )
 
 
 class Station(_Shape):

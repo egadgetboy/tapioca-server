@@ -152,6 +152,14 @@ NOTICES = Path(__file__).parent.parent / "THIRD_PARTY_NOTICES.md"
 PRIVACY = Path(__file__).parent.parent / "PRIVACY.md"
 # tapiOca's own guide covers the same two days as Plex's.
 STATION_GUIDE_MAX_HOURS = GUIDE_FUTURE_MS / 3_600_000
+# What someone with limits is told while a program they may not watch is on
+# (1.39.0, the owner's words, October 17), and how far ahead the schedule is
+# looked at for when their station is back.
+RESTRICTED_PROGRAM = (
+    "This program is restricted. Your station will resume automatically when permitted "
+    "programming returns."
+)
+RESUME_LOOK_MS = 24 * 3_600_000
 SOURCE_TYPES = ("show", "movie", "section", "filter", "collection", "info")
 NAME_MAX = 60  # the longest a station's name can be
 LOG_SEARCH_MOST = 100  # (the Logs tab's search: its longest, in characters)
@@ -1156,12 +1164,42 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     # tapiOca's apps (and AirPlay and Chromecast): stations as HLS ---------
 
+    def restricted(channel: Channel, viewer: viewing.Viewer) -> JSONResponse:
+        """The answer to someone with limits while a program they may not
+        watch is on (1.39.0, the owner, October 17): their app says so and
+        tries again on its own, from when the schedule says programming
+        they may watch is back (`resumesAtMs`, a guide: what's really
+        played decides)."""
+        now = now_ms()
+        back = None
+        with contextlib.suppress(Exception):
+            for slot in ctx.guide(channel).between(now, now + RESUME_LOOK_MS):
+                if slot.end_ms > now and ctx.viewing.may_watch(viewer, slot.item):
+                    back = max(now, slot.start_ms)
+                    break
+        return JSONResponse(
+            {"detail": RESTRICTED_PROGRAM, "code": "restricted", "resumesAtMs": back},
+            status_code=403,
+            headers=hls.HEADERS,
+        )
+
+    def holds_restricted(stream: hls.HlsStream, names: list[str], viewer: viewing.Viewer) -> bool:
+        """Whether any of these pieces holds a program someone may not watch
+        (or what can't be told, to be safe)."""
+        if viewer.everything:
+            return False
+        return any(
+            content is hls.UNKNOWN or not ctx.viewing.may_watch(viewer, content)
+            for content in stream.pieces_hold(names)
+        )
+
     async def hls_playlist_for(
         number: int,
         client: str,
         away_: bool = False,
         night: bool = False,
         watcher: playing.Watcher | None = None,
+        user: User | None = None,
     ) -> Response:
         """A station's HLS playlist, for an app (`client`: which, for its
         stream's list of who's watching; `away_`: away from home; `night`:
@@ -1217,15 +1255,28 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 status_code=503,
                 headers=hls.HEADERS,
             )
+        # (Someone with limits, an app's own address: never a playlist with a
+        # piece of a program they may not watch in it. 1.39.0.)
+        if user is not None:
+            viewer = ctx.viewing.viewer(user)
+            if holds_restricted(stream, stream.listed(playlist), viewer):
+                return restricted(channel, viewer)
         return Response(playlist, media_type="application/vnd.apple.mpegurl", headers=hls.HEADERS)
 
-    async def hls_piece_of(number: int, piece: str, client: str, night: bool = False) -> Response:
+    async def hls_piece_of(
+        number: int, piece: str, client: str, night: bool = False, user: User | None = None
+    ) -> Response:
         """One piece of a station's HLS (`client`: which app asked, as for
-        its playlist)."""
+        its playlist; `user`: whose app's own address it is, for their
+        limits: 1.39.0)."""
         channel = ctx.db.get_channel_by_number(number)
         stream = ctx.hls_streams.get(channel.id, night) if channel else None
         if stream is None:
             raise HTTPException(404, "That station isn't being sent to apps")
+        if user is not None and channel is not None:
+            viewer = ctx.viewing.viewer(user)
+            if holds_restricted(stream, [piece], viewer):
+                return restricted(channel, viewer)
         data = await stream.piece(piece)
         if data is None:
             raise HTTPException(404, "That piece of the stream is gone")
@@ -1338,6 +1389,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             away.client(key),
             away_=not ctx.away.is_home(key),
             watcher=away_watcher(key, user, request),
+            user=user,
         )
 
     @app.get("/hls/k/{key}/{number}/logo.png")
@@ -1349,8 +1401,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/hls/k/{key}/{number}/{piece}")
     async def hls_piece_away(key: str, number: int, piece: str, request: Request):
-        away_user(key, number, request)
-        return await hls_piece_of(number, piece, away.client(key))
+        user = away_user(key, number, request)
+        return await hls_piece_of(number, piece, away.client(key), user=user)
 
     @app.post("/hls/k/{key}/{number}/leave", status_code=204)
     async def hls_leave_away(key: str, number: int, request: Request):
@@ -1366,12 +1418,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             away_=not ctx.away.is_home(key),
             night=True,
             watcher=away_watcher(key, user, request),
+            user=user,
         )
 
     @app.get("/hls/k/{key}/{number}/night/{piece}")
     async def hls_night_piece_away(key: str, number: int, piece: str, request: Request):
-        away_user(key, number, request)
-        return await hls_piece_of(number, piece, away.client(key), night=True)
+        user = away_user(key, number, request)
+        return await hls_piece_of(number, piece, away.client(key), night=True, user=user)
 
     @app.post("/hls/k/{key}/{number}/night/leave", status_code=204)
     async def hls_night_leave_away(key: str, number: int, request: Request):
@@ -1926,6 +1979,10 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         streams = []
         now = now_ms()
         viewer = ctx.viewing.viewer(user)
+
+        def shown(item: Item) -> dict:  # (1.39.0)
+            return _shown_json(ctx.viewing, None if viewer.everything else viewer, item)
+
         for cid, b in ctx.broadcasters.items():
             if not b.running or not ctx.viewing.sees_station(viewer, cid):
                 continue
@@ -1946,11 +2003,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     "name": channel.name if channel else None,
                     "viewers": max(0, viewers),
                     "since": b.started_at_ms,
-                    "playing": _item_json(np.playing) if np and np.playing else None,
-                    "scheduled": _item_json(np.scheduled) if np else None,
+                    "playing": shown(np.playing) if np and np.playing else None,
+                    "scheduled": shown(np.scheduled) if np else None,
                     "replaced": bool(np and np.replaced),
                     # "commercials", "trailers" or "station id" after a program
-                    "between": {"kind": on_between, "after": _item_json(slot.item)}
+                    "between": {"kind": on_between, "after": shown(slot.item)}
                     if slot and on_between
                     else None,
                     "offAir": b.off_air,
@@ -1986,7 +2043,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         only = next(iter(counts)) if len(counts) == 1 else "Mixed"
         return {"size": only, "counts": dict(counts.most_common())}
 
-    def channel_json(channel: Channel, **extra) -> dict:
+    def channel_json(channel: Channel, viewer: viewing.Viewer | None = None, **extra) -> dict:
         eras = ctx.db.eras(channel.id)
         latest = ctx.db.latest_era(channel.id)
         now = now_ms()
@@ -2046,7 +2103,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 latest and channel.order_mode == "shuffle" and _mostly_one_show(latest.show_counts)
             ),
             "now": {
-                **_item_json(slot.item),
+                **_shown_json(ctx.viewing, viewer, slot.item),
                 "start": slot.start_ms,
                 "end": slot.end_ms,
                 "special": specials.label(station.special(slot), slot.index),
@@ -2265,11 +2322,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             return names.get(c.created_by, "a removed user")
 
         viewer = ctx.viewing.viewer(user)
-        now = now_ms()
 
         def shown(c: Channel) -> dict:
             said = channel_json(
                 c,
+                None if viewer.everything else viewer,
                 # (Someone who only watches may change none, their own
                 # included: the last check of 1.39.0's cold audit.)
                 mayChange=access.may_change(user, c)
@@ -2282,7 +2339,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             # them. The hostile audit before building 1.39.0.)
             # (One they may change themselves comes whole, so saving it from the
             # editor never wipes its blocks: the second cold audit of 1.39.0.)
-            if ctx.viewing.shown_until(viewer, c.id, now) is not None and not said["mayChange"]:
+            if ctx.viewing.allowed_by_hand(viewer, c.id) and not said["mayChange"]:
                 said.update(
                     sources=[], blocks=[], featureSource={}, pending=None, check=None,
                     nextMarathon=None, nextFeature=None, nextBlock=None,
@@ -2758,12 +2815,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         broken = ctx.broken.keys()
         now = now_ms()
         until = now + int(max(0.5, min(hours, STATION_GUIDE_MAX_HOURS)) * 3600 * 1000)
+        viewer = ctx.viewing.viewer(access.signed_in(request))
+        limited = None if viewer.everything else viewer
 
         def listing() -> list[dict]:  # on a worker thread: a big shuffle takes a moment
             station = ctx.guide(channel)
             return [
                 {
-                    **_item_json(slot.item),
+                    **_shown_json(ctx.viewing, limited, slot.item),
                     "start": slot.start_ms,
                     "end": slot.end_ms,
                     "broken": slot.item.rating_key in broken,
@@ -4104,6 +4163,17 @@ def _mostly_one_show(counts: Counter[str]) -> bool:
         return total > 2
     biggest = max(counts.values())
     return biggest > 2 * (total - biggest)
+
+
+def _shown_json(viewing_: viewing.Viewing, viewer: viewing.Viewer | None, item: Item) -> dict:
+    """A program, for someone (`viewer`; None: anyone): one they may not
+    watch as a restricted program, its title and nothing else (1.39.0)."""
+    if viewer is None or viewing_.may_watch(viewer, item):
+        return _item_json(item)
+    return {
+        "ratingKey": "", "kind": "movie", "title": viewing.RESTRICTED_TITLE, "show": None, "season": None,
+        "episode": None, "year": None, "durationMs": item.duration_ms, "restricted": True,
+    }  # fmt: skip
 
 
 def _item_json(item: Item) -> dict:

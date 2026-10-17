@@ -37,6 +37,7 @@ from . import (
     playing,
     problems,
     specials,
+    viewing,
 )
 from . import scanner as sc
 from .broadcaster import now_ms
@@ -253,13 +254,33 @@ def program(item: Item, start_ms: int, end_ms: int, special: str) -> dict[str, A
         "summary": plain(item.summary or ""),
         "art": f"/art/{item.show_key or item.rating_key}",
         "special": plain(special) or None,
+        "restricted": False,
     }
 
 
-def slot_program(station: Airs, slot: Slot | None) -> dict[str, Any] | None:
-    """A station's program, as the API describes one (None for none)."""
+# What a program someone may not watch is, to them (1.39.0, the owner,
+# October 17: "Restricted program", with its times, and nothing else).
+RESTRICTED_TITLE = viewing.RESTRICTED_TITLE
+
+
+def restricted_program(start_ms: int, end_ms: int) -> dict[str, Any]:
+    return {
+        "start": start_ms, "end": end_ms, "kind": "movie", "title": RESTRICTED_TITLE,
+        "episodeTitle": None, "season": None, "episode": None, "year": None, "summary": "",
+        "art": "/art/0", "special": None, "restricted": True,
+    }  # fmt: skip
+
+
+def slot_program(
+    station: Airs, slot: Slot | None, shown: Callable[[Item], bool] | None = None
+) -> dict[str, Any] | None:
+    """A station's program, as the API describes one (None for none); for
+    someone with limits (`shown`: whether they may watch a program), one
+    they may not as a restricted program."""
     if slot is None:
         return None
+    if shown is not None and not shown(slot.item):
+        return restricted_program(slot.start_ms, slot.end_ms)
     special = specials.label(station.special(slot), slot.index)
     return program(slot.item, slot.start_ms, slot.end_ms, special)
 
@@ -793,6 +814,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             where = request.client.host if request.client else "?"
             ctx.apps.saw(where, playing.Watcher(where, False, user.name, user.id, app))
 
+    def shown_for(request: Request) -> Callable[[Item], bool] | None:
+        """For someone with limits, whether they may watch a program (as it
+        airs on any station: viewing.Viewing.may_watch); None for anyone
+        else. 1.39.0."""
+        viewer = ctx.viewing.viewer(access.signed_in(request))
+        if viewer.everything:
+            return None
+        return lambda item: ctx.viewing.may_watch(viewer, item)
+
     def hls_address(number: int, key: str | None) -> str:
         """Where an app plays a station: its HLS, at the app's own address
         when it has one (see away_key)."""
@@ -822,6 +852,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         key = away_key(request)
         note_app(request, key)
         channels = ctx.stations_for(access.signed_in(request))
+        shown = shown_for(request)
         now = now_ms()
 
         def on_now() -> list[tuple[dict | None, dict | None]]:  # (a big shuffle takes a moment)
@@ -831,8 +862,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 slot = station.locate(now)
                 out.append(
                     (
-                        slot_program(station, slot),
-                        slot_program(station, slot and station.after(slot)),
+                        slot_program(station, slot, shown),
+                        slot_program(station, slot and station.after(slot), shown),
                     )
                 )
             return out
@@ -1008,9 +1039,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         operation_id="getGuide",
         summary="The guide",
         description="Each station's programs between two times: 6 hours from now unless asked; "
-        "at most 2 days, starting within 7 days of now. For someone with limits, from the "
-        "program on now (never what aired before), and on a station allowed for them by hand, "
-        "only the next 48 hours.",
+        "at most 2 days, starting within 7 days of now.",
     )
     async def guide(
         request: Request,
@@ -1025,26 +1054,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if not 0 < to_ms - from_ms <= GUIDE_MAX_MS:
             raise HTTPException(400, "The guide can cover at most 2 days, after its start")
         channels = ctx.stations_for(access.signed_in(request))
-        viewer = ctx.viewing.viewer(access.signed_in(request))
+        shown = shown_for(request)
 
         def listing() -> list[dict]:  # (on a worker thread, as on_now)
             out = []
             for channel in channels:
                 station = ctx.guide(channel)
-                # (A Station allowed for them by hand: only as far ahead as
-                # it's been judged for them. See viewing.Viewing.shown_until.)
-                until = ctx.viewing.shown_until(viewer, channel.id, now)
-                upto = to_ms if until is None else min(to_ms, until)
-                # (Someone with limits: from what's on now, never what aired
-                # before, which may have been above them, and the station
-                # shown since: the cold audit of 1.39.0.)
-                start = from_ms
-                if not viewer.everything:
-                    on = station.locate(now)
-                    start = max(from_ms, on.start_ms if on else now)
                 programs = [
-                    slot_program(station, slot) for slot in station.between(start, upto)
-                ] if upto > start else []  # fmt: skip
+                    slot_program(station, slot, shown) for slot in station.between(from_ms, to_ms)
+                ]
                 out.append({"number": channel.number, "programs": programs})
             return out
 

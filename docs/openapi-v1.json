@@ -71,7 +71,7 @@
     "/api/v1/guide": {
       "get": {
         "summary": "The guide",
-        "description": "Each station's programs between two times: 6 hours from now unless asked; at most 2 days, starting within 7 days of now. For someone with limits, from the program on now (never what aired before), and on a station allowed for them by hand, only the next 48 hours.",
+        "description": "Each station's programs between two times: 6 hours from now unless asked; at most 2 days, starting within 7 days of now.",
         "operationId": "getGuide",
         "parameters": [
           {
@@ -753,6 +753,12 @@
             ],
             "title": "Special",
             "description": "What special it's part of: 'Feature Presentation', a block's name, or a marathon's"
+          },
+          "restricted": {
+            "type": "boolean",
+            "title": "Restricted",
+            "description": "For someone with limits, a program they may not watch (from 1.39.0): its title is 'Restricted program', with nothing else but its times, and its station's stream refuses them while it's on",
+            "default": false
           }
         },
         "type": "object",

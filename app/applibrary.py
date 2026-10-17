@@ -740,12 +740,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         out: list[dict] = []
         if not wanted:
             return out
+        viewer = ctx.viewing.viewer(user)
         for channel in ctx.stations_for(user):
             station = ctx.guide(channel)  # (INFO in its blocks: 1.36.2)
             slot = station.locate(now)
             if slot is None:
                 continue
             item = slot.item
+            # (Never found by the title of a program they may not watch: 1.39.0.)
+            if not ctx.viewing.may_watch(viewer, item):
+                continue
             title = (
                 item.show_title if item.kind == catalog.EPISODE and item.show_title else item.title
             )

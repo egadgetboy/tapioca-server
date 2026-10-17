@@ -281,3 +281,4 @@ How the stations and the guide describe a program.
 | `summary` | string | What it's about (may be empty) |
 | `art` | string | Its picture, on the home network: the show's, or the movie's. It's part of the tuner: while only listed devices may use it (from 1.32.0), only they get it |
 | `special` | string or null | The special it's part of: "Feature Presentation", a block's name, or "Maple Street Marathon (1 of 3)" |
+| `restricted` | boolean | From 1.39.0, for someone with limits: a program they may not watch. Its `title` is "Restricted program", and it has nothing else but its times. Their app's stream answers 403 (`code`: `restricted`, `resumesAtMs`) while it's on |

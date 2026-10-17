@@ -221,7 +221,18 @@ alerts).
    addresses answer within 8 seconds with 503 and a sentence to show. Offer
    to try again. What was being fetched carries on, so it's often ready a
    moment later.
-7. **Report a problem.** Offer it on a movie's or an episode's page, in the
+7. **A restricted program (from 1.39.0).** For someone with limits, while a
+   program they may not watch is on a station, its HLS playlist and its
+   pieces answer 403 with `{"detail": "This program is restricted. Your
+   station will resume automatically when permitted programming returns.",
+   "code": "restricted", "resumesAtMs": ...}` (`resumesAtMs`: when the
+   schedule says permitted programming is back, or null). Keep the station
+   selected, show the sentence over its picture, and ask for the playlist
+   again every few seconds (from `resumesAtMs`, if it's given) until it
+   plays; never retune elsewhere on your own, and don't bring them back if
+   they've gone to another screen. Guides list such a program with
+   `restricted: true` and the title "Restricted program".
+8. **Report a problem.** Offer it on a movie's or an episode's page, in the
    player's menu, and in a station's player, when `user.canReport` is true
    in `GET /api/internal/me` (and always while signing in is off). When
    it's chosen, ask `GET /api/internal/report-choices` for the choices. Show
@@ -235,18 +246,18 @@ alerts).
      ("You've reported this one today. Thanks.") or reporting turned off.
 
    See Reporting a problem.
-8. **What's broken doesn't play.** A version tapiOca found broken never
+9. **What's broken doesn't play.** A version tapiOca found broken never
    plays. When another version plays in its place, `why` says so (for
    `direct` too, so show it in the player's info). When every version is
    broken, the answer is 422 with the `detail` "This one can't play right
    now. An Admin has been told." Show it unchanged. An item's
    `versions[].problem` shows what was found in each version (`broken` or
    `damaged`). Mark a broken one, so the viewer chooses another.
-9. **Problems say what and where.** With `library-failed` and
+10. **Problems say what and where.** With `library-failed` and
    `library-stopped`, send the playing's `session` and `positionMs` (see
    `POST /api/internal/problem`). tapiOca checks that file at that point
    first.
-10. **Alerts about files.** For an Admin, alerts may now be `files` (see
+11. **Alerts about files.** For an Admin, alerts may now be `files` (see
     Admin alerts). Notify once for each `id`, as for any other alert. If
     the app links to tapiOca's page, offer a way to its **Broken files**
     tab.

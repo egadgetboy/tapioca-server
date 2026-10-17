@@ -1,8 +1,8 @@
 {
   "version": "1.39.0",
   "new": [
-    "Stations allowed by hand follow limits",
-    "Watching stops when a station is no longer allowed",
-    "In tapiOca's apps, guides show only what someone may watch"
+    "In tapiOca's apps, restricted programs pause for kids",
+    "Their station comes back on its own",
+    "Guides show Restricted program instead"
   ]
 }

@@ -16,11 +16,13 @@ apps show only what the server sends.
    list, search, guide, Resume row and "on now" for them. There's no title,
    no picture and no placeholder. A request for its key or address gets the
    same answer as one that doesn't exist.
-3. **Stations are all or nothing.** Everyone watching a station shares one
-   stream, so a station can't change for each person. A person sees a
-   station only if everything on it is within their limits, or an Admin
-   allowed that station for them and nothing above them is on it in the
-   next 48 hours (1.39.0, the owner's D01).
+3. **Which stations, and what's on them.** Everyone watching a station
+   shares one stream, so a station can't change for each person. A person
+   sees a station if everything on it is within their limits, or an Admin
+   allowed that station for them. Either way, from 1.39.0, a program they
+   may not watch is blocked for them while it's on (the owner, October 17:
+   "Station visibility determines what users can choose. Program
+   restrictions determine what they can actually watch.").
 4. **Plain rules, in order.** The first rule that applies decides, so an
    Admin can always tell why something is hidden.
 5. **Lean.** Plex stays the catalog. tapiOca keeps a title's rating and
@@ -195,25 +197,38 @@ decides. An episode counts as its show for rules 2, 3, 6 and 7.
    is hidden.
 8. Anything else is shown.
 
-For a station, one **blocked** for the person is hidden. One **allowed**
-for them is shown while every program in its published schedule, the next
-48 hours (the guides' window), passes rules 2 to 7 for them. While one
-doesn't, it's blocked for them; it's back once nothing they can't see is in
-the 48 hours ahead, and the Access tab says when, or that it won't come back
-on its own (the owner, October 17). For such a station, their guide shows
-only the next 48 hours, the page leaves out what it's made of (its sources,
-blocks, Feature Presentation and coming specials), a program that can't
-play is replaced only by one in those 48 hours, and its commercials and
-trailers go no higher than what's on in them. Otherwise, a station is shown
-only if every program it plays passes rules 2 and 4 to 7. "Every program"
-means everything in its current lineup, including its specials' programs. A
-title allowed for the person doesn't make a station shown: an Admin allows
-the station instead. Someone with limits never sees what aired before the
-program on now, in any guide. In tapiOca's apps, it's asked again on every
-request of a station's stream, so someone watching is stopped when it
-changes (a new schedule, a new level), and everyone else watches on. A
-schedule that can't be worked out keeps a station hidden. Station numbers
-don't change when some stations are hidden.
+For a station, a station **allowed** for the person is shown, and one
+**blocked** for them is hidden. Otherwise, it's shown only if every program
+it plays passes rules 2 and 4 to 7. "Every program" means everything in its
+current lineup, including its specials' programs. A title allowed for the
+person doesn't make a station shown: an Admin allows the station instead.
+Station numbers don't change when some stations are hidden.
+
+What's on a station is checked as it airs (1.39.0), on every station a
+person with limits watches, by rules 2 to 7 (a title allowed for them
+counts; allowing the station never allows what's on it):
+
+- **Their stream.** In tapiOca's apps, each piece of the stream says which
+  programs it holds (from what the station really sent, not its
+  schedule: see hls.py). While a piece they may not watch is in it, their
+  app's playlist and that piece answer 403 (`code: "restricted"`, with
+  `resumesAtMs`, when the schedule says permitted programming is back),
+  and the app says "This program is restricted. Your station will resume
+  automatically when permitted programming returns." It asks again on its
+  own. A few seconds either side are kept from them too, to be safe, and
+  what can't be told is kept from them. The broadcast never stops for
+  anyone else.
+- **Guides and lists.** Everywhere a program is listed for them (the
+  guide, now and next, the page's stations and guide, status), one they may
+  not watch is "Restricted program", with its times and nothing else
+  (`restricted: true`). Search never finds a station by it.
+- **The station's own picture,** shared by everyone: its Up Next Banner
+  and cards say "Stay tuned" rather than name a program someone it's
+  allowed for by hand may not watch, and its commercials and trailers go
+  no higher than the strictest level it's allowed for by hand.
+- **The page** leaves out what a station allowed for them by hand is made
+  of (its sources, blocks and Feature Presentation), unless they may
+  change it.
 
 Still to come *(after 1.0)*: rating overrides, Station Audience warnings,
 Preview as user, and Why is this hidden for titles. (For stations, What
@@ -726,9 +741,9 @@ stations.)
 - Someone on the Kid level never sees a TV-MA title in any list, search,
   guide, Resume row or "on now," and its key and stream address are
   refused.
-- A station with one program above a person's level is hidden from them.
-  One an Admin allows for them is hidden only while such a program is in
-  its next 48 hours.
+- A station with one program above a person's level is hidden from them,
+  unless an Admin allows that station for them; then that program is
+  blocked for them while it's on, and shown as "Restricted program".
 - A User can't make an Admin, or change their own level.
 - A first Admin can't be added from the internet (as before).
 - A revoked device is signed out on its next request.
