@@ -2277,7 +2277,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             # (A Station allowed for them by hand: never what it's made of,
             # which may name what's above them beyond what's been judged for
             # them. The hostile audit before building 1.39.0.)
-            if ctx.viewing.shown_until(viewer, c.id, now) is not None:
+            # (One they may change themselves comes whole, so saving it from the
+            # editor never wipes its blocks: the second cold audit of 1.39.0.)
+            if ctx.viewing.shown_until(viewer, c.id, now) is not None and not said["mayChange"]:
                 said.update(
                     sources=[], blocks=[], featureSource={}, pending=None, check=None,
                     nextMarathon=None, nextFeature=None, nextBlock=None,

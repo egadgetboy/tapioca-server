@@ -28,6 +28,7 @@ changes.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import json
@@ -804,36 +805,48 @@ class Viewing:
                 until = end_ms if until is None else max(until, end_ms)
         return until
 
-    def comes_back(self, viewer: Viewer, channel_id: int, now_ms: int) -> tuple[bool, int | None]:
+    def comes_back(
+        self, viewer: Viewer, channel_id: int, now_ms: int
+    ) -> tuple[bool, int | None, str | None]:
         """For the Access tab: whether a Station allowed for someone by hand
-        is blocked for them now, and when it comes back: the first time from
+        is blocked for them now; when it comes back: the first time from
         which nothing they can't see is in the STATION_WINDOW_MS after it,
-        looking a week ahead (None: not within that, or it can't be told).
-        (The cold audit of 1.39.0: the end of what's in the window now
-        wasn't it, as the window moves on.)"""
+        looking a week ahead (None: not within that, or it can't be told);
+        and why: "scheduled" (something they can't see), or "unknown" (its
+        schedule can't be worked out, or is empty, or ratings aren't known
+        yet). (The cold audits of 1.39.0: the end of what's in the window now
+        wasn't it, as the window moves on; and can't-tell isn't never.) A
+        week of a big shuffle takes a moment: call it off the event loop."""
         if viewer.everything or channel_id not in viewer.allowed:
-            return False, None
+            return False, None, None
         if self.blocked_until(viewer, channel_id, now_ms) is None:
-            return False, None
+            return False, None, None
+        if self._window(channel_id, now_ms) is None:
+            return True, None, "unknown"
         ahead = COMES_BACK_LOOK_MS
         try:
             slots = schedule.station_schedule(self.db.eras(channel_id)).between(
                 now_ms, now_ms + ahead
             )
-            hidden = [
-                (s.start_ms, s.end_ms)
-                for s in slots
-                if s.item.rating_key != INFO_KEY and not viewer.sees(self.titles.judge(s.item))
-            ]
+            hidden = []
+            unknown = False
+            for s in slots:
+                if s.item.rating_key == INFO_KEY:
+                    continue
+                judged = self.titles.judge(s.item)
+                if not viewer.sees(judged):
+                    hidden.append((s.start_ms, s.end_ms))
+                    unknown = unknown or not judged.known
         except Exception:
             log.exception("Station %s's schedule couldn't be worked out", channel_id)
-            return True, None
+            return True, None, "unknown"
+        why = "unknown" if unknown else "scheduled"
         for at in [now_ms, *(end for _, end in hidden)]:
             if at + STATION_WINDOW_MS > now_ms + ahead:
                 break
             if not any(start < at + STATION_WINDOW_MS and end > at for start, end in hidden):
-                return True, at
-        return True, None
+                return True, at, why
+        return True, None, why
 
     def hand_allowed(self, channel_id: int) -> bool:
         """Whether anyone with limits has a Station allowed for them by hand
@@ -1227,8 +1240,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         viewer = v.viewer(user)
         chosen = v.stations_of(user.id)
         now = int(time.time() * 1000)
+        channels = ctx.db.list_channels()
+        # (A week of each station's schedule, for when one blocked comes back:
+        # on a worker thread, never where every stream is served.)
+        back = await asyncio.to_thread(
+            lambda: {c.id: v.comes_back(viewer, c.id, now) for c in channels}
+        )
         out = []
-        for c in ctx.db.list_channels():
+        for c in channels:
             why = None
             if not viewer.everything:
                 reach = v.reach(c.id)
@@ -1251,8 +1270,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     # can't see is on before then. 1.39.0, the owner's D01.)
                     **dict(
                         zip(
-                            ("blockedNow", "blockedUntilMs"),
-                            v.comes_back(viewer, c.id, now),
+                            ("blockedNow", "blockedUntilMs", "blockedWhy"),
+                            back[c.id],
                             strict=True,
                         )
                     ),

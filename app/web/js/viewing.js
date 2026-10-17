@@ -266,8 +266,12 @@ async function openUserStations(u) {
   $('#userStationsStatus').textContent = '';
   // (Allowed, but blocked for now: something they can't see is scheduled in
   // the next 48 hours. When it comes back, or that it doesn't on its own. 1.39.0.)
-  const when = ms => new Date(ms).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const when = ms => {
+    const d = new Date(ms);
+    return `on ${d.toLocaleDateString([], { weekday: 'short' })} at ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  };
   const until = s => !s.blockedNow ? ''
+    : s.blockedWhy === 'unknown' ? ` Blocked for now: tapiOca can’t tell yet what’s on it (its schedule, or the ratings of what it plays). It’s back once it can, if ${u.name} can see it all.`
     : s.blockedUntilMs ? ` Blocked for now: something ${u.name} can’t see is scheduled. It’s back ${when(s.blockedUntilMs)}.`
     : ` Blocked: something ${u.name} can’t see is scheduled on it again and again, so it won’t come back on its own. To show it, allow those shows and movies for ${u.name} below, or choose another level.`;
   const said = s => s.chosen === 'allowed' ? `Allowed for ${u.name}.${until(s)}${s.why && !s.blockedNow ? ` (${got.level} wouldn’t show it: ${s.why.toLowerCase()}.)` : ''}`

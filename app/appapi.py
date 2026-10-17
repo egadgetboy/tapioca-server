@@ -1008,7 +1008,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         operation_id="getGuide",
         summary="The guide",
         description="Each station's programs between two times: 6 hours from now unless asked; "
-        "at most 2 days, starting within 7 days of now.",
+        "at most 2 days, starting within 7 days of now. For someone with limits, from the "
+        "program on now (never what aired before), and on a station allowed for them by hand, "
+        "only the next 48 hours.",
     )
     async def guide(
         request: Request,

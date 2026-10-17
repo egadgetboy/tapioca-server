@@ -442,3 +442,81 @@ def test_the_access_tab_says_whether_it_comes_back(app):
         # Mixed: Heist over and over, so never.
         assert listed[7]["blockedNow"] is True and listed[7]["blockedUntilMs"] is None
         assert listed[9]["blockedNow"] is False and listed[9]["blockedUntilMs"] is None
+
+
+def test_the_access_tab_tells_cant_tell_from_never(app, monkeypatch):
+    """(The second cold audit of 1.39.0.) A station allowed by hand that's
+    blocked because its schedule can't be read, or is empty, or its
+    ratings aren't known yet, is said to be that ("unknown"), never "back
+    now" or "scheduled again and again"."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kit_id = kid(admin, {str(ids[3]): True, str(ids[9]): True})
+        ctx.db.replace_eras(ids[3], [e.id for e in ctx.db.eras(ids[3])], [])
+        with ctx.db._conn:  # (Picnic's rating not asked for yet)
+            ctx.db._conn.execute("DELETE FROM titles WHERE key = '300'")
+        ctx.titles.__init__(ctx.db)
+        ctx.viewing._windows.clear()
+        ctx.viewing._reaches.clear()
+        listed = {
+            s["number"]: s
+            for s in admin.get(f"/api/access/users/{kit_id}/stations").json()["stations"]
+        }
+        for n in (3, 9):
+            assert (listed[n]["blockedNow"], listed[n]["blockedUntilMs"], listed[n]["blockedWhy"]) == (
+                True, None, "unknown"
+            ), n  # fmt: skip
+
+
+def test_working_out_when_it_comes_back_never_holds_up_the_server(app, monkeypatch):
+    """(The second cold audit of 1.39.0.) Working out a week of a big
+    station's schedule takes a moment: the Access tab does it on a worker
+    thread, never where every stream is served."""
+    import asyncio
+
+    ctx = app.state.ctx
+    where = []
+    real = ctx.viewing.comes_back
+
+    def noted(*args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+            where.append("the event loop")
+        except RuntimeError:
+            where.append("a worker")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ctx.viewing, "comes_back", noted)
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kit_id = kid(admin, {str(ids[7]): True})
+        assert admin.get(f"/api/access/users/{kit_id}/stations").status_code == 200
+        assert where and set(where) == {"a worker"}
+
+
+def test_someone_who_may_change_it_gets_all_of_it(app):
+    """(The second cold audit of 1.39.0.) A User on Unrestricted with one
+    station blocked has limits, but a station they made and are allowed by
+    hand comes whole, blocks and Feature Presentation too, so saving it
+    from the editor never wipes them."""
+    import datetime
+
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        page = TestClient(app)
+        page.post("/api/access/sign-in", json=KIT)
+        far = (datetime.datetime.now().weekday() + 4) % 7
+        made = page.post("/api/channels", json={
+            "number": 12, "name": "Mine", "sources": [{"type": "show", "ratingKey": "100"}],
+            "blocks": [{"name": "Late show", "days": str(far), "start": "23:00", "end": "23:59",
+                        "sources": [{"type": "movie", "ratingKey": "300", "title": "Picnic"}]}],
+        })  # fmt: skip
+        assert made.status_code == 201, made.text
+        mine = made.json()["id"]
+        assert admin.put(f"/api/access/users/{kit['id']}/viewing",
+                         json={"stations": {str(ids[5]): False, str(mine): True}}).status_code == 200  # fmt: skip
+        got = {c["number"]: c for c in page.get("/api/channels").json()}
+        assert got[12]["mayChange"] and got[12]["blocks"] and got[12]["sources"]

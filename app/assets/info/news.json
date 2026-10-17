@@ -3,6 +3,6 @@
   "new": [
     "Stations allowed by hand follow limits",
     "Watching stops when a station is no longer allowed",
-    "Guides never show what's above someone's limits"
+    "In tapiOca's apps, guides show only what someone may watch"
   ]
 }
