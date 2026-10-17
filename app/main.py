@@ -666,8 +666,10 @@ class AppContext:
 
     def app_watchers(self) -> dict[str, bool]:
         """The devices watching in tapiOca's apps now, stations and the
-        library alike: which -> whether it's away from home."""
-        watching = dict(self.hls_streams.watchers())
+        library alike: which -> whether it's away from home. (With those
+        that hold a place without watching, for now: see
+        HlsStream.waiting.)"""
+        watching = dict(self.hls_streams.places())
         for client, away_ in self.plays.watching().items():
             watching[client] = watching.get(client, False) or away_
         return watching
@@ -1251,6 +1253,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         # piece of a program they may not watch in it; and while it's on,
         # they aren't watching, for the stats and the count. 1.39.0.)
         viewer = ctx.viewing.viewer(user) if user is not None else None
+        if viewer is not None:
+            stream.holds_place(client, away_)  # (its place kept while it's checked)
         stream.asked_by(None if viewer is not None else client, away_, who)
         playlist = await stream.playlist()
         if playlist is None:
@@ -1261,7 +1265,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             )
         if viewer is not None:
             if holds_restricted(stream, stream.listed(playlist), viewer):
-                stream.blocked(client)
+                stream.blocked(client, away_)
                 return restricted(channel, viewer)
             stream.asked_by(client, away_, who)
         return Response(playlist, media_type="application/vnd.apple.mpegurl", headers=hls.HEADERS)

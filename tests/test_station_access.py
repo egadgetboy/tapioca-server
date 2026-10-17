@@ -202,17 +202,22 @@ class FakeStream:
         self.holds = holds
         self.watching: list = []
         self.blocked_for = []
+        self.order: list[str] = []  # (what it was asked to do, in order)
 
     def asked_by(self, client=None, *args, **kwargs) -> None:
         if client is not None:
             self.watching.append(client)
 
-    def blocked(self, client) -> None:
+    def blocked(self, client, away=False) -> None:
         self.blocked_for.append(client)
+
+    def holds_place(self, client, away=False) -> None:
+        self.order.append("holds a place")
 
     def still_watching(self, client) -> None: ...
 
     async def playlist(self) -> str:
+        self.order.append("playlist")
         return "#EXTM3U\n" + "".join(f"#EXTINF:2.0,\n{n}\n" for n in self.holds)
 
     listed = hls.HlsStream.listed
@@ -443,9 +448,10 @@ def test_a_station_they_made_but_may_no_longer_change_names_nothing_either(app):
 
 def test_a_refused_app_isnt_watching_and_a_gone_piece_is_just_gone(app, monkeypatch):
     """(The cold audit of 1.39.0.) While Kit's app is refused, it isn't
-    counted as watching (her stats never get the restricted program, and it
-    holds no place), and its watching is ended at once; a piece that's gone
-    is 404, never "restricted"."""
+    counted as watching (her stats never get the restricted program), and
+    its watching is ended at once (it keeps its place among the devices an
+    Admin allows: see the next test); a piece that's gone is 404, never
+    "restricted"."""
     ctx = app.state.ctx
     with TestClient(app) as admin:
         ids = set_up(admin)
@@ -459,6 +465,9 @@ def test_a_refused_app_isnt_watching_and_a_gone_piece_is_just_gone(app, monkeypa
         kits = next(s for s in got if s["number"] == 7)["hls"].split("?")[0]
         assert phone.get(kits).status_code == 403
         assert stream.watching == [] and len(stream.blocked_for) == 1
+        # (Her place is kept before the wait for the playlist: the second
+        # cold audit of 1.39.0.)
+        assert stream.order[:2] == ["holds a place", "playlist"], stream.order
         assert phone.get(kits.replace("index.m3u8", "s9.ts")).status_code == 404
         stream.holds = {"s2.ts": (puppet,)}
         assert phone.get(kits).status_code == 200 and len(stream.watching) == 1
@@ -562,3 +571,107 @@ def test_commercials_go_by_the_tv_age_and_trailers_by_the_movie_age(app):
         kid_level_ = levels["kid"]
         assert ctx.viewing.clip_most(ids[7], 17, tv=True) == kid_level_["tvAge"]
         assert ctx.viewing.clip_most(ids[7], 17, tv=False) == kid_level_["movieAge"]
+
+
+def test_a_bumper_ending_in_a_break_holds_and_names_what_it_says_is_up_next(app):
+    """The cold audit of 1.39.0: an Intro Bumper that ends in the break after
+    Puppet Town says "UP NEXT" Heist. Its pieces hold Heist (not Puppet
+    Town), so Kit doesn't get them. And on Mixed, allowed for Kit by hand,
+    it names neither Heist nor anything else she may not watch; with no one
+    it's allowed for by hand, it names Heist."""
+    from app.broadcaster import Broadcaster
+
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kit_id = kid(admin, {str(ids[7]): True})
+        now = int(time.time() * 1000)
+        puppets, heist = items(ctx, {"201", "301"})
+        # (Puppet Town with two minutes of break after it.)
+        puppets = replace(
+            puppets, duration_ms=puppets.duration_ms + 120_000, breaks=[("@id", 120_000)]
+        )
+        plays(ctx, ids[7], [puppets, heist], now - 60 * 60_000)
+        station = ctx.station(ids[7])
+        on = station.locate(now)
+        first = on if on.item.rating_key == "201" else station.after(on)
+        in_break = first.start_ms + puppets.program_end_ms + 30_000
+        assert station.locate(in_break).item.rating_key == "201"
+        fake = SimpleNamespace(ctx=ctx, channel_id=ids[7], _skipped=lambda key: False)
+        fake._bumper_names = lambda *a: Broadcaster._bumper_names(fake, *a)
+        assert Broadcaster._bumper_names(fake, station, in_break).rating_key == "301"
+        assert Broadcaster._bumper_names(fake, station, first.start_ms + 60_000).rating_key == "201"
+        assert Broadcaster._whats_on(fake, station, in_break) == ("", "", "")
+        assert Broadcaster._whats_on(fake, station, first.start_ms + 60_000)[1] == "Puppet Town"
+        admin.put(f"/api/access/users/{kit_id}/viewing", json={"stations": {}})
+        assert Broadcaster._whats_on(fake, station, in_break)[:2] == ("UP NEXT", "Heist")
+
+
+def test_a_refused_app_keeps_its_place_among_the_devices_allowed(app):
+    """(The second cold audit of 1.39.0.) With one device allowed, Kit's app
+    holds its place while it waits for its first check and while it's
+    refused (watching nothing), so another device can't take it and she's
+    back on her own. Once she tunes away, or stops asking, it's free."""
+    from app.capacity import Limits
+
+    ctx = app.state.ctx
+    with TestClient(app):
+        stream = hls.HlsStream.__new__(hls.HlsStream)
+        stream.clients, stream.away, stream.since, stream.who = {}, set(), {}, {}
+        stream.waiting = {}
+        stream.label = stream.label_mid = "station 7, Mixed"
+        stream.ended = stream._stopping = False
+        stream.b = SimpleNamespace(channel_id=7, ctx=ctx, behind_ms=0)
+        stream.last_asked = time.monotonic()
+        stream.stop = lambda because: None
+        ctx.hls_streams._by_station[(7, False)] = stream
+        try:
+            ctx.capacity.limits = Limits(1, None)
+
+            def turned_away(client: str, away: bool = False):
+                return ctx.capacity.refusal(ctx.app_watchers(), client, away)
+
+            stream.holds_place("kit", True)  # (her first ask, before its check)
+            assert stream.watchers() == {} and ctx.app_watchers() == {"kit": True}
+            assert turned_away("tablet") == ("devices", 1) and turned_away("kit", True) is None
+            stream.asked_by("kit", True)
+            assert stream.watchers() == {"kit": True} and stream.waiting == {}
+            stream.blocked("kit", True)  # (a program she may not watch came on)
+            assert stream.watchers() == {} and ctx.app_watchers() == {"kit": True}
+            assert turned_away("tablet") == ("devices", 1) and turned_away("kit", True) is None
+            stream.left_by("kit")
+            assert ctx.app_watchers() == {} and turned_away("tablet") is None
+            stream.blocked("kit")  # (refused, not watching: still holds one)
+            assert ctx.app_watchers() == {"kit": False}
+            stream.waiting["kit"] = (time.monotonic() - hls.IDLE_S - 1, False)
+            assert ctx.app_watchers() == {} and turned_away("tablet") is None
+        finally:
+            del ctx.hls_streams._by_station[(7, False)]
+
+
+async def test_a_stopping_station_never_hands_a_new_viewer_what_it_sent_before():
+    """(The second cold audit of 1.39.0.) While a station stops (up to 10
+    seconds), someone tuning in gets none of its recent bytes: the next
+    session's record starts from nothing sent, so they'd hold a program
+    no one could tell."""
+    import asyncio
+
+    from app.broadcaster import Broadcaster
+
+    b = Broadcaster(ctx=SimpleNamespace(), channel_id=1)
+    b._recent.append(b"Heist")
+    b._recent_bytes = 5
+    started = asyncio.Event()
+    late = asyncio.Event()
+
+    async def ending():
+        started.set()
+        await late.wait()
+
+    b._task = asyncio.create_task(ending())
+    await started.wait()
+    stopping = asyncio.create_task(b.stop())
+    await asyncio.sleep(0.05)
+    assert list(b._recent) == [] and b._recent_bytes == 0
+    late.set()
+    await stopping

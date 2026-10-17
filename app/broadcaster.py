@@ -425,6 +425,10 @@ class Broadcaster:
 
     async def stop(self, because: str = "the station stopped") -> None:
         self._stopping = True
+        # (At once: someone tuning in while it stops gets none of it. The
+        # second cold audit of 1.39.0.)
+        self._recent.clear()
+        self._recent_bytes = 0
         self._kill()
         for task in list(self._side_tasks):
             task.cancel()
@@ -687,8 +691,7 @@ class Broadcaster:
                         ends = self._cursor(ts) + int(
                             float(channel.intro_seconds or DEFAULT_INTRO_S) * 1000
                         )
-                        named = station.locate(ends)
-                        self._content = named.item if named else None
+                        self._content = self._bumper_names(station, ends)
                         try:
                             result = await self._play_intro(channel, station, ts, burst)
                         finally:
@@ -1291,11 +1294,25 @@ class Broadcaster:
         self._ident_failing = True
         return await self._play_plain_card(channel, plain, duration_s, ts, burst)
 
+    def _bumper_names(self, station: StationSchedule, at_ms: int) -> Item | None:
+        """The program an Intro Bumper ending at `at_ms` names: on as it ends,
+        or up next if that's a break (the cold audit of 1.39.0: its pieces
+        hold that program)."""
+        slot, _heading = intro.named_at(station, at_ms)
+        return slot.item if slot else None
+
     def _whats_on(self, station: StationSchedule, at_ms: int) -> tuple[str, str, str]:
         """For the Intro Bumper: what's on as it ends (nothing, if that
-        program is being skipped)."""
+        program is being skipped, or if someone it's allowed for by hand may
+        not watch it: one shared picture)."""
         lines, key = intro.whats_on(station, at_ms)
-        return ("", "", "") if key and self._skipped(key) else lines
+        if key and self._skipped(key):
+            return ("", "", "")
+        if not self.ctx.viewing.named_for_everyone(
+            self.channel_id, self._bumper_names(station, at_ms)
+        ):
+            return ("", "", "")
+        return lines
 
     async def _play_plain_card(
         self,

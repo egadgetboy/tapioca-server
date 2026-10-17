@@ -230,7 +230,9 @@ alerts).
    selected, show the sentence over its picture, and ask for the playlist
    again every few seconds until it plays (`resumesAtMs` is for showing when;
    keep asking anyway, as what's really played decides, and a stream nobody
-   asks for stops after 30 seconds). Never retune elsewhere on your own, and
+   asks for stops after 30 seconds). While it asks, the device keeps its
+   place among the devices an Admin allows, so it's never turned away when
+   the station comes back. Never retune elsewhere on your own, and
    don't bring them back if they've gone to another screen. Casting (a
    Chromecast or AirPlay receiver gets the same 403 and stops): show the
    sentence on the phone, keep asking, and cast again when it plays. Guides

@@ -170,6 +170,11 @@ class HlsStream:
         self.away: set[str] = set()
         self.since: dict[str, int] = {}
         self.who: dict[str, playing.Watcher] = {}
+        # Apps that hold a place among the devices an Admin allows without
+        # watching (1.39.0): someone with limits, while their first ask is
+        # checked or while a program they may not watch is on. When each
+        # last asked, and whether it's away from home.
+        self.waiting: dict[str, tuple[float, bool]] = {}
         self.ended = False
         self.ended_because = ""
         self._stopping = False
@@ -199,16 +204,27 @@ class HlsStream:
             self.since[client] = _now_ms()
             self.who[client] = who
             log.info("%s is watching %s", who.subject(), self.label)
+        self.waiting.pop(client, None)
         self.clients[client] = now
         if away:
             self.away.add(client)
 
-    def blocked(self, client: str) -> None:
+    def blocked(self, client: str, away: bool | None = None) -> None:
         """An app was refused, as a program its person may not watch is on
         (1.39.0): its watching ends there, for the stats and the count of
-        who's watching, and starts again when it's back."""
+        who's watching, and starts again when it's back. It keeps its place
+        among the devices allowed, so it can come back (away from home, if
+        it was or `away` says so)."""
+        away = client in self.away if away is None else away
         if client in self.clients:
             self._settle(client, "a program they may not watch came on")
+        self.holds_place(client, away)
+
+    def holds_place(self, client: str, away: bool = False) -> None:
+        """An app that isn't watching keeps its place among the devices an
+        Admin allows for IDLE_S from now (see waiting)."""
+        if client not in self.clients:
+            self.waiting[client] = (time.monotonic(), away)
 
     def still_watching(self, client: str) -> None:
         """An app watching asked for a piece (one that isn't watching yet
@@ -220,6 +236,7 @@ class HlsStream:
         """An app said it stopped watching: the stream stops now if no other
         app has asked for it lately. (An address that wasn't watching changes
         nothing, so one device can't stop another's.)"""
+        self.waiting.pop(client, None)
         if client not in self.clients:
             return
         self._settle(client)
@@ -291,6 +308,18 @@ class HlsStream:
         now = time.monotonic()
         return {c: c in self.away for c, at in self.clients.items() if now - at < IDLE_S}
 
+    def places(self) -> dict[str, bool]:
+        """The apps holding a place among the devices an Admin allows: those
+        watching, and those waiting (see waiting); and whether each is away
+        from home."""
+        now = time.monotonic()
+        for client, (at, _away) in list(self.waiting.items()):
+            if now - at >= IDLE_S:
+                del self.waiting[client]
+        out = {c: away for c, (_at, away) in self.waiting.items()}
+        out.update(self.watchers())
+        return out
+
     async def playlist(self) -> str | None:
         """The playlist, once it has enough pieces for a player to start; None
         if it doesn't in time, or the stream has ended."""
@@ -321,6 +350,7 @@ class HlsStream:
         if not self.ended_because:
             self.ended_because = because
         self._stopping = True
+        self.waiting.clear()
         self._leave()
         if self._proc is not None and self._proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
@@ -503,6 +533,17 @@ class HlsStreams:
         for stream in self._by_station.values():
             if not stream.over:
                 out.update(stream.watchers())
+        return out
+
+    def places(self) -> dict[str, bool]:
+        """Every device holding a place among those an Admin allows, through
+        the apps' stations (see HlsStream.places), each once: away from home
+        if it is on any."""
+        out = dict(self.watchers())
+        for stream in self._by_station.values():
+            if not stream.over:
+                for client, away in stream.places().items():
+                    out[client] = out.get(client, False) or away
         return out
 
     async def stop_all(self, because: str) -> None:

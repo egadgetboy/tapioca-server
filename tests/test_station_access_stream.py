@@ -1,12 +1,14 @@
 """A restricted program on a real station (1.39.0, the owner, October 17):
 real ffmpeg, a fake Plex. Kit (Kid) watches a station allowed for her by
-hand, in an app, at its own address. Its first episode is TV-14 (good1, a
-440 Hz tone); the others are TV-Y7 (660 Hz and 330 Hz). She tunes in first,
-so the station starts with its Intro Bumper, which names that episode and
-plays its sound as it ends. Not one piece her app gets has that episode in
-it, by what's really in it (its sound), not by what tapiOca says; she's
-refused while it's on and back on her own once it's over; and Ada, an
-Admin, gets every piece, one shared stream."""
+hand, in an app, at its own address. Episode 1 is TV-14 (good1, a 440 Hz
+tone); the others are TV-Y7 (660 Hz and 330 Hz). She tunes in first, so
+the station starts with its Intro Bumper, which names that episode: three
+ways (the second cold audit of 1.39.0). Tuning in at a program's start;
+tuning in while it plays, so the bumper plays its sound as it ends; and
+in the break before it, so the bumper says it's up next. Not one piece her
+app gets has that episode in it, by what's really in it (its sound), not
+by what tapiOca says; she's refused while it's on and back on her own once
+it's over; and Ada, an Admin, gets every piece, one shared stream."""
 
 from __future__ import annotations
 
@@ -17,10 +19,13 @@ import shutil
 import struct
 import subprocess
 import time
+from dataclasses import replace
 
 import httpx
 import pytest
 
+from app.breaks import ID_CARD
+from app.db import NewEra
 from app.main import RESTRICTED_PROGRAM
 
 from .fakeplex import FakePlex
@@ -64,10 +69,40 @@ def tones(path) -> dict[int, float]:
     return {f: p / most for f, p in power.items()}
 
 
+def plays_from(ctx, channel_id: int, order: list[str], into_s: float, break_s: int = 0) -> None:
+    """The station plays episodes `order` over and over, `into_s` into the
+    first now; with `break_s` of Station ID card after the first."""
+    lineup = {i.rating_key: i for e in ctx.db.eras(channel_id) for i in e.items}
+    out, at = [], 0
+    for n, key in enumerate(order):
+        item = replace(lineup[key], position=n, start_ms=at, breaks=None)
+        if n == 0 and break_s:
+            item = replace(
+                item,
+                duration_ms=item.duration_ms + break_s * 1000,
+                breaks=[(ID_CARD, break_s * 1000)],
+            )
+        out.append(item)
+        at += item.duration_ms
+    now = int(time.time() * 1000)
+    old = [e.id for e in ctx.db.eras(channel_id)]
+    since = now - round(into_s * 1000)
+    ctx.db.replace_eras(channel_id, old, [NewEra(out, None, since, "a", "in-order", now, "test")])
+
+
+@pytest.mark.parametrize(
+    "tune_in",
+    [
+        "start",  # (at episode 1's start)
+        "now",  # (1 second into episode 1: the bumper plays its sound)
+        "break",  # (in the break before it: the bumper says it's up next)
+    ],
+)
 async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
     tmp_path,
     media,  # noqa: F811  (the fixture)
     monkeypatch,
+    tune_in,
 ):
     from app.broadcaster import Broadcaster
 
@@ -82,6 +117,18 @@ async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
         return await bumper(self, *args, **kwargs)
 
     monkeypatch.setattr(Broadcaster, "_play_intro", noted)
+    # (And whether it found the show's sound to play as it ends.)
+    from app import intro
+
+    show_sound = []
+    finding = intro.find_show_audio
+
+    async def found(*args, **kwargs):
+        got = await finding(*args, **kwargs)
+        show_sound.append(got is not None)
+        return got
+
+    monkeypatch.setattr(intro, "find_show_audio", found)
     plex = FakePlex()
     plex.add_show("100", "Test Show")
     for n, name in enumerate(("good1", "good2", "good3"), start=1):
@@ -109,8 +156,9 @@ async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
             on = (await admin.put(f"/api/channels/{channel['id']}", json={
                 "number": 7, "name": "Test TV", "orderMode": "rotate",
                 "sources": [{"type": "show", "ratingKey": "100"}],
-                "tuneIn": "start", "introSeconds": 5})).json()  # fmt: skip
-            assert on.get("tuneIn") == "start", on
+                "tuneIn": "start" if tune_in == "start" else "now",
+                "introSeconds": 5})).json()  # fmt: skip
+            assert on.get("tuneIn") == ("start" if tune_in == "start" else "now"), on
 
         async def address(who: dict) -> tuple[httpx.AsyncClient, str]:
             app_client = httpx.AsyncClient(base_url=base, timeout=60)
@@ -121,6 +169,15 @@ async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
 
         kits_app, kits = await address(KIT)
         adas_app, adas = await address(ADA)
+        if tune_in == "now":
+            plays_from(ctx, channel["id"], ["201", "202", "203"], 1.0)
+        elif tune_in == "break":
+            # (Episode 2, then 8 seconds of break, then episode 1: tuning in
+            # 9 seconds into episode 2, the bumper ends in the break.)
+            plays_from(ctx, channel["id"], ["202", "201", "203"], 9.0, break_s=8)
+        if tune_in != "start":
+            at = ctx.station(channel["id"]).locate(int(time.time() * 1000))
+            assert at.item.rating_key == ("201" if tune_in == "now" else "202")
         kit_got: dict[str, bytes] = {}
         ada_got: dict[str, bytes] = {}
         answers: list[int] = []
@@ -173,6 +230,10 @@ async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
         assert not leaked, leaked
         assert any(max(t[330], t[660]) > 0.5 for t in kits_heard.values())
         assert during_bumper and during_bumper[0] == "201", during_bumper
+        # (In the "now" run, the bumper played the TV-14 episode's sound as
+        # it ended, and she got none of it: what the audit asked to catch.)
+        # (From a program's start, it isn't looked for: see _play_intro.)
+        assert show_sound == {"start": [], "now": [True], "break": [False]}[tune_in], show_sound
         # One shared stream all along.
         b = ctx.broadcasters[channel["id"]]
         assert b.running and len(b.viewers) == 1
