@@ -829,18 +829,18 @@ class Viewing:
                 now_ms, now_ms + ahead
             )
             hidden = []
-            unknown = False
+            known = False  # (something they can't see, whose rating is known)
             for s in slots:
                 if s.item.rating_key == INFO_KEY:
                     continue
                 judged = self.titles.judge(s.item)
                 if not viewer.sees(judged):
                     hidden.append((s.start_ms, s.end_ms))
-                    unknown = unknown or not judged.known
+                    known = known or judged.known
         except Exception:
             log.exception("Station %s's schedule couldn't be worked out", channel_id)
             return True, None, "unknown"
-        why = "unknown" if unknown else "scheduled"
+        why = "scheduled" if known else "unknown"
         for at in [now_ms, *(end for _, end in hidden)]:
             if at + STATION_WINDOW_MS > now_ms + ahead:
                 break

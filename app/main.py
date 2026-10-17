@@ -2270,7 +2270,10 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         def shown(c: Channel) -> dict:
             said = channel_json(
                 c,
-                mayChange=access.may_change(user, c),
+                # (Someone who only watches may change none, their own
+                # included: the last check of 1.39.0's cold audit.)
+                mayChange=access.may_change(user, c)
+                and not (user is not None and ctx.access.watches_only(user)),
                 mine=user is not None and c.created_by == user.id,
                 madeBy=made_by(c),
             )

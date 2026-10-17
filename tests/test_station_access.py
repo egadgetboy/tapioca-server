@@ -520,3 +520,64 @@ def test_someone_who_may_change_it_gets_all_of_it(app):
                          json={"stations": {str(ids[5]): False, str(mine): True}}).status_code == 200  # fmt: skip
         got = {c["number"]: c for c in page.get("/api/channels").json()}
         assert got[12]["mayChange"] and got[12]["blocks"] and got[12]["sources"]
+
+
+def test_a_station_they_made_but_may_no_longer_change_names_nothing_either(app):
+    """(The last check of 1.39.0's cold audit.) Kit made a station, then was
+    put on Kid and allowed it by hand: she only watches now, so she may not
+    change it (the page says so: mayChange false), and it comes without
+    what it's made of, a block of Heist four days out included."""
+    import datetime
+
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        page = TestClient(app)
+        assert page.post("/api/access/sign-in", json=KIT).status_code == 200
+        made = page.post("/api/channels", json={
+            "number": 4, "name": "Kit's", "sources": [{"type": "show", "ratingKey": "100"}]})  # fmt: skip
+        assert made.status_code == 201, made.text
+        cid = made.json()["id"]
+        far = (datetime.datetime.now().weekday() + 4) % 7
+        changed = admin.put(f"/api/channels/{cid}", json={
+            "number": 4, "name": "Kit's", "sources": [{"type": "show", "ratingKey": "100"}],
+            "blocks": [{"name": "Late show", "days": str(far), "start": "23:00", "end": "23:59",
+                        "sources": [{"type": "movie", "ratingKey": "301", "title": "Heist"}]}],
+        })  # fmt: skip
+        assert changed.status_code == 200, changed.text
+        assert admin.put(f"/api/access/users/{kit['id']}/viewing",
+                         json={"level": kid_level(admin), "stations": {str(cid): True}}).status_code == 200  # fmt: skip
+        got = page.get("/api/channels")
+        mine = {c["number"]: c for c in got.json()}
+        assert 4 in mine and mine[4]["mayChange"] is False and "Heist" not in got.text
+        refused = page.put(f"/api/channels/{cid}", json={
+            "number": 4, "name": "x", "sources": [{"type": "show", "ratingKey": "100"}]})  # fmt: skip
+        assert refused.status_code == 403
+
+
+def test_something_known_they_cant_see_again_and_again_is_never_called_unknown(app):
+    """(The last check of 1.39.0's cold audit.) Mixed repeats Heist (R,
+    known) and Picnic, whose rating isn't known yet: it's "scheduled", so
+    the Access tab says how to show it, not that tapiOca can't tell yet."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kit_id = kid(admin, {str(ids[7]): True})
+        mixed = ids[7]
+        picnic = [i for c in ctx.db.list_channels() for e in ctx.db.eras(c.id) for i in e.items
+                  if i.rating_key == "300"][:1]  # fmt: skip
+        heist = only(ctx, mixed, {"301"})
+        now = int(time.time() * 1000)
+        two_eras(ctx, mixed, heist + picnic, heist + picnic, now + 3 * HOUR)
+        with ctx.db._conn:
+            ctx.db._conn.execute("DELETE FROM titles WHERE key = '300'")
+        ctx.titles.__init__(ctx.db)
+        ctx.viewing._windows.clear()
+        listed = {
+            s["number"]: s
+            for s in admin.get(f"/api/access/users/{kit_id}/stations").json()["stations"]
+        }
+        assert (listed[7]["blockedNow"], listed[7]["blockedUntilMs"], listed[7]["blockedWhy"]) == (
+            True, None, "scheduled"
+        )  # fmt: skip
