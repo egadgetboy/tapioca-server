@@ -67,15 +67,15 @@ IDLE_S = 30.0
 # How often that's checked.
 IDLE_CHECK_S = 2.0
 # Which program each piece holds (1.39.0, so someone with limits never gets a
-# piece of one they may not watch: see Broadcaster.fed). A piece is taken to
-# hold whatever was sent from MARGIN_S before the one before it appeared
-# until a moment after it did, to be safe: a few seconds either side of a
-# program they may not watch are kept from them too. The first pieces hold
-# what the station had already sent (its recent bytes), from up to RECENT_S
-# before the stream began. Looked for every LABEL_EVERY_S.
+# piece of one they may not watch: see HlsStream.fed). A piece is taken to
+# hold whatever was given to ffmpeg from MARGIN_S before the one before it
+# appeared until a moment after it did, to be safe: a few seconds either
+# side of a program they may not watch are kept from them too. Looked for
+# every LABEL_EVERY_S. FED_KEPT: how many changes of program are kept, far
+# more than a playlist lists.
 MARGIN_S = PIECE_S + 1.0
-RECENT_S = 30.0
 LABEL_EVERY_S = 0.25
+FED_KEPT = 500
 # (What can't be told: as a program no one with limits may watch.)
 UNKNOWN = object()
 # Night mode's sound: it only ever turns sound down, so turning night mode
@@ -180,6 +180,12 @@ class HlsStream:
         self._stopping = False
         self._left = False
         self._proc: asyncio.subprocess.Process | None = None
+        # What was given to ffmpeg, as it was (the second cold audit of
+        # 1.39.0: not as the station sent it, which may be long before): the
+        # program (None: not a program), and from when (time.monotonic), each
+        # change; and whether it goes back to the stream's start.
+        self.fed: deque = deque(maxlen=FED_KEPT)
+        self.fed_whole = True
         # Each piece's programs (see MARGIN_S), and when the newest appeared.
         self.holds: dict[str, tuple] = {}
         self._newest_at: float | None = None
@@ -215,7 +221,8 @@ class HlsStream:
         who's watching, and starts again when it's back. It keeps its place
         among the devices allowed, so it can come back (away from home, if
         it was or `away` says so)."""
-        away = client in self.away if away is None else away
+        if away is None:
+            away = client in self.away or self.waiting.get(client, (0.0, False))[1]
         if client in self.clients:
             self._settle(client, "a program they may not watch came on")
         self.holds_place(client, away)
@@ -234,13 +241,15 @@ class HlsStream:
 
     def left_by(self, client: str) -> None:
         """An app said it stopped watching: the stream stops now if no other
-        app has asked for it lately. (An address that wasn't watching changes
-        nothing, so one device can't stop another's.)"""
-        self.waiting.pop(client, None)
-        if client not in self.clients:
+        app has asked for it lately, or holds a place (see waiting: the third
+        cold audit of 1.39.0). (An address that wasn't watching or waiting
+        changes nothing, so one device can't stop another's.)"""
+        waited = self.waiting.pop(client, None) is not None
+        if client in self.clients:
+            self._settle(client)
+        elif not waited:
             return
-        self._settle(client)
-        if self.watching() == 0:
+        if not self.places():
             self.stop("the last app watching it tuned away")
 
     def viewing(self) -> list[tuple[playing.Watcher, int]]:
@@ -368,13 +377,13 @@ class HlsStream:
             await asyncio.shield(self._task)
 
     def contents(self, since: float, until: float) -> tuple:
-        """What the station sent from `since` to `until` (time.monotonic):
+        """What was given to ffmpeg from `since` to `until` (time.monotonic):
         programs, None for what isn't one, UNKNOWN where it can't be told."""
-        fed = list(self.b.fed)
+        fed = list(self.fed)
         if not fed or fed[0][0] > since:
-            # (Before the station's session began, nothing was sent; before
-            # its record of it, what was can't be told.)
-            before = None if fed and getattr(self.b, "fed_whole", False) else UNKNOWN
+            # (Before the stream began, nothing was; before its record of it,
+            # what was can't be told.)
+            before = None if self.fed_whole else UNKNOWN
             return (before, *(c for t, c in fed if t <= until))
         current = None
         later = []
@@ -398,7 +407,7 @@ class HlsStream:
             # (Several at once, as the station's recent bytes come, or ffmpeg
             # catches up: each may hold anything since the last time, as
             # their own moments can't be told apart. The cold audit of 1.39.0.)
-            since = self._newest_at if self._newest_at is not None else self._born - RECENT_S
+            since = self._newest_at if self._newest_at is not None else self._born
             held = self.contents(since - MARGIN_S, now + 0.5)
             for name in new:
                 self.holds[name] = held
@@ -433,15 +442,7 @@ class HlsStream:
             )
             listening = asyncio.create_task(_collect(proc, said))
             assert proc.stdin is not None
-            while True:
-                chunk = await self._viewer.next_chunk()
-                if chunk is None:
-                    self.ended_because = (
-                        self.ended_because or self._viewer.ended_because or "the station stopped"
-                    )
-                    break
-                proc.stdin.write(chunk)
-                await proc.stdin.drain()
+            await self._feed(proc.stdin)
         except (BrokenPipeError, ConnectionResetError):
             if not self._stopping:
                 # ffmpeg stopped by itself: say what it said.
@@ -466,6 +467,24 @@ class HlsStream:
             await asyncio.to_thread(shutil.rmtree, self.folder, True)
             self.streams.forget(self)
             log.info("Stopped the stream for apps of %s: %s", self.label, self.ended_because)
+
+    async def _feed(self, stdin) -> None:
+        """Gives ffmpeg the station, chunk by chunk, noting each program as
+        it's given (see fed), until the station's stream ends."""
+        while True:
+            sent = await self._viewer.next_sent()
+            if sent is None:
+                self.ended_because = (
+                    self.ended_because or self._viewer.ended_because or "the station stopped"
+                )
+                return
+            chunk, content = sent
+            if not self.fed or self.fed[-1][1] is not content:
+                if len(self.fed) == self.fed.maxlen:
+                    self.fed_whole = False  # (its start is forgotten from now)
+                self.fed.append((time.monotonic(), content))
+            stdin.write(chunk)
+            await stdin.drain()
 
     async def _end_ffmpeg(self) -> None:
         proc = self._proc

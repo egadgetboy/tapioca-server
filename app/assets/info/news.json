@@ -2,7 +2,7 @@
   "version": "1.39.0",
   "new": [
     "In tapiOca's apps, programs above limits are blocked",
-    "The station comes back on its own when they end",
-    "Guides show them as Restricted program"
+    "Stations come back on their own after the program ends",
+    "Guides list the program as \"Restricted program\""
   ]
 }

@@ -1,7 +1,7 @@
 """A restricted program on a real station (1.39.0, the owner, October 17):
 real ffmpeg, a fake Plex. Kit (Kid) watches a station allowed for her by
-hand, in an app, at its own address. Episode 1 is TV-14 (good1, a 440 Hz
-tone); the others are TV-Y7 (660 Hz and 330 Hz). She tunes in first, so
+hand, in an app, at its own address. Episode 1 is TV-14 (30 seconds of a
+440 Hz tone); the others are TV-Y7 (good2 and good3: 660 Hz and 330 Hz). She tunes in first, so
 the station starts with its Intro Bumper, which names that episode: three
 ways (the second cold audit of 1.39.0). Tuning in at a program's start;
 tuning in while it plays, so the bumper plays its sound as it ends; and
@@ -43,6 +43,24 @@ ADA = {"name": "Ada", "password": "correct horse"}
 KIT = {"name": "Kit", "password": "battery staple"}
 TV = {"app": "tapiOca for Android", "deviceName": "Den"}
 RATE = 8000
+# Episode 1's length, and the Intro Bumper's: long enough that the show's
+# sound in its last third (5 seconds) is more than MARGIN_S before the
+# episode itself, so only the bumper's own label keeps it from her (the
+# third cold audit of 1.39.0).
+LONG_S = 30
+BUMPER_S = 15
+
+
+@pytest.fixture(scope="module")
+def long_one(tmp_path_factory):
+    path = tmp_path_factory.mktemp("long") / "long.mkv"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x480:r=24000/1001",
+         "-f", "lavfi", "-i", "sine=f=440", "-t", str(LONG_S), "-c:v", "libx264",
+         "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(path)],
+        check=True,
+    )  # fmt: skip
+    return path
 
 
 def pieces(playlist: str) -> list[str]:
@@ -101,6 +119,7 @@ def plays_from(ctx, channel_id: int, order: list[str], into_s: float, break_s: i
 async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
     tmp_path,
     media,  # noqa: F811  (the fixture)
+    long_one,
     monkeypatch,
     tune_in,
 ):
@@ -131,7 +150,8 @@ async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
     monkeypatch.setattr(intro, "find_show_audio", found)
     plex = FakePlex()
     plex.add_show("100", "Test Show")
-    for n, name in enumerate(("good1", "good2", "good3"), start=1):
+    plex.add_episode("201", "100", 1, 1, "long", str(long_one), LONG_S * 1000)
+    for n, name in ((2, "good2"), (3, "good3")):
         plex.add_episode(str(200 + n), "100", 1, n, name, str(media[name]), CLIP_S * 1000)
     base, app, _settings, srv, task = await start_server(tmp_path, plex)
     ctx = app.state.ctx
@@ -157,7 +177,7 @@ async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
                 "number": 7, "name": "Test TV", "orderMode": "rotate",
                 "sources": [{"type": "show", "ratingKey": "100"}],
                 "tuneIn": "start" if tune_in == "start" else "now",
-                "introSeconds": 5})).json()  # fmt: skip
+                "introSeconds": BUMPER_S})).json()  # fmt: skip
             assert on.get("tuneIn") == ("start" if tune_in == "start" else "now"), on
 
         async def address(who: dict) -> tuple[httpx.AsyncClient, str]:
@@ -173,15 +193,15 @@ async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
             plays_from(ctx, channel["id"], ["201", "202", "203"], 1.0)
         elif tune_in == "break":
             # (Episode 2, then 8 seconds of break, then episode 1: tuning in
-            # 9 seconds into episode 2, the bumper ends in the break.)
-            plays_from(ctx, channel["id"], ["202", "201", "203"], 9.0, break_s=8)
+            # a second into episode 2, the bumper ends in the break.)
+            plays_from(ctx, channel["id"], ["202", "201", "203"], 1.0, break_s=8)
         if tune_in != "start":
             at = ctx.station(channel["id"]).locate(int(time.time() * 1000))
             assert at.item.rating_key == ("201" if tune_in == "now" else "202")
         kit_got: dict[str, bytes] = {}
         ada_got: dict[str, bytes] = {}
         answers: list[int] = []
-        deadline = time.monotonic() + 3 * CLIP_S + 60
+        deadline = time.monotonic() + LONG_S + 2 * CLIP_S + BUMPER_S + 60
         while time.monotonic() < deadline:
             # Kit first: she tunes in, and the station starts for her.
             mine = await kits_app.get(kits)

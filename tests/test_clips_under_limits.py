@@ -588,3 +588,23 @@ def test_a_station_allowed_by_hand_plays_no_clip_above_the_strictest_level_its_a
         assert Broadcaster._clip_allowed(
             playing, channel, slot, TRAILER.path
         )  # (no one with limits)
+
+
+def test_a_station_allowed_by_hand_is_dealt_only_clips_it_will_play(app):
+    """(The third cold audit of 1.39.0.) Station 7, allowed for Kit (Kid: up
+    to 10) by hand, isn't dealt its R trailer, which it wouldn't play (a
+    plain card for everyone in its place); rated 10, it's dealt and plays."""
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        channel = ctx.db.get_channel(ids[7])
+        playing = SimpleNamespace(ctx=ctx)
+        slot = SimpleNamespace(item=SimpleNamespace(kind="movie"))
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 17}})
+        kit = next(u for u in ctx.db.users() if u.name == "Kit")
+        admin.put(f"/api/access/users/{kit.id}/viewing", json={"stations": {str(ids[7]): True}})
+        assert TRAILER.path not in chosen(ctx, ids[7])
+        assert not Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 10}})
+        assert TRAILER.path in chosen(ctx, ids[7])
+        assert Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)

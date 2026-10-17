@@ -135,9 +135,6 @@ MOST_BEHIND_MS = 2 * 3600 * 1000
 BANNER_WAIT_S = (1.0, 2.0)
 # Recent output kept so a new viewer starts instantly.
 RECENT_BYTES = 3 * 1024 * 1024
-# How many changes of what's sent are kept (see Broadcaster.fed): far more
-# than a stream for apps lists.
-FED_KEPT = 500
 # Stream waiting for a viewer that has stopped reading, at most (about two
 # minutes at the default quality) before it's disconnected.
 VIEWER_MAX_BYTES = 64 * 1024 * 1024
@@ -184,13 +181,14 @@ class Viewer:
         self.client = client
         self.agent = agent
         self.started_ms = now_ms()
-        self.queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        # Each chunk, with the program it holds (see Broadcaster._content).
+        self.queue: asyncio.Queue[tuple[bytes, Item | None] | None] = asyncio.Queue()
         self.queued_bytes = 0
         self.closed = False
         # Why tapiOca ended this viewer's stream, if it did.
         self.ended_because: str | None = None
 
-    def push(self, chunk: bytes) -> None:
+    def push(self, chunk: bytes, content: Item | None = None) -> None:
         if self.closed:
             return
         if self.queued_bytes + len(chunk) > VIEWER_MAX_BYTES:
@@ -202,14 +200,20 @@ class Viewer:
             )
             return
         self.queued_bytes += len(chunk)
-        self.queue.put_nowait(chunk)
+        self.queue.put_nowait((chunk, content))
 
     async def next_chunk(self) -> bytes | None:
         """The next piece of stream, or None when the stream has ended."""
-        chunk = await self.queue.get()
-        if chunk:
-            self.queued_bytes -= len(chunk)
-        return chunk
+        sent = await self.next_sent()
+        return sent[0] if sent else None
+
+    async def next_sent(self) -> tuple[bytes, Item | None] | None:
+        """The next piece of stream and the program it holds (None: not a
+        program), or None when the stream has ended."""
+        sent = await self.queue.get()
+        if sent:
+            self.queued_bytes -= len(sent[0])
+        return sent
 
     def close(self, because: str | None = None) -> None:
         if self.closed:
@@ -293,13 +297,10 @@ class Broadcaster:
     channel_id: int
     viewers: set[Viewer] = field(default_factory=set)
     now_playing: NowPlaying | None = None
-    # What's being sent to viewers, as it's sent (1.39.0): the program (None:
-    # a commercial, a card, anything else), and from when (time.monotonic),
-    # each change. A station's stream for apps tells by this which of its
-    # pieces hold which program (see hls.py), for programs someone may not
-    # watch (viewing.Viewing.may_watch).
-    fed: deque = field(default_factory=lambda: deque(maxlen=FED_KEPT))
-    fed_whole: bool = False  # (fed goes back to this session's start)
+    # The program being sent now (1.39.0; None: a commercial, a card,
+    # anything else). Each chunk goes to viewers with it, so a station's
+    # stream for apps can tell which of its pieces hold which program (see
+    # hls.py), for programs someone may not watch (viewing.Viewing.may_watch).
     _content: Item | None = None
     started_at_ms: int = 0
     _task: asyncio.Task | None = None
@@ -382,8 +383,8 @@ class Broadcaster:
         self, ident: str, *, counted: bool = True, client: str = "", agent: str = ""
     ) -> Viewer:
         viewer = Viewer(ident, counted, client, agent)
-        for chunk in self._recent:
-            viewer.push(chunk)
+        for chunk, content in self._recent:
+            viewer.push(chunk, content)
         self.viewers.add(viewer)
         if self._stop_task:
             self._stop_task.cancel()
@@ -425,6 +426,7 @@ class Broadcaster:
 
     async def stop(self, because: str = "the station stopped") -> None:
         self._stopping = True
+        old = self._task
         # (At once: someone tuning in while it stops gets none of it. The
         # second cold audit of 1.39.0.)
         self._recent.clear()
@@ -444,6 +446,21 @@ class Broadcaster:
         self._recent_bytes = 0
         self.now_playing = None
         self.encoder_now = None
+        if self.viewers and self._task is old:
+            # Someone tuned in while it stopped (and no new session started
+            # for them as they did): a new one now, if the station's still
+            # here and the last has ended (the third cold audit of 1.39.0);
+            # otherwise they're told it stopped.
+            here = self.ctx.broadcasters.get(self.channel_id) is self
+            if here and (self._task is None or self._task.done()):
+                self._stopping = False
+                self._task = asyncio.create_task(
+                    self._supervise(), name=f"channel-{self.channel_id}"
+                )
+            else:
+                for viewer in list(self.viewers):
+                    viewer.close(because)
+                self.viewers.clear()
 
     def _kill(self) -> None:
         proc = self._proc
@@ -454,17 +471,14 @@ class Broadcaster:
     def _emit(self, chunk: bytes) -> None:
         if not chunk:
             return
-        self._last_output = now = time.monotonic()
-        if not self.fed or self.fed[-1][1] is not self._content:
-            if len(self.fed) == self.fed.maxlen:
-                self.fed_whole = False  # (its start is forgotten from now)
-            self.fed.append((now, self._content))
-        self._recent.append(chunk)
+        self._last_output = time.monotonic()
+        content = self._content
+        self._recent.append((chunk, content))
         self._recent_bytes += len(chunk)
         while self._recent_bytes > RECENT_BYTES and len(self._recent) > 1:
-            self._recent_bytes -= len(self._recent.popleft())
+            self._recent_bytes -= len(self._recent.popleft()[0])
         for viewer in list(self.viewers):
-            viewer.push(chunk)
+            viewer.push(chunk, content)
             if viewer.closed:
                 log.warning(
                     "%s: disconnecting viewer %s because %s",
@@ -572,11 +586,6 @@ class Broadcaster:
             self._session_skip.add(key)
 
     def _new_session(self) -> None:
-        # (What's sent, from scratch: nothing was before this session, as its
-        # recent bytes went with the last. See fed, and hls.HlsStream.contents.)
-        self.fed.clear()
-        self.fed.append((time.monotonic(), None))
-        self.fed_whole = True
         channel = self.ctx.db.get_channel(self.channel_id)
         picture = channel.picture if channel is not None else ff.STANDARD_PICTURE
         if channel is not None:

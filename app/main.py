@@ -1171,13 +1171,17 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         watch is on (1.39.0, the owner, October 17): their app says so and
         tries again on its own, from when the schedule says programming
         they may watch is back (`resumesAtMs`, a guide: what's really
-        played decides)."""
+        played decides). A station that's behind its schedule (tuned in
+        from a program's start) is back that much later."""
         now = now_ms()
+        b = ctx.broadcasters.get(channel.id)
+        behind = b.behind_ms if b is not None else 0
+        at = now - behind  # (where it is on its schedule)
         back = None
         with contextlib.suppress(Exception):
-            for slot in ctx.guide(channel).between(now, now + RESUME_LOOK_MS):
-                if slot.end_ms > now and ctx.viewing.may_watch(viewer, slot.item):
-                    back = max(now, slot.start_ms)
+            for slot in ctx.guide(channel).between(at, at + RESUME_LOOK_MS):
+                if slot.end_ms > at and ctx.viewing.may_watch(viewer, slot.item):
+                    back = max(at, slot.start_ms) + behind
                     break
         return JSONResponse(
             {"detail": RESTRICTED_PROGRAM, "code": "restricted", "resumesAtMs": back},

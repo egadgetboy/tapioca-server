@@ -171,7 +171,7 @@ shows **Also hides** ("2 genres and 1 studio", or "Nothing more"). Beside
 each person, **What they see** (formerly **Stations**; "(3 set)" when
 anything is chosen) opens "What Kit sees", in three parts: **Stations**
 (allowed, blocked, or as their level says, each with why it's shown or
-hidden), **Also hidden for Kit**, and **Allowed for Kit in Media**. Shows
+hidden), **Also hidden for Kit**, and **Allowed for Kit**. Shows
 and movies are found by typing part of a title.
 
 **It's logged.** The access log records each change: "Ada changed the
@@ -222,10 +222,11 @@ counts; allowing the station never allows what's on it):
   guide, now and next, the page's stations and guide, status), one they may
   not watch is "Restricted program", with its times and nothing else
   (`restricted: true`). Search never finds a station by it.
-- **The station's own picture,** shared by everyone: its Up Next Banner
-  and cards say "Stay tuned" rather than name a program someone it's
-  allowed for by hand may not watch, and its commercials and trailers go
-  no higher than the strictest level it's allowed for by hand.
+- **The station's own picture,** shared by everyone, never names a
+  program someone it's allowed for by hand may not watch: there's no Up
+  Next Banner before it, and its cards say "Stay tuned" or leave the title
+  out. Its commercials and trailers go no higher than the strictest level
+  it's allowed for by hand.
 - **The page** leaves out what a station allowed for them by hand is made
   of (its sources, blocks and Feature Presentation), unless they may
   change it.

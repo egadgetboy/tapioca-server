@@ -15,8 +15,9 @@ the title for them."""
 
 from __future__ import annotations
 
-import contextlib
+import asyncio
 import time
+from collections import deque
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -282,25 +283,25 @@ def test_her_stream_refuses_a_restricted_program_and_comes_back(app, monkeypatch
 
 
 def test_a_piece_holds_what_was_sent_around_it(tmp_path):
-    """Which programs a piece holds: whatever the station sent from a little
-    before the piece before it appeared until it did (MARGIN_S either side,
-    to be safe), and what it was sending when it began; UNKNOWN for what
-    was sent before the station's record of it begins."""
+    """Which programs a piece holds: whatever was given to ffmpeg from a
+    little before the piece before it appeared until it did (MARGIN_S either
+    side, to be safe), and what it was being given when it began; UNKNOWN
+    for what was given before the stream's record of it begins."""
     a, b = SimpleNamespace(rating_key="a"), SimpleNamespace(rating_key="b")
     t = time.monotonic()
-    station = SimpleNamespace(fed=[(t - 100, a), (t - 10, None), (t - 9, b)])
     stream = hls.HlsStream.__new__(hls.HlsStream)
-    stream.b, stream.folder, stream.holds = station, tmp_path, {}
-    stream._newest_at, stream._born = None, t - 5
+    stream.fed, stream.fed_whole = deque([(t - 100, a), (t - 10, None), (t - 9, b)]), False
+    stream.folder, stream.holds = tmp_path, {}
+    stream._newest_at, stream._born = None, t - 20
     assert stream.contents(t - 50, t - 20) == (a,)
     assert stream.contents(t - 20, t) == (a, None, b)
     assert stream.contents(t - 200, t) == (hls.UNKNOWN, a, None, b)
     (tmp_path / "s1.ts").write_bytes(b"x")
     stream.label_new_pieces()
-    held = stream.holds["s1.ts"]  # (from up to RECENT_S before it began)
+    held = stream.holds["s1.ts"]  # (all since a little before it began)
     assert a in held and None in held and b in held
     stream._newest_at = time.monotonic() - 0.2
-    station.fed.append((time.monotonic(), a))
+    stream.fed.append((time.monotonic(), a))
     (tmp_path / "s2.ts").write_bytes(b"x")
     stream.label_new_pieces()
     assert b in stream.holds["s2.ts"] and a in stream.holds["s2.ts"]
@@ -479,48 +480,75 @@ def test_several_new_pieces_at_once_each_hold_all_since_the_last(tmp_path):
     everything since the last time, Heist's tail included."""
     heist, ok = SimpleNamespace(rating_key="301"), SimpleNamespace(rating_key="201")
     t = time.monotonic()
-    station = SimpleNamespace(fed=[(t - 60, heist), (t - 5, ok)], fed_whole=True)
     stream = hls.HlsStream.__new__(hls.HlsStream)
-    stream.b, stream.folder, stream.holds = station, tmp_path, {}
-    stream._newest_at, stream._born = None, t
+    stream.fed, stream.fed_whole = deque([(t - 60, heist), (t - 5, ok)]), True
+    stream.folder, stream.holds = tmp_path, {}
+    stream._newest_at, stream._born = None, t - 70
     for n in range(4):
         (tmp_path / f"s{n}.ts").write_bytes(b"x")
     stream.label_new_pieces()
     assert all(heist in stream.holds[f"s{n}.ts"] for n in range(4))
 
 
-def test_a_new_session_starts_its_record_from_nothing(tmp_path):
-    """(The cold audit of 1.39.0.) After a restart, or a session that ended
-    during Heist, the station's record starts again from nothing sent: its
-    first pieces hold what this session sent, never UNKNOWN or the last
-    session's Heist."""
+def test_a_new_stream_starts_its_record_from_nothing(tmp_path):
+    """(The cold audit of 1.39.0.) A stream's record starts from nothing
+    given to its ffmpeg: its first pieces hold what it was given, never
+    UNKNOWN; once its start is forgotten, what came before can't be told."""
     puppet = SimpleNamespace(rating_key="201")
     t = time.monotonic()
-    station = SimpleNamespace(fed=[(t - 2, None), (t - 1.5, puppet)], fed_whole=True)
     stream = hls.HlsStream.__new__(hls.HlsStream)
-    stream.b, stream.folder, stream.holds = station, tmp_path, {}
+    stream.fed, stream.fed_whole = deque([(t - 2, None), (t - 1.5, puppet)]), True
+    stream.folder, stream.holds = tmp_path, {}
     stream._newest_at, stream._born = None, t
     assert stream.contents(t - 40, t) == (None, None, puppet)
-    station.fed_whole = False  # (its start forgotten: what came before can't be told)
+    stream.fed_whole = False  # (its start forgotten: what came before can't be told)
     assert stream.contents(t - 40, t)[0] is hls.UNKNOWN
 
 
-def test_a_broadcasters_new_session_clears_its_record():
+async def test_a_piece_holds_what_ffmpeg_was_given_however_long_ago_it_was_sent(
+    tmp_path, monkeypatch
+):
+    """(The second cold audit of 1.39.0.) What a piece holds goes by when
+    the stream's ffmpeg was given it, not when the station sent it. Heist's
+    tail and then a card, sent a while before (here, more than MARGIN_S):
+    given to ffmpeg late, as a stream that's behind does, and as a new
+    stream gets the station's recent bytes after a stall, the pieces made
+    from them hold Heist. (By when they were sent, they held only the card,
+    and went to Kit.) And a session's old bytes carry their own program."""
     from app.broadcaster import Broadcaster
 
-    b = Broadcaster.__new__(Broadcaster)
-    from collections import deque
+    monkeypatch.setattr(hls, "MARGIN_S", 0.05)
+    heist = SimpleNamespace(rating_key="301")
+    b = Broadcaster(ctx=SimpleNamespace(), channel_id=1)
+    b._task = asyncio.get_running_loop().create_future()  # (as if it's running)
+    behind = b.subscribe("app viewers on 7", counted=False)
+    b._content = heist
+    b._emit(b"heist")
+    b._content = None
+    b._emit(b"card")
+    await asyncio.sleep(0.3)  # (the stall, or the stream behind)
+    late = b.subscribe("night-mode app viewers on 7", counted=False)  # (its recent bytes)
 
-    b.fed = deque([(1.0, SimpleNamespace(rating_key="301"))], maxlen=5)
-    b.fed_whole = False
-    b.ctx = SimpleNamespace(
-        db=SimpleNamespace(get_channel=lambda cid: None),
-        settings=SimpleNamespace(),
-    )
-    b.channel_id = 1
-    with contextlib.suppress(Exception):  # (only its record matters here)
-        Broadcaster._new_session(b)
-    assert b.fed_whole is True and len(b.fed) == 1 and b.fed[0][1] is None
+    class Ffmpeg:
+        def write(self, chunk: bytes) -> None: ...
+
+        async def drain(self) -> None: ...
+
+    for n, viewer in enumerate((behind, late)):
+        folder = tmp_path / str(n)
+        folder.mkdir()
+        stream = hls.HlsStream.__new__(hls.HlsStream)
+        stream.fed, stream.fed_whole = deque(maxlen=hls.FED_KEPT), True
+        stream.folder, stream.holds, stream.ended_because = folder, {}, ""
+        stream._born = time.monotonic()
+        stream._newest_at = time.monotonic()  # (a piece just before)
+        stream._viewer = viewer
+        viewer.queue.put_nowait(None)  # (then the station stops)
+        await stream._feed(Ffmpeg())
+        (folder / "s1.ts").write_bytes(b"x")
+        stream.label_new_pieces()
+        assert heist in stream.holds["s1.ts"], (n, stream.holds)
+    b._task.cancel()
 
 
 def test_a_restricted_programs_special_isnt_named(app):
@@ -659,7 +687,7 @@ async def test_a_stopping_station_never_hands_a_new_viewer_what_it_sent_before()
     from app.broadcaster import Broadcaster
 
     b = Broadcaster(ctx=SimpleNamespace(), channel_id=1)
-    b._recent.append(b"Heist")
+    b._recent.append((b"Heist", None))
     b._recent_bytes = 5
     started = asyncio.Event()
     late = asyncio.Event()
@@ -675,3 +703,94 @@ async def test_a_stopping_station_never_hands_a_new_viewer_what_it_sent_before()
     assert list(b._recent) == [] and b._recent_bytes == 0
     late.set()
     await stopping
+
+
+def test_the_last_one_watching_leaving_keeps_the_station_for_a_refused_app(app):
+    """(The third cold audit of 1.39.0.) Ada watching, Kit refused (holding
+    her place, away from home): Ada tuning away doesn't stop the stream, so
+    Kit's place isn't given up; a second refusal keeps her away from home.
+    Once Kit tunes away too, it stops."""
+    ctx = app.state.ctx
+    with TestClient(app):
+        stream = hls.HlsStream.__new__(hls.HlsStream)
+        stream.clients, stream.away, stream.since, stream.who = {}, set(), {}, {}
+        stream.waiting = {}
+        stream.label = stream.label_mid = "station 7, Mixed"
+        stream.ended = stream._stopping = False
+        stream.b = SimpleNamespace(channel_id=7, ctx=ctx, behind_ms=0)
+        stream.last_asked = time.monotonic()
+        stopped = []
+        stream.stop = stopped.append
+        stream.asked_by("ada")
+        stream.asked_by("kit", True)
+        stream.blocked("kit")
+        stream.blocked("kit")  # (a second refused piece)
+        assert stream.places() == {"ada": False, "kit": True}
+        stream.left_by("ada")
+        assert stopped == [] and stream.places() == {"kit": True}
+        stream.left_by("kit")
+        assert stopped == ["the last app watching it tuned away"]
+
+
+async def test_someone_tuning_in_while_a_station_stops_gets_a_new_session(monkeypatch):
+    """(The third cold audit of 1.39.0; older than it.) Someone who tunes in
+    while a station stops is watching once it has: a new session starts for
+    them, rather than nothing, forever. Not for a station that's gone."""
+    from app.broadcaster import Broadcaster
+
+    sessions = []
+
+    async def session(self):
+        sessions.append(self.channel_id)
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(Broadcaster, "_supervise", session)
+    for gone in (False, True):
+        b = Broadcaster(ctx=SimpleNamespace(broadcasters={}), channel_id=1)
+        if not gone:
+            b.ctx.broadcasters[1] = b
+        started, late = asyncio.Event(), asyncio.Event()
+
+        async def ending(started=started, late=late):
+            started.set()
+            await late.wait()
+
+        b._task = asyncio.create_task(ending())
+        await started.wait()
+        stopping = asyncio.create_task(b.stop())
+        await asyncio.sleep(0.05)
+        viewer = b.subscribe("app viewers on 1", counted=False)
+        late.set()
+        await stopping
+        await asyncio.sleep(0.05)
+        if gone:
+            assert sessions == [1] and viewer.closed and viewer not in b.viewers
+        else:
+            assert sessions == [1] and b._task is not None and not b._task.done()
+            assert viewer in b.viewers and not viewer.closed and not b._stopping
+            b._task.cancel()
+
+
+def test_her_app_is_told_when_her_station_is_back_by_what_it_really_plays(app, monkeypatch):
+    """(The third cold audit of 1.39.0.) `resumesAtMs` goes by where the
+    station really is: Heist ends 40 minutes from now on its schedule, but
+    a station 30 minutes behind it (tuned in from a program's start) plays
+    its end 70 minutes from now."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[7]): True})
+        puppet, heist = items(ctx, {"201", "301"})
+        now = int(time.time() * 1000)
+        plays(ctx, ids[7], [heist, puppet], now - 60 * 60_000)
+        stream = FakeStream({"s1.ts": (heist,)})
+        monkeypatch.setattr(ctx.hls_streams, "get", lambda cid, night=False: stream)
+        phone = TestClient(app)
+        as_kit = sign_in_app(app, KIT)
+        got = phone.get("/api/v1/stations", headers=as_kit).json()["stations"]
+        kits = next(s for s in got if s["number"] == 7)["hls"].split("?")[0]
+        back = phone.get(kits).json()["resumesAtMs"]
+        assert abs(back - (now + 40 * 60_000)) < 5_000, back - now
+        ctx.broadcaster(ids[7]).behind_ms = 30 * 60_000
+        back = phone.get(kits).json()["resumesAtMs"]
+        assert abs(back - (now + 70 * 60_000)) < 5_000, back - now
