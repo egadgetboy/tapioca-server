@@ -2081,7 +2081,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         page.wait_for_selector("#userStations[open] .sees-part .sel")
         # (1.39.0) The station allowed for her by hand, blocked for now: said, with until when.
         look.expect("an allowed station blocked for now says until when",
-                    "Blocked for now: something Robin can’t see is on until"
+                    "something Robin can’t see is scheduled"
                     in page.inner_text("#userStations"), True)  # fmt: skip
         page.evaluate(
             "() => document.querySelectorAll('#userStations .sees-part')[1].scrollIntoView({block: 'start'})"

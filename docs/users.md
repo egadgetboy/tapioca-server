@@ -197,18 +197,23 @@ decides. An episode counts as its show for rules 2, 3, 6 and 7.
 
 For a station, one **blocked** for the person is hidden. One **allowed**
 for them is shown while every program in its published schedule, the next
-48 hours (the guides' window), passes rules 1 to 7 for them; while one
-doesn't, it's blocked for them, and it comes back once that program has
-aired (the owner, October 17). Their guide shows it only 48 hours ahead, and
-the page leaves out what it's made of (its sources and coming specials).
-Otherwise, a station is shown only if every program it plays passes rules
-2 and 4 to 7. "Every program" means everything in its current lineup,
-including its specials' programs. A title allowed for the person doesn't
-make a station shown: an Admin allows the station instead. Whatever decides
-it, it's asked again on every request of its stream, so someone watching
-is stopped when it changes (a new schedule, a new level), and everyone else
-watches on. A schedule that can't be worked out keeps a station hidden.
-Station numbers don't change when some stations are hidden.
+48 hours (the guides' window), passes rules 2 to 7 for them. While one
+doesn't, it's blocked for them; it's back once nothing they can't see is in
+the 48 hours ahead, and the Access tab says when, or that it won't come back
+on its own (the owner, October 17). For such a station, their guide shows
+only the next 48 hours, the page leaves out what it's made of (its sources,
+blocks, Feature Presentation and coming specials), a program that can't
+play is replaced only by one in those 48 hours, and its commercials and
+trailers go no higher than what's on in them. Otherwise, a station is shown
+only if every program it plays passes rules 2 and 4 to 7. "Every program"
+means everything in its current lineup, including its specials' programs. A
+title allowed for the person doesn't make a station shown: an Admin allows
+the station instead. Someone with limits never sees what aired before the
+program on now, in any guide. In tapiOca's apps, it's asked again on every
+request of a station's stream, so someone watching is stopped when it
+changes (a new schedule, a new level), and everyone else watches on. A
+schedule that can't be worked out keeps a station hidden. Station numbers
+don't change when some stations are hidden.
 
 Still to come *(after 1.0)*: rating overrides, Station Audience warnings,
 Preview as user, and Why is this hidden for titles. (For stations, What

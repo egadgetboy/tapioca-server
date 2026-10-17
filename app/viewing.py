@@ -78,6 +78,8 @@ LEVELS_MOST = 50
 # the owner's D01): its published schedule, as far as the guides show it
 # (updates.GUIDE_FUTURE_MS; a test keeps them the same).
 STATION_WINDOW_MS = 48 * 3600 * 1000
+# How far ahead the Access tab looks for when one blocked comes back.
+COMES_BACK_LOOK_MS = 7 * 24 * 3600 * 1000
 NAME_MAX = 40
 # The level new people start on (1.34.1, the owner), by its id; none:
 # Unrestricted. An Admin may choose another as each is added.
@@ -515,7 +517,7 @@ class Viewing:
         # Each Station's next STATION_WINDOW_MS, judged (see _window): kept
         # for the minute, and for as long as its eras and what's known of
         # its titles stay as they are.
-        self._windows: dict[int, tuple[tuple, list[tuple[Judged, int, int]] | None]] = {}
+        self._windows: dict[int, tuple[tuple, list[tuple[Item, Judged, int, int]] | None]] = {}
         self._names: frozenset[tuple[str, str]] | None = None  # (hidden by, as last loaded)
         self.reload()
 
@@ -781,17 +783,18 @@ class Viewing:
         when the last such airing in it ends (the owner, October 17: "The
         station is blocked for kid while a restricted title is scheduled.
         Once the title passes, then kid is allowed to resume watching the
-        station"). A schedule that can't be read, or has nothing in it, or
-        whose ratings aren't all known yet, blocks it (`now_ms` +
-        STATION_WINDOW_MS, to be safe)."""
+        station"). A schedule that can't be read, or has nothing in it,
+        blocks it (`now_ms` + STATION_WINDOW_MS, to be safe); a program whose
+        rating isn't known yet blocks it until that program ends, as one
+        they can't see. (When it comes back for good: comes_back.)"""
         if viewer.everything:
             return None
         now_ms = int(time.time() * 1000) if now_ms is None else now_ms
         window = self._window(channel_id, now_ms)
-        if not window:
+        if window is None:
             return now_ms + STATION_WINDOW_MS
         until = None
-        for judged, start_ms, end_ms in window:
+        for _, judged, start_ms, end_ms in window:
             # (One that's ended has aired; one past the window isn't published yet.)
             if (
                 end_ms > now_ms
@@ -800,6 +803,74 @@ class Viewing:
             ):
                 until = end_ms if until is None else max(until, end_ms)
         return until
+
+    def comes_back(self, viewer: Viewer, channel_id: int, now_ms: int) -> tuple[bool, int | None]:
+        """For the Access tab: whether a Station allowed for someone by hand
+        is blocked for them now, and when it comes back: the first time from
+        which nothing they can't see is in the STATION_WINDOW_MS after it,
+        looking a week ahead (None: not within that, or it can't be told).
+        (The cold audit of 1.39.0: the end of what's in the window now
+        wasn't it, as the window moves on.)"""
+        if viewer.everything or channel_id not in viewer.allowed:
+            return False, None
+        if self.blocked_until(viewer, channel_id, now_ms) is None:
+            return False, None
+        ahead = COMES_BACK_LOOK_MS
+        try:
+            slots = schedule.station_schedule(self.db.eras(channel_id)).between(
+                now_ms, now_ms + ahead
+            )
+            hidden = [
+                (s.start_ms, s.end_ms)
+                for s in slots
+                if s.item.rating_key != INFO_KEY and not viewer.sees(self.titles.judge(s.item))
+            ]
+        except Exception:
+            log.exception("Station %s's schedule couldn't be worked out", channel_id)
+            return True, None
+        for at in [now_ms, *(end for _, end in hidden)]:
+            if at + STATION_WINDOW_MS > now_ms + ahead:
+                break
+            if not any(start < at + STATION_WINDOW_MS and end > at for start, end in hidden):
+                return True, at
+        return True, None
+
+    def hand_allowed(self, channel_id: int) -> bool:
+        """Whether anyone with limits has a Station allowed for them by hand
+        (so what it airs is judged by its next STATION_WINDOW_MS for them:
+        its stand-ins and clips too, the cold audit of 1.39.0)."""
+        if not self.signing_in():
+            return False
+        return any(
+            channel_id in self._stations.get(u.id, {}) and self._stations[u.id][channel_id]
+            and not self.viewer(u).everything
+            for u in self.db.users()
+        )  # fmt: skip
+
+    def _in_window(self, channel_id: int, now_ms: int | None) -> list[Item] | None:
+        """The programs a Station airs in its next STATION_WINDOW_MS (INFO's
+        own film aside; None: its schedule can't be worked out)."""
+        now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        window = self._window(channel_id, now_ms)
+        if window is None:
+            return None
+        return [
+            item
+            for item, _, start_ms, end_ms in window
+            if end_ms > now_ms and start_ms < now_ms + STATION_WINDOW_MS
+        ]
+
+    def window_keys(self, channel_id: int, now_ms: int | None = None) -> set[str] | None:
+        """The programs a Station airs in its next STATION_WINDOW_MS (None:
+        its schedule can't be worked out)."""
+        items = self._in_window(channel_id, now_ms)
+        return None if items is None else {i.rating_key for i in items}
+
+    def window_reach(self, channel_id: int, now_ms: int | None = None) -> Reach:
+        """What a Station needs of a level by its next STATION_WINDOW_MS
+        alone (unknown, to be safe, if that can't be worked out)."""
+        items = self._in_window(channel_id, now_ms)
+        return reach_of(items, self.titles) if items else Reach(known=False)
 
     def shown_until(self, viewer: Viewer, channel_id: int, now_ms: int) -> int | None:
         """How far ahead a guide may show someone a Station: for one allowed
@@ -812,7 +883,7 @@ class Viewing:
             return None
         return now_ms + STATION_WINDOW_MS
 
-    def _window(self, channel_id: int, now_ms: int) -> list[tuple[Judged, int, int]] | None:
+    def _window(self, channel_id: int, now_ms: int) -> list[tuple[Item, Judged, int, int]] | None:
         """What a Station airs from the start of `now_ms`'s minute until
         STATION_WINDOW_MS after its end, each program judged, with when it
         starts and ends (INFO's own film aside); None if its schedule can't
@@ -827,8 +898,8 @@ class Viewing:
             slots = list(
                 schedule.station_schedule(eras).between(minute, minute + 60_000 + STATION_WINDOW_MS)
             )
-            found: list[tuple[Judged, int, int]] | None = [
-                (self.titles.judge(s.item), s.start_ms, s.end_ms)
+            found: list[tuple[Item, Judged, int, int]] | None = [
+                (s.item, self.titles.judge(s.item), s.start_ms, s.end_ms)
                 for s in slots
                 if s.item.rating_key != INFO_KEY
             ]
@@ -1155,6 +1226,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(404, "That user doesn't exist")
         viewer = v.viewer(user)
         chosen = v.stations_of(user.id)
+        now = int(time.time() * 1000)
         out = []
         for c in ctx.db.list_channels():
             why = None
@@ -1177,9 +1249,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     "why": why,
                     # (Allowed by hand, but blocked for now: something they
                     # can't see is on before then. 1.39.0, the owner's D01.)
-                    "blockedUntilMs": v.blocked_until(viewer, c.id)
-                    if chosen.get(c.id) is True and not viewer.everything
-                    else None,
+                    **dict(
+                        zip(
+                            ("blockedNow", "blockedUntilMs"),
+                            v.comes_back(viewer, c.id, now),
+                            strict=True,
+                        )
+                    ),
                 }
             )
         return {"admin": user.role == access.ADMIN, "level": viewer.level.name, "stations": out}

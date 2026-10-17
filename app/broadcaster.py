@@ -899,7 +899,13 @@ class Broadcaster:
             clip = clip_at(kind, path)
         if clip is None:
             return False  # (gone from the folders since its lineup was made)
-        return ctx.clip_ratings.rated(kind, clip, cliprules.cap(viewing.reach(channel.id)))
+        most = cliprules.cap(viewing.reach(channel.id))
+        # (Allowed for someone with limits by hand: no higher than what's on
+        # in its next 48 hours. The cold audit of 1.39.0.)
+        if viewing.hand_allowed(channel.id):
+            soon = cliprules.cap(viewing.window_reach(channel.id))
+            most = None if soon is None or most is None else min(most, soon)
+        return ctx.clip_ratings.rated(kind, clip, most)
 
     async def _play_clip(
         self,
@@ -1346,10 +1352,19 @@ class Broadcaster:
         own = station.items_for(slot)
         kind = (station.special(slot) or {}).get("kind")
         if kind == specials.BLOCK:
-            return [station.era_of(slot).items, own]
-        if kind == specials.FEATURE:
-            return [specials.feature_movies(self.ctx.db, channel, own, set()), own]
-        return [own]
+            pools = [station.era_of(slot).items, own]
+        elif kind == specials.FEATURE:
+            pools = [specials.feature_movies(self.ctx.db, channel, own, set()), own]
+        else:
+            pools = [own]
+        # (Allowed for someone with limits by hand: only what's on in its next
+        # 48 hours, judged for everyone who may watch it now; nothing, if
+        # that can't be told. The cold audit of 1.39.0.)
+        viewing = self.ctx.viewing
+        if viewing.hand_allowed(channel.id):
+            keys = viewing.window_keys(channel.id) or set()
+            pools = [[i for i in pool if i.rating_key in keys] for pool in pools]
+        return pools
 
     def _choose(
         self,

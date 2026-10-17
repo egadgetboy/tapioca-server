@@ -181,7 +181,8 @@ def test_an_admin_can_allow_or_block_a_station_for_someone(app):
         assert why[5] == ("level", "It plays shows rated TV-MA")
         assert why[7] == ("allowed", "It plays movies rated R")
         seven = next(s for s in listed["stations"] if s["number"] == 7)
-        assert seven["blockedUntilMs"] is not None
+        assert seven["blockedNow"] is True  # (and, R over and over, not back on its own)
+        assert seven["blockedUntilMs"] is None
         # Logged, in plain words.
         logs = admin.get("/api/logs?access_log=true").json()["text"]
         assert "Ada put Kit on the Viewing Level Kid and allowed station 7 for Kit" in logs

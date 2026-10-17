@@ -2279,8 +2279,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             # them. The hostile audit before building 1.39.0.)
             if ctx.viewing.shown_until(viewer, c.id, now) is not None:
                 said.update(
-                    sources=[], pending=None, nextMarathon=None, nextFeature=None, nextBlock=None
-                )
+                    sources=[], blocks=[], featureSource={}, pending=None, check=None,
+                    nextMarathon=None, nextFeature=None, nextBlock=None,
+                )  # fmt: skip
             return said
 
         return [shown(c) for c in ctx.stations_for(user)]

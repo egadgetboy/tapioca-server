@@ -99,6 +99,21 @@ def two_eras(ctx, channel_id: int, first: list, then: list, switch_ms: int) -> N
     ctx.db.replace_eras(channel_id, old, eras)
 
 
+def long_lineup(ctx, channel_id: int, now: int) -> None:
+    """The station plays Puppet Town for a little over two days (its three
+    episodes, 44 times), then Heist (R), and again: Heist is past the next
+    48 hours, though it's in the lineup."""
+    eras = ctx.db.eras(channel_id)
+    items = [i for c in ctx.db.list_channels() for e in ctx.db.eras(c.id) for i in e.items]
+    puppets = [next(i for i in items if i.rating_key == k) for k in ("201", "202", "203")]
+    heist = [next(i for i in items if i.rating_key == "301")]
+    first = loop(puppets * 44 + heist)
+    ctx.db.replace_eras(
+        channel_id, [e.id for e in eras],
+        [NewEra(first, None, now - 60_000, "a", "in-order", now, "test")],
+    )  # fmt: skip
+
+
 def test_the_window_is_the_guides():
     assert viewing.STATION_WINDOW_MS == GUIDE_FUTURE_MS == 48 * HOUR
 
@@ -116,10 +131,10 @@ def test_a_station_allowed_by_hand_is_blocked_while_something_above_them_is_sche
         listed = admin.get(f"/api/access/users/{kit}/stations").json()["stations"]
         seven = next(s for s in listed if s["number"] == 7)
         assert seven["chosen"] == "allowed" and seven["levelSees"] is False
-        now = int(time.time() * 1000)
-        assert now < seven["blockedUntilMs"] <= now + GUIDE_FUTURE_MS + 4 * HOUR
+        # (Heist is on it over and over, so it doesn't come back on its own.)
+        assert seven["blockedNow"] is True and seven["blockedUntilMs"] is None
         # (A Station allowed that has nothing above them stays as it was.)
-        assert next(s for s in listed if s["number"] == 3)["blockedUntilMs"] is None
+        assert next(s for s in listed if s["number"] == 3)["blockedNow"] is False
 
 
 def test_it_comes_back_once_the_title_has_aired(app):
@@ -147,7 +162,10 @@ def test_it_comes_back_once_the_title_has_aired(app):
         assert v.sees_station(kit, mixed, until)
         assert v.sees_station(kit, mixed, switch + HOUR)
         # (Not allowed by hand: hidden while Heist is still to come, by the level.)
-        admin.put(f"/api/access/users/{kit_id}/viewing", json={"stations": {str(mixed): None}})
+        assert (
+            admin.put(f"/api/access/users/{kit_id}/viewing", json={"stations": {}}).status_code
+            == 200
+        )
         kit = v.viewer(ctx.db.user(kit_id))
         assert not v.sees_station(kit, mixed, now)
 
@@ -160,7 +178,9 @@ def test_an_episode_rated_above_its_show_blocks_too(app):
         ids = set_up(admin)
         now = int(time.time() * 1000)
         ctx.db.save_titles([("202", "episode", "TV-14", "1", now, now)])
-        ctx.titles.__init__(ctx.db)
+        ctx.titles.__init__(ctx.db)  # (read again, as on a restart)
+        ctx.viewing._windows.clear()  # (its version starts over with it)
+        ctx.viewing._reaches.clear()
         kit_id = kid(admin, {str(ids[3]): True})
         kit = ctx.viewing.viewer(ctx.db.user(kit_id))
         assert ctx.viewing.titles.judge(only(ctx, ids[3], {"202"})[0]).age == 14
@@ -294,3 +314,131 @@ def test_the_page_never_tells_them_what_an_allowed_station_is_made_of(app):
         assert mine[9]["sources"]
         adas = {c["number"]: c for c in admin.get("/api/channels").json()}
         assert adas[3]["sources"]
+
+
+def test_a_stand_in_is_never_something_not_yet_judged_for_them(app):
+    """(The cold audit of 1.39.0.) When a program can't play, another of
+    the station's takes its place. On a station allowed for Kit by hand,
+    that's only one already on in the next 48 hours (judged for everyone
+    who may watch it now), never Heist from further on."""
+    from types import SimpleNamespace
+
+    from app.broadcaster import Broadcaster
+
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[3]): True})
+        now = int(time.time() * 1000)
+        long_lineup(ctx, ids[3], now)
+        station = ctx.station(ids[3])
+        slot = station.locate(now)
+        pools = Broadcaster._stand_ins(
+            SimpleNamespace(ctx=ctx), ctx.db.get_channel(ids[3]), station, slot
+        )
+        keys = {i.rating_key for pool in pools for i in pool}
+        assert keys and "301" not in keys
+        # (With no one allowed it by hand, the station's whole lineup, as before.)
+        assert admin.put(f"/api/access/users/{ctx.db.user_named('kit')[0].id}/viewing",
+                         json={"stations": {}}).status_code == 200  # fmt: skip
+        pools = Broadcaster._stand_ins(
+            SimpleNamespace(ctx=ctx), ctx.db.get_channel(ids[3]), station, slot
+        )
+        assert "301" in {i.rating_key for pool in pools for i in pool}
+
+
+def test_their_guide_never_shows_what_aired_before(app):
+    """(The cold audit of 1.39.0.) Heist aired six hours ago on Puppets,
+    which plays only Puppet Town since two hours ago. Kit's guide starts at
+    what's on now, on every station, allowed by hand or by the level, so
+    it never names Heist. Ada's goes back as asked."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[3]): True})
+        puppets = only(ctx, ids[3], {"201", "202", "203"})
+        heist = only(ctx, ids[7], {"301"})
+        now = int(time.time() * 1000)
+        old = [e.id for e in ctx.db.eras(ids[3])]
+        ctx.db.replace_eras(ids[3], old, [
+            NewEra(loop(heist + puppets), None, now - 6 * HOUR, "a", "in-order", now, "test"),
+            NewEra(loop(puppets), now - 2 * HOUR, now - 2 * HOUR, "b", "in-order", now, "test"),
+        ])  # fmt: skip
+        as_kit, as_ada = sign_in_app(app, KIT), sign_in_app(app, ADA)
+        phone = TestClient(app)
+        past = f"/api/v1/guide?from={now - 6 * HOUR}&to={now + HOUR}"
+        assert 3 in numbers(phone, as_kit)
+        kits = phone.get(past, headers=as_kit)
+        assert kits.status_code == 200 and "Heist" not in kits.text
+        three = next(s for s in kits.json()["stations"] if s["number"] == 3)
+        assert three["programs"] and three["programs"][0]["start"] <= now
+        assert "Heist" in phone.get(past, headers=as_ada).text
+        # (By the level: the same.)
+        assert admin.put(f"/api/access/users/{ctx.db.user_named('kit')[0].id}/viewing",
+                         json={"stations": {}}).status_code == 200  # fmt: skip
+        assert "Heist" not in phone.get(past, headers=as_kit).text
+
+
+def test_the_page_names_nothing_an_allowed_station_plays(app):
+    """(The cold audit of 1.39.0.) A time-of-day block four days out that
+    plays Heist, and a Feature Presentation from it: on the page, Kit's
+    Puppets (allowed by hand) never names Heist anywhere."""
+    import datetime
+
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[3]): True})
+        far = (datetime.datetime.now().weekday() + 4) % 7
+        changed = admin.put(f"/api/channels/{ids[3]}", json={
+            "number": 3, "name": "Puppets",
+            "sources": [{"type": "show", "ratingKey": "100", "title": "Puppet Town"}],
+            "blocks": [{"name": "Late show", "days": str(far), "start": "23:00", "end": "23:59",
+                        "sources": [{"type": "movie", "ratingKey": "301", "title": "Heist"}]}],
+            "featureMode": "on", "featureDays": str(far),
+            "featureSource": {"type": "section", "key": "2", "sectionType": "movie",
+                              "title": "Heist"},
+        })  # fmt: skip
+        assert changed.status_code == 200, changed.text
+        page = TestClient(app)
+        page.post("/api/access/sign-in", json=KIT)
+        got = page.get("/api/channels")
+        assert 3 in [c["number"] for c in got.json()]
+        assert "Heist" not in got.text
+        assert "Heist" in admin.get("/api/channels").text
+
+
+@pytest.mark.info_station
+def test_an_allowed_info_station_is_as_it_was(app):
+    """(The cold audit of 1.39.0.) INFO plays only tapiOca's own film, for
+    everyone: allowed by hand, it's never taken for one that can't be read."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        set_up(admin)
+        info = next(c for c in ctx.db.list_channels() if c.number == 99)
+        kit_id = kid(admin, {str(info.id): True})
+        kit = ctx.viewing.viewer(ctx.db.user(kit_id))
+        assert ctx.viewing.sees_station(kit, info.id)
+
+
+def test_the_access_tab_says_whether_it_comes_back(app):
+    """(The cold audit of 1.39.0.) Until when it's blocked is when nothing
+    they can't see is in the 48 hours after; if that's not within a week,
+    the Access tab says it doesn't come back on its own."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kit_id = kid(admin, {str(ids[3]): True, str(ids[7]): True})
+        now = int(time.time() * 1000)
+        puppets = only(ctx, ids[3], {"201", "202", "203"})
+        heist = only(ctx, ids[7], {"301"})
+        # Puppets: Heist now, then Puppet Town only, from three hours on.
+        two_eras(ctx, ids[3], heist + puppets, puppets, now + 3 * HOUR)
+        listed = {
+            s["number"]: s
+            for s in admin.get(f"/api/access/users/{kit_id}/stations").json()["stations"]
+        }
+        assert listed[3]["blockedNow"] is True
+        assert now < listed[3]["blockedUntilMs"] <= now + 3 * HOUR
+        # Mixed: Heist over and over, so never.
+        assert listed[7]["blockedNow"] is True and listed[7]["blockedUntilMs"] is None
+        assert listed[9]["blockedNow"] is False and listed[9]["blockedUntilMs"] is None

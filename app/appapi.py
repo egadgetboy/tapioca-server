@@ -1033,9 +1033,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 # it's been judged for them. See viewing.Viewing.shown_until.)
                 until = ctx.viewing.shown_until(viewer, channel.id, now)
                 upto = to_ms if until is None else min(to_ms, until)
+                # (Someone with limits: from what's on now, never what aired
+                # before, which may have been above them, and the station
+                # shown since: the cold audit of 1.39.0.)
+                start = from_ms
+                if not viewer.everything:
+                    on = station.locate(now)
+                    start = max(from_ms, on.start_ms if on else now)
                 programs = [
-                    slot_program(station, slot) for slot in station.between(from_ms, upto)
-                ] if upto > from_ms else []  # fmt: skip
+                    slot_program(station, slot) for slot in station.between(start, upto)
+                ] if upto > start else []  # fmt: skip
                 out.append({"number": channel.number, "programs": programs})
             return out
 

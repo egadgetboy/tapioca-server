@@ -264,9 +264,13 @@ async function openUserStations(u) {
   stationsFor = { user: u, picks: new Map(), hidden: blocksOf(own.blocks), allowed: structuredClone(own.allowTitles || []) };
   $('#userStationsTitle').textContent = `What ${u.name} sees`;
   $('#userStationsStatus').textContent = '';
-  // (Allowed, but blocked for now: something they can't see is on before then. 1.39.0.)
-  const until = s => s.blockedUntilMs ? ` Blocked for now: something ${u.name} can’t see is on until ${new Date(s.blockedUntilMs).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. It comes back after that.` : '';
-  const said = s => s.chosen === 'allowed' ? `Allowed for ${u.name}.${until(s)}${s.why && !s.blockedUntilMs ? ` (${got.level} wouldn’t show it: ${s.why.toLowerCase()}.)` : ''}`
+  // (Allowed, but blocked for now: something they can't see is scheduled in
+  // the next 48 hours. When it comes back, or that it doesn't on its own. 1.39.0.)
+  const when = ms => new Date(ms).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const until = s => !s.blockedNow ? ''
+    : s.blockedUntilMs ? ` Blocked for now: something ${u.name} can’t see is scheduled. It’s back ${when(s.blockedUntilMs)}.`
+    : ` Blocked: something ${u.name} can’t see is scheduled on it again and again, so it won’t come back on its own. To show it, allow those shows and movies for ${u.name} below, or choose another level.`;
+  const said = s => s.chosen === 'allowed' ? `Allowed for ${u.name}.${until(s)}${s.why && !s.blockedNow ? ` (${got.level} wouldn’t show it: ${s.why.toLowerCase()}.)` : ''}`
     : s.chosen === 'blocked' ? `Blocked for ${u.name}.`
     : s.levelSees ? `Shown: it’s within ${got.level}.` : `Hidden: ${s.why.charAt(0).toLowerCase()}${s.why.slice(1)}.`;
   const part = (title, ...children) => h('section', { class: 'sees-part' }, h('h4', {}, title), ...children);
@@ -274,7 +278,7 @@ async function openUserStations(u) {
     h('p', { style: 'margin:0' }, `${u.name} is on ${got.level}. They see what ${got.level} shows, except for what you choose for them here.`),
     ...(viewing?.users[u.id]?.ownUnreadable ? [h('p', { class: 'hint', role: 'alert', style: 'margin:0' }, `What was chosen for ${u.name} here couldn’t be read, so they see nothing for now. Choose it again and save.`)] : []),
     part('Stations',
-      h('p', { class: 'hint', style: 'margin:0' }, `A station is shown or hidden as ${got.level} says, unless you allow or block it for ${u.name}. One you allow is still blocked while something ${u.name} can’t see is on in the next two days.`),
+      h('p', { class: 'hint', style: 'margin:0' }, `A station is shown or hidden as ${got.level} says, unless you allow or block it for ${u.name}. One you allow is still blocked while something ${u.name} can’t see is scheduled in the next 48 hours.`),
       got.stations.length ? h('table', { class: 'users' },
         h('tbody', {}, ...got.stations.map(st => {
           const hint = h('span', { class: 'hint' }, said(st));
@@ -289,7 +293,7 @@ async function openUserStations(u) {
             h('td', {}, select, h('div', {}, hint)));
         }))) : h('p', { class: 'muted', style: 'margin:0' }, 'There are no stations yet.')),
     part(`Also hidden for ${u.name}`,
-      h('p', { class: 'hint', style: 'margin:0' }, `Hidden for ${u.name} whatever ${got.level} shows: in Media, and any station that plays one (one you allow above, while one is on in the next two days).`),
+      h('p', { class: 'hint', style: 'margin:0' }, `Hidden for ${u.name} whatever ${got.level} shows: in Media, and on any station that plays one. A station you allow above is blocked only while one is scheduled in the next 48 hours.`),
       ...TAG_KINDS.map(([kind, label, noun]) => h('div', { class: 'field' }, h('label', {}, label, kind === 'labels' ? h('span', { class: 'hint' }, ' — Plex calls these labels') : null),
         namePicker(`${label} hidden for ${u.name}`, noun, stationsFor.hidden[kind], offered[kind] || []))),
       h('div', { class: 'field' }, h('label', {}, 'Shows and movies'), titlePicker(`Shows and movies hidden for ${u.name}`, stationsFor.hidden.titles))),

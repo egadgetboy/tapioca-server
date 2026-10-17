@@ -1263,7 +1263,7 @@ Viewing Levels are limits in tapiOca's apps and on tapiOca's page. They don't re
 
 **What limits don't cover:**
 
-- **Plex, Jellyfin and anything else on the tuner.** They don't say who's watching, so they show every station. See [Tuner access](#tuner-access) and [Blocking stations for some Plex users](#blocking-stations-for-some-plex-users).
+- **Plex, Jellyfin and anything else on the tuner, or playing a station's stream address at home** (such as VLC). They don't say who's watching, so they show every station. See [Tuner access](#tuner-access) and [Blocking stations for some Plex users](#blocking-stations-for-some-plex-users).
 - **Devices without PINs.** On a shared device, anyone can pick anyone without a PIN on **Who's tuning in?** Give everyone without limits a PIN on devices people with limits use.
 - **Signing in as someone else.** Someone who knows another person's password can sign in as them on their own device.
 - **A rating or genre Plex has wrong, or doesn't have.** tapiOca goes by what Plex says. Unrated titles follow the level's **Unrated titles** setting.

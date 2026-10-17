@@ -557,3 +557,28 @@ def test_a_station_is_judged_whole_as_it_follows_plex(app, specials):
         assert trailers_of(ctx.db.latest_items(eight)) == set()
         sets = ctx.db.program_sets(eight)
         assert sets and all(trailers_of(s) == set() for s in sets.values())
+
+
+def test_a_station_allowed_by_hand_plays_no_clip_above_its_next_48_hours(app):
+    """(The cold audit of 1.39.0.) Station 7, allowed for Kit by hand, plays
+    Puppet Town for two days and then Heist (R): Kit may watch it now, so
+    its trailers go only as high as what's on in the next 48 hours (Puppet
+    Town's TV-Y7), never Heist's R, though the lineup has it."""
+    import time
+
+    from .test_station_access import long_lineup
+
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        kit = next(u for u in ctx.db.users() if u.name == "Kit")
+        admin.put(f"/api/access/users/{kit.id}/viewing", json={"stations": {str(ids[7]): True}})
+        long_lineup(ctx, ids[7], int(time.time() * 1000))
+        assert ctx.viewing.sees_station(ctx.viewing.viewer(ctx.db.user(kit.id)), ids[7])
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 17}})
+        channel = ctx.db.get_channel(ids[7])
+        playing = SimpleNamespace(ctx=ctx)
+        slot = SimpleNamespace(item=SimpleNamespace(kind="movie"))
+        assert not Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 0}})
+        assert Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)

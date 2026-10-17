@@ -1,8 +1,8 @@
 {
   "version": "1.39.0",
   "new": [
-    "Stations you allow by hand pause for limits",
-    "They come back once that program has aired",
-    "Guides stop where a Station was checked"
+    "Stations allowed by hand follow limits",
+    "Watching stops when a station is no longer allowed",
+    "Guides never show what's above someone's limits"
   ]
 }
