@@ -1,15 +1,21 @@
 """A restricted program on a real station (1.39.0, the owner, October 17):
 real ffmpeg, a fake Plex. Kit (Kid) watches a station allowed for her by
-hand, in an app, at its own address; one of its three episodes is TV-14.
-Her app is refused the pieces of that episode (and its playlist while one
-is in it), and is back on its own once the next episode is on; Ada, an
-Admin, watches every piece the whole time, one shared stream."""
+hand, in an app, at its own address. Its first episode is TV-14 (good1, a
+440 Hz tone); the others are TV-Y7 (660 Hz and 330 Hz). She tunes in first,
+so the station starts with its Intro Bumper, which names that episode and
+plays its sound as it ends. Not one piece her app gets has that episode in
+it, by what's really in it (its sound), not by what tapiOca says; she's
+refused while it's on and back on her own once it's over; and Ada, an
+Admin, gets every piece, one shared stream."""
 
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import shutil
+import struct
+import subprocess
 import time
 
 import httpx
@@ -31,13 +37,51 @@ pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ff
 ADA = {"name": "Ada", "password": "correct horse"}
 KIT = {"name": "Kit", "password": "battery staple"}
 TV = {"app": "tapiOca for Android", "deviceName": "Den"}
+RATE = 8000
 
 
 def pieces(playlist: str) -> list[str]:
     return re.findall(r"^(s\d+\.ts)$", playlist, re.M)
 
 
-async def test_her_app_is_refused_the_restricted_episode_and_comes_back(tmp_path, media):  # noqa: F811
+def tones(path) -> dict[int, float]:
+    """How strong 330, 440 and 660 Hz are in a piece's sound, each against
+    the strongest of them (Goertzel, on 8 kHz mono)."""
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", str(RATE),
+         "-f", "s16le", "-"],
+        capture_output=True, check=False,
+    ).stdout  # fmt: skip
+    samples = struct.unpack(f"<{len(raw) // 2}h", raw[: len(raw) // 2 * 2])
+    power = {}
+    for f in (330, 440, 660):
+        k = 2 * math.cos(2 * math.pi * f / RATE)
+        a = b = 0.0
+        for x in samples:
+            a, b = x + k * a - b, a
+        power[f] = a * a + b * b - k * a * b
+    most = max(power.values()) or 1.0
+    return {f: p / most for f, p in power.items()}
+
+
+async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
+    tmp_path,
+    media,  # noqa: F811  (the fixture)
+    monkeypatch,
+):
+    from app.broadcaster import Broadcaster
+
+    # (What the station says it's sending while its Intro Bumper plays: the
+    # program it names, whose sound it plays as it ends. The cold audit of
+    # 1.39.0: it was nothing, so its pieces went to her.)
+    during_bumper = []
+    bumper = Broadcaster._play_intro
+
+    async def noted(self, *args, **kwargs):
+        during_bumper.append(getattr(self._content, "rating_key", None))
+        return await bumper(self, *args, **kwargs)
+
+    monkeypatch.setattr(Broadcaster, "_play_intro", noted)
     plex = FakePlex()
     plex.add_show("100", "Test Show")
     for n, name in enumerate(("good1", "good2", "good3"), start=1):
@@ -47,10 +91,10 @@ async def test_her_app_is_refused_the_restricted_episode_and_comes_back(tmp_path
     try:
         channel = await make_channel(base)
         now = int(time.time() * 1000)
-        # (Its ratings, as Plex would give them: the show TV-Y7, episode 2 TV-14.)
+        # (Its ratings, as Plex would give them: the show TV-Y7, episode 1 TV-14.)
         ctx.db.save_titles([
             ("100", "show", "TV-Y7", "1", now, now),
-            ("202", "episode", "TV-14", "1", now, now),
+            ("201", "episode", "TV-14", "1", now, now),
         ])  # fmt: skip
         ctx.titles.__init__(ctx.db)
         async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as admin:
@@ -62,6 +106,11 @@ async def test_her_app_is_refused_the_restricted_episode_and_comes_back(tmp_path
             changed = await admin.put(f"/api/access/users/{kit['id']}/viewing", json={
                 "level": kid, "stations": {str(channel["id"]): True}})  # fmt: skip
             assert changed.status_code == 200, changed.text
+            on = (await admin.put(f"/api/channels/{channel['id']}", json={
+                "number": 7, "name": "Test TV", "orderMode": "rotate",
+                "sources": [{"type": "show", "ratingKey": "100"}],
+                "tuneIn": "start", "introSeconds": 5})).json()  # fmt: skip
+            assert on.get("tuneIn") == "start", on
 
         async def address(who: dict) -> tuple[httpx.AsyncClient, str]:
             app_client = httpx.AsyncClient(base_url=base, timeout=60)
@@ -72,52 +121,58 @@ async def test_her_app_is_refused_the_restricted_episode_and_comes_back(tmp_path
 
         kits_app, kits = await address(KIT)
         adas_app, adas = await address(ADA)
-        stream = None
-        kit_got: list[tuple[str, tuple]] = []
-        ada_got: dict[str, tuple] = {}
-        refused = []
-        back_after_refusal = False
-        deadline = time.monotonic() + 3 * CLIP_S * 2 + 20
+        kit_got: dict[str, bytes] = {}
+        ada_got: dict[str, bytes] = {}
+        answers: list[int] = []
+        deadline = time.monotonic() + 3 * CLIP_S + 60
         while time.monotonic() < deadline:
+            # Kit first: she tunes in, and the station starts for her.
+            mine = await kits_app.get(kits)
+            answers.append(mine.status_code)
+            if mine.status_code == 403:
+                said = mine.json()
+                assert said["detail"] == RESTRICTED_PROGRAM and said["code"] == "restricted"
+            else:
+                assert mine.status_code in (200, 503), mine.text
+            for name in pieces(mine.text) if mine.status_code == 200 else []:
+                if name not in kit_got:
+                    piece = await kits_app.get(kits.replace("index.m3u8", name))
+                    assert piece.status_code in (200, 403, 404), piece.text
+                    if piece.status_code == 200:
+                        kit_got[name] = piece.content
             listed = await adas_app.get(adas)
-            assert listed.status_code in (200, 503), listed.text
-            stream = stream or ctx.hls_streams.get(channel["id"])
             for name in pieces(listed.text) if listed.status_code == 200 else []:
                 if name not in ada_got:
                     piece = await adas_app.get(adas.replace("index.m3u8", name))
                     assert piece.status_code == 200, f"Ada, {name}: {piece.status_code}"
-                    ada_got[name] = stream.holds.get(name, ())
-            mine = await kits_app.get(kits)
-            if mine.status_code == 403:
-                said = mine.json()
-                assert said["detail"] == RESTRICTED_PROGRAM and said["code"] == "restricted"
-                refused.append(time.monotonic())
-            else:
-                assert mine.status_code in (200, 503), mine.text
-                if refused and mine.status_code == 200:
-                    back_after_refusal = True
-                for name in pieces(mine.text) if mine.status_code == 200 else []:
-                    piece = await kits_app.get(kits.replace("index.m3u8", name))
-                    if piece.status_code == 200:
-                        kit_got.append((name, stream.holds.get(name, ())))
-                    else:
-                        assert piece.status_code in (403, 404), piece.text
-            if back_after_refusal and len(ada_got) > 12:
+                    ada_got[name] = piece.content
+            refused_then_back = 403 in answers and 200 in answers[answers.index(403) :]
+            if refused_then_back and len(kit_got) >= 4:
                 break
             await asyncio.sleep(1)
         await kits_app.aclose()
         await adas_app.aclose()
 
-        def keys(contents: tuple) -> set:
-            return {getattr(c, "rating_key", None) for c in contents}
+        def heard(got: dict[str, bytes]) -> dict[str, dict[int, float]]:
+            out = {}
+            for name, data in got.items():
+                path = tmp_path / f"{len(out)}-{name}"
+                path.write_bytes(data)
+                out[name] = tones(path)
+            return out
 
-        # The TV-14 episode went out, Ada got its pieces, Kit was refused,
-        # and was back, with nothing done, once it was over.
-        assert any("202" in keys(c) for c in ada_got.values()), ada_got
-        assert refused, "Kit's app was never refused"
-        assert back_after_refusal, "Kit's app wasn't back after the TV-14 episode"
-        # Not one piece Kit got held any of it (as tapiOca knew it then).
-        assert kit_got and not any("202" in keys(c) for _, c in kit_got), kit_got
+        adas, kits_heard = heard(ada_got), heard(kit_got)
+        # The TV-14 episode (440 Hz) went out to Ada.
+        assert any(t[440] > 0.5 for t in adas.values()), adas
+        # Kit was refused while it was on, and back on her own after.
+        assert answers[0] in (403, 503) and 403 in answers, answers
+        assert 200 in answers[answers.index(403) :], answers
+        # Not one piece she got has any of it, bumper included.
+        assert kits_heard, "Kit got no pieces"
+        leaked = {n: t for n, t in kits_heard.items() if t[440] > 0.2}
+        assert not leaked, leaked
+        assert any(max(t[330], t[660]) > 0.5 for t in kits_heard.values())
+        assert during_bumper and during_bumper[0] == "201", during_bumper
         # One shared stream all along.
         b = ctx.broadcasters[channel["id"]]
         assert b.running and len(b.viewers) == 1

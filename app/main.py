@@ -1247,7 +1247,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 )
             playback.make_room(ctx, b)
             stream = ctx.hls_streams.start(b, channel.number, channel.name, night)
-        stream.asked_by(client, away_, who)
+        # (Someone with limits, an app's own address: never a playlist with a
+        # piece of a program they may not watch in it; and while it's on,
+        # they aren't watching, for the stats and the count. 1.39.0.)
+        viewer = ctx.viewing.viewer(user) if user is not None else None
+        stream.asked_by(None if viewer is not None else client, away_, who)
         playlist = await stream.playlist()
         if playlist is None:
             return JSONResponse(
@@ -1255,12 +1259,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 status_code=503,
                 headers=hls.HEADERS,
             )
-        # (Someone with limits, an app's own address: never a playlist with a
-        # piece of a program they may not watch in it. 1.39.0.)
-        if user is not None:
-            viewer = ctx.viewing.viewer(user)
+        if viewer is not None:
             if holds_restricted(stream, stream.listed(playlist), viewer):
+                stream.blocked(client)
                 return restricted(channel, viewer)
+            stream.asked_by(client, away_, who)
         return Response(playlist, media_type="application/vnd.apple.mpegurl", headers=hls.HEADERS)
 
     async def hls_piece_of(
@@ -1273,13 +1276,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         stream = ctx.hls_streams.get(channel.id, night) if channel else None
         if stream is None:
             raise HTTPException(404, "That station isn't being sent to apps")
-        if user is not None and channel is not None:
-            viewer = ctx.viewing.viewer(user)
-            if holds_restricted(stream, [piece], viewer):
-                return restricted(channel, viewer)
         data = await stream.piece(piece)
         if data is None:
             raise HTTPException(404, "That piece of the stream is gone")
+        if user is not None and channel is not None:
+            viewer = ctx.viewing.viewer(user)
+            if holds_restricted(stream, [piece], viewer):
+                stream.blocked(client)
+                return restricted(channel, viewer)
         stream.asked_by(None)
         stream.still_watching(client)
         return Response(data, media_type="video/mp2t", headers=hls.HEADERS)
@@ -1514,7 +1518,10 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/art/{rating_key}")
     async def art(rating_key: str):
-        """A program's picture, for Plex's guide."""
+        """A program's picture, for Plex's guide. (A restricted program's,
+        "0", is none, and isn't asked of Plex: 1.39.0.)"""
+        if rating_key == "0":
+            raise HTTPException(404)
         return await picture(ctx.art, rating_key, lambda: ctx.library.art(rating_key), ART_KEPT)
 
     @app.get("/poster/{rating_key}")
@@ -2106,7 +2113,10 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 **_shown_json(ctx.viewing, viewer, slot.item),
                 "start": slot.start_ms,
                 "end": slot.end_ms,
-                "special": specials.label(station.special(slot), slot.index),
+                # (Not a restricted program's special, which may name it.)
+                "special": None
+                if viewer is not None and not ctx.viewing.may_watch(viewer, slot.item)
+                else specials.label(station.special(slot), slot.index),
             }
             if slot
             else None,
@@ -2826,7 +2836,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     "start": slot.start_ms,
                     "end": slot.end_ms,
                     "broken": slot.item.rating_key in broken,
-                    "special": specials.label(station.special(slot), slot.index),
+                    "special": None
+                    if limited is not None and not ctx.viewing.may_watch(limited, slot.item)
+                    else specials.label(station.special(slot), slot.index),
                 }
                 for slot in station.between(now, until)
             ]

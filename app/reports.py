@@ -615,6 +615,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             if slot is None:
                 raise HTTPException(404, NOTHING_ON)
             item = slot.item
+            # (Never a report, in their name, of a program they may not watch:
+            # 1.39.0. As for nothing on.)
+            if not ctx.viewing.may_watch(ctx.viewing.viewer(user), item):
+                raise HTTPException(404, NOTHING_ON)
             into = max(
                 0.0, min((now - slot.start_ms - item.lead_ms) / 1000, item.program_ms / 1000)
             )

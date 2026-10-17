@@ -228,10 +228,14 @@ alerts).
    "code": "restricted", "resumesAtMs": ...}` (`resumesAtMs`: when the
    schedule says permitted programming is back, or null). Keep the station
    selected, show the sentence over its picture, and ask for the playlist
-   again every few seconds (from `resumesAtMs`, if it's given) until it
-   plays; never retune elsewhere on your own, and don't bring them back if
-   they've gone to another screen. Guides list such a program with
-   `restricted: true` and the title "Restricted program".
+   again every few seconds until it plays (`resumesAtMs` is for showing when;
+   keep asking anyway, as what's really played decides, and a stream nobody
+   asks for stops after 30 seconds). Never retune elsewhere on your own, and
+   don't bring them back if they've gone to another screen. Casting (a
+   Chromecast or AirPlay receiver gets the same 403 and stops): show the
+   sentence on the phone, keep asking, and cast again when it plays. Guides
+   list such a program with `restricted: true` and the title "Restricted
+   program".
 8. **Report a problem.** Offer it on a movie's or an episode's page, in the
    player's menu, and in a station's player, when `user.canReport` is true
    in `GET /api/internal/me` (and always while signing in is off). When

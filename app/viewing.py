@@ -801,15 +801,17 @@ class Viewing:
         "Stay tuned" instead.)"""
         return all(self.may_watch(v, item) for v in self._hand_viewers(channel_id))
 
-    def clip_most(self, channel_id: int, most: int | None) -> int | None:
-        """The highest a Station's commercials and trailers may be rated (an
-        age; None: none may play), given `most` from its lineup: no higher
-        than the strictest level it's allowed for by hand, so a break never
-        blocks anyone (they're no program, and play for everyone)."""
+    def clip_most(self, channel_id: int, most: int | None, tv: bool = False) -> int | None:
+        """The highest a Station's commercials (`tv`) or trailers may be rated
+        (an age; None: none may play), given `most` from its lineup: no
+        higher than the strictest level it's allowed for by hand (its TV age
+        for commercials, its movie age for trailers), so a break never shows
+        anyone what they may not watch (it's no program, and plays for
+        everyone)."""
         for viewer in self._hand_viewers(channel_id):
-            ages = [a for a in (viewer.level.movie_age, viewer.level.tv_age) if a is not None]
-            if ages and most is not None:
-                most = min(most, *ages)
+            age = viewer.level.tv_age if tv else viewer.level.movie_age
+            if age is not None and most is not None:
+                most = min(most, age)
         return most
 
     @property

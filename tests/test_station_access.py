@@ -15,6 +15,7 @@ the title for them."""
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import replace
 from types import SimpleNamespace
@@ -199,8 +200,15 @@ class FakeStream:
 
     def __init__(self, holds: dict[str, tuple]) -> None:
         self.holds = holds
+        self.watching: list = []
+        self.blocked_for = []
 
-    def asked_by(self, *args, **kwargs) -> None: ...
+    def asked_by(self, client=None, *args, **kwargs) -> None:
+        if client is not None:
+            self.watching.append(client)
+
+    def blocked(self, client) -> None:
+        self.blocked_for.append(client)
 
     def still_watching(self, client) -> None: ...
 
@@ -431,3 +439,126 @@ def test_a_station_they_made_but_may_no_longer_change_names_nothing_either(app):
         refused = page.put(f"/api/channels/{cid}", json={
             "number": 4, "name": "x", "sources": [{"type": "show", "ratingKey": "100"}]})  # fmt: skip
         assert refused.status_code == 403
+
+
+def test_a_refused_app_isnt_watching_and_a_gone_piece_is_just_gone(app, monkeypatch):
+    """(The cold audit of 1.39.0.) While Kit's app is refused, it isn't
+    counted as watching (her stats never get the restricted program, and it
+    holds no place), and its watching is ended at once; a piece that's gone
+    is 404, never "restricted"."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[7]): True})
+        heist, puppet = items(ctx, {"301"})[0], items(ctx, {"201"})[0]
+        stream = FakeStream({"s1.ts": (heist,)})
+        monkeypatch.setattr(ctx.hls_streams, "get", lambda cid, night=False: stream)
+        phone = TestClient(app)
+        as_kit = sign_in_app(app, KIT)
+        got = phone.get("/api/v1/stations", headers=as_kit).json()["stations"]
+        kits = next(s for s in got if s["number"] == 7)["hls"].split("?")[0]
+        assert phone.get(kits).status_code == 403
+        assert stream.watching == [] and len(stream.blocked_for) == 1
+        assert phone.get(kits.replace("index.m3u8", "s9.ts")).status_code == 404
+        stream.holds = {"s2.ts": (puppet,)}
+        assert phone.get(kits).status_code == 200 and len(stream.watching) == 1
+
+
+def test_several_new_pieces_at_once_each_hold_all_since_the_last(tmp_path):
+    """(The cold audit of 1.39.0.) Pieces that appear together (the station's
+    recent bytes, or ffmpeg catching up) can't be told apart, so each holds
+    everything since the last time, Heist's tail included."""
+    heist, ok = SimpleNamespace(rating_key="301"), SimpleNamespace(rating_key="201")
+    t = time.monotonic()
+    station = SimpleNamespace(fed=[(t - 60, heist), (t - 5, ok)], fed_whole=True)
+    stream = hls.HlsStream.__new__(hls.HlsStream)
+    stream.b, stream.folder, stream.holds = station, tmp_path, {}
+    stream._newest_at, stream._born = None, t
+    for n in range(4):
+        (tmp_path / f"s{n}.ts").write_bytes(b"x")
+    stream.label_new_pieces()
+    assert all(heist in stream.holds[f"s{n}.ts"] for n in range(4))
+
+
+def test_a_new_session_starts_its_record_from_nothing(tmp_path):
+    """(The cold audit of 1.39.0.) After a restart, or a session that ended
+    during Heist, the station's record starts again from nothing sent: its
+    first pieces hold what this session sent, never UNKNOWN or the last
+    session's Heist."""
+    puppet = SimpleNamespace(rating_key="201")
+    t = time.monotonic()
+    station = SimpleNamespace(fed=[(t - 2, None), (t - 1.5, puppet)], fed_whole=True)
+    stream = hls.HlsStream.__new__(hls.HlsStream)
+    stream.b, stream.folder, stream.holds = station, tmp_path, {}
+    stream._newest_at, stream._born = None, t
+    assert stream.contents(t - 40, t) == (None, None, puppet)
+    station.fed_whole = False  # (its start forgotten: what came before can't be told)
+    assert stream.contents(t - 40, t)[0] is hls.UNKNOWN
+
+
+def test_a_broadcasters_new_session_clears_its_record():
+    from app.broadcaster import Broadcaster
+
+    b = Broadcaster.__new__(Broadcaster)
+    from collections import deque
+
+    b.fed = deque([(1.0, SimpleNamespace(rating_key="301"))], maxlen=5)
+    b.fed_whole = False
+    b.ctx = SimpleNamespace(
+        db=SimpleNamespace(get_channel=lambda cid: None),
+        settings=SimpleNamespace(),
+    )
+    b.channel_id = 1
+    with contextlib.suppress(Exception):  # (only its record matters here)
+        Broadcaster._new_session(b)
+    assert b.fed_whole is True and len(b.fed) == 1 and b.fed[0][1] is None
+
+
+def test_a_restricted_programs_special_isnt_named(app):
+    """(The cold audit of 1.39.0.) A marathon of Night Shift, on a station
+    allowed for Kit by hand: on the page, its programs are "Restricted
+    program" with no special (which would name it)."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[5]): True})
+        page = TestClient(app)
+        page.post("/api/access/sign-in", json=KIT)
+        guide = page.get(f"/api/channels/{ids[5]}/guide").json()
+        assert guide and all(p.get("restricted") and p["special"] is None for p in guide)
+        now = {c["number"]: c for c in page.get("/api/channels").json()}[5]["now"]
+        assert now["restricted"] and now["special"] is None
+        assert "Night Shift" not in page.get("/api/channels").text
+        assert ctx  # (as set up)
+
+
+def test_a_restricted_programs_picture_isnt_asked_of_plex(app):
+    with TestClient(app) as admin:
+        set_up(admin)
+        assert admin.get("/art/0").status_code == 404
+
+
+def test_a_report_from_a_station_is_never_of_a_program_they_may_not_watch(app):
+    """(The cold audit of 1.39.0.) Kit reports a problem from Mixed while
+    Heist is on: not filed in her name against Heist, as for nothing on."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[7]): True})
+        now = int(time.time() * 1000)
+        plays(ctx, ids[7], items(ctx, {"301"}), now - 10 * 60_000)
+        phone = TestClient(app)
+        said = phone.post("/api/internal/report-problem", headers=sign_in_app(app, KIT),
+                          json={"choice": "wrong-language", "station": 7})  # fmt: skip
+        assert said.status_code == 404, said.text
+
+
+def test_commercials_go_by_the_tv_age_and_trailers_by_the_movie_age(app):
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[7]): True})
+        levels = {lv["builtin"]: lv for lv in admin.get("/api/access/viewing").json()["levels"]}
+        kid_level_ = levels["kid"]
+        assert ctx.viewing.clip_most(ids[7], 17, tv=True) == kid_level_["tvAge"]
+        assert ctx.viewing.clip_most(ids[7], 17, tv=False) == kid_level_["movieAge"]

@@ -299,6 +299,7 @@ class Broadcaster:
     # pieces hold which program (see hls.py), for programs someone may not
     # watch (viewing.Viewing.may_watch).
     fed: deque = field(default_factory=lambda: deque(maxlen=FED_KEPT))
+    fed_whole: bool = False  # (fed goes back to this session's start)
     _content: Item | None = None
     started_at_ms: int = 0
     _task: asyncio.Task | None = None
@@ -451,6 +452,8 @@ class Broadcaster:
             return
         self._last_output = now = time.monotonic()
         if not self.fed or self.fed[-1][1] is not self._content:
+            if len(self.fed) == self.fed.maxlen:
+                self.fed_whole = False  # (its start is forgotten from now)
             self.fed.append((now, self._content))
         self._recent.append(chunk)
         self._recent_bytes += len(chunk)
@@ -565,6 +568,11 @@ class Broadcaster:
             self._session_skip.add(key)
 
     def _new_session(self) -> None:
+        # (What's sent, from scratch: nothing was before this session, as its
+        # recent bytes went with the last. See fed, and hls.HlsStream.contents.)
+        self.fed.clear()
+        self.fed.append((time.monotonic(), None))
+        self.fed_whole = True
         channel = self.ctx.db.get_channel(self.channel_id)
         picture = channel.picture if channel is not None else ff.STANDARD_PICTURE
         if channel is not None:
@@ -673,7 +681,18 @@ class Broadcaster:
                     if channel.intro_video:
                         result = await self._play_own_bumper(channel, ts, burst)
                     if result is None:
-                        result = await self._play_intro(channel, station, ts, burst)
+                        # (Its pieces hold the program it names, and whose
+                        # sound it plays as it ends: see fed. The cold audit
+                        # of 1.39.0.)
+                        ends = self._cursor(ts) + int(
+                            float(channel.intro_seconds or DEFAULT_INTRO_S) * 1000
+                        )
+                        named = station.locate(ends)
+                        self._content = named.item if named else None
+                        try:
+                            result = await self._play_intro(channel, station, ts, burst)
+                        finally:
+                            self._content = None
                     self._ts = _advance(ts, result)
                     if result.stopped:
                         return
@@ -916,7 +935,9 @@ class Broadcaster:
         if clip is None:
             return False  # (gone from the folders since its lineup was made)
         # (No higher than the strictest level it's allowed for by hand: 1.39.0.)
-        most = viewing.clip_most(channel.id, cliprules.cap(viewing.reach(channel.id)))
+        most = viewing.clip_most(
+            channel.id, cliprules.cap(viewing.reach(channel.id)), tv=kind == COMMERCIALS
+        )
         return ctx.clip_ratings.rated(kind, clip, most)
 
     async def _play_clip(

@@ -203,6 +203,13 @@ class HlsStream:
         if away:
             self.away.add(client)
 
+    def blocked(self, client: str) -> None:
+        """An app was refused, as a program its person may not watch is on
+        (1.39.0): its watching ends there, for the stats and the count of
+        who's watching, and starts again when it's back."""
+        if client in self.clients:
+            self._settle(client, "a program they may not watch came on")
+
     def still_watching(self, client: str) -> None:
         """An app watching asked for a piece (one that isn't watching yet
         starts with the playlist)."""
@@ -335,7 +342,10 @@ class HlsStream:
         programs, None for what isn't one, UNKNOWN where it can't be told."""
         fed = list(self.b.fed)
         if not fed or fed[0][0] > since:
-            return (UNKNOWN, *(c for t, c in fed if t <= until))
+            # (Before the station's session began, nothing was sent; before
+            # its record of it, what was can't be told.)
+            before = None if fed and getattr(self.b, "fed_whole", False) else UNKNOWN
+            return (before, *(c for t, c in fed if t <= until))
         current = None
         later = []
         for at, content in fed:
@@ -354,9 +364,14 @@ class HlsStream:
             return
         now = time.monotonic()
         new = sorted((n for n in names if n not in self.holds), key=lambda n: int(n[1:-3]))
-        for name in new:
+        if new:
+            # (Several at once, as the station's recent bytes come, or ffmpeg
+            # catches up: each may hold anything since the last time, as
+            # their own moments can't be told apart. The cold audit of 1.39.0.)
             since = self._newest_at if self._newest_at is not None else self._born - RECENT_S
-            self.holds[name] = self.contents(since - MARGIN_S, now + 0.5)
+            held = self.contents(since - MARGIN_S, now + 0.5)
+            for name in new:
+                self.holds[name] = held
             self._newest_at = now
         for gone in [n for n in self.holds if n not in names]:
             del self.holds[gone]

@@ -292,7 +292,7 @@ async function openUserStations(u) {
       ...TAG_KINDS.map(([kind, label, noun]) => h('div', { class: 'field' }, h('label', {}, label, kind === 'labels' ? h('span', { class: 'hint' }, ' — Plex calls these labels') : null),
         namePicker(`${label} hidden for ${u.name}`, noun, stationsFor.hidden[kind], offered[kind] || []))),
       h('div', { class: 'field' }, h('label', {}, 'Shows and movies'), titlePicker(`Shows and movies hidden for ${u.name}`, stationsFor.hidden.titles))),
-    part(`Allowed for ${u.name} in Media`,
+    part(`Allowed for ${u.name}`,
       h('p', { class: 'hint', style: 'margin:0' }, `Shown to ${u.name} even if ${got.level} would hide them (unrated home videos, say), in Media and when one is on a station they watch, as long as they’re in a Media folder ${got.level} shows. A show or movie hidden above stays hidden. Which stations they see is as chosen above.`),
       titlePicker(`Shows and movies allowed for ${u.name}`, stationsFor.allowed)));
   $('#userStations').showModal();

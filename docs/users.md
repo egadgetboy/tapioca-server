@@ -280,14 +280,20 @@ and the docs say plainly what they don't cover.
 
 **Enforced.** For someone signed in as themselves, on tapiOca's own
 server, in tapiOca's apps and on its page: what they can find, see and
-play, as Viewing Levels and the rules above say; stations, all or nothing;
-and commercials and trailers, as above.
+play, as Viewing Levels and the rules above say; which stations they
+see, and, from 1.39.0, each program on them as it airs; and commercials
+and trailers, as above.
 
 **Not covered:**
 
-- **Plex, Jellyfin and anything else on the tuner.** They don't say who's
-  watching, so they show every station (see the README's Tuner access and
-  Blocking stations for some Plex users).
+- **Plex, Jellyfin and anything else on the tuner, or playing a station's
+  stream address at home** (`/hls/{number}/`, such as VLC). They don't say
+  who's watching, so they show every station and every program (see the
+  README's Tuner access and Blocking stations for some Plex users). With
+  Tuner access set to **Only these devices**, only the devices listed get
+  those addresses.
+- **Apps that don't yet know a restricted program** (1.39.0) show an error
+  while one is on; the person tunes in again afterward.
 - **Devices without PINs.** On a shared device, anyone can pick anyone
   without a PIN on Who's tuning in? Everyone without limits should have a
   PIN on devices people with limits use.
