@@ -421,6 +421,10 @@ class Broadcaster:
             await asyncio.sleep(self.settings.idle_grace_seconds)
         except asyncio.CancelledError:
             return
+        # (Stopping from here on: someone tuning in now doesn't cancel the
+        # stop, which starts a new session for them once it's done. The
+        # fourth cold audit of 1.39.0.)
+        self._stop_task = None
         if not self.viewers:
             await self.stop()
 
@@ -442,6 +446,9 @@ class Broadcaster:
                 await asyncio.wait_for(asyncio.shield(self._task), 10)
             except (TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
+                # (A moment for it to end, so anyone who tuned in meanwhile
+                # gets a new session: see below.)
+                await asyncio.wait({self._task}, timeout=5)
         self._recent.clear()
         self._recent_bytes = 0
         self.now_playing = None
@@ -695,7 +702,7 @@ class Broadcaster:
                         result = await self._play_own_bumper(channel, ts, burst)
                     if result is None:
                         # (Its pieces hold the program it names, and whose
-                        # sound it plays as it ends: see fed. The cold audit
+                        # sound it plays as it ends: see _content. The cold audit
                         # of 1.39.0.)
                         ends = self._cursor(ts) + int(
                             float(channel.intro_seconds or DEFAULT_INTRO_S) * 1000
@@ -766,7 +773,7 @@ class Broadcaster:
             self._look_ahead(channel, station, slot)
             mark = None if bare else corner_mark(self.ctx, channel)
             up_next = None if bare else self._banner_for(channel, station, slot, mark)
-            self._content = item  # (what's sent from now is this program: see fed)
+            self._content = item  # (what's sent from now is this program: see _content)
             try:
                 result = await self._play_item(
                     item,

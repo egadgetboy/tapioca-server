@@ -223,7 +223,7 @@ class FakeStream:
 
     listed = hls.HlsStream.listed
 
-    def pieces_hold(self, names) -> tuple:
+    async def pieces_hold(self, names) -> tuple:
         return tuple(c for n in names for c in self.holds.get(n, (hls.UNKNOWN,)))
 
     async def piece(self, name: str) -> bytes | None:
@@ -282,33 +282,149 @@ def test_her_stream_refuses_a_restricted_program_and_comes_back(app, monkeypatch
         assert phone.get(kits).status_code in (403, 404)
 
 
-def test_a_piece_holds_what_was_sent_around_it(tmp_path):
+def bare_stream(folder, fed=(), whole=True, born=None, given=0) -> hls.HlsStream:
+    """A station's stream for apps, without its ffmpeg: what it was given
+    (`fed`: from when, from how many bytes in, which program)."""
+    stream = hls.HlsStream.__new__(hls.HlsStream)
+    stream.fed, stream.fed_whole = deque(fed, maxlen=hls.FED_KEPT), whole
+    stream.given = given
+    stream.folder, stream.holds, stream.ended_because = folder, {}, ""
+    stream._born = time.monotonic() if born is None else born
+    stream._looked, stream._before_newest = (stream._born, 0), None
+    stream._labeling = asyncio.Lock()
+    return stream
+
+
+async def test_a_piece_holds_what_was_sent_around_it(tmp_path):
     """Which programs a piece holds: whatever was given to ffmpeg from a
     little before the piece before it appeared until it did (MARGIN_S either
     side, to be safe), and what it was being given when it began; UNKNOWN
     for what was given before the stream's record of it begins."""
     a, b = SimpleNamespace(rating_key="a"), SimpleNamespace(rating_key="b")
     t = time.monotonic()
-    stream = hls.HlsStream.__new__(hls.HlsStream)
-    stream.fed, stream.fed_whole = deque([(t - 100, a), (t - 10, None), (t - 9, b)]), False
-    stream.folder, stream.holds = tmp_path, {}
-    stream._newest_at, stream._born = None, t - 20
+    fed = [(t - 100, 0, a), (t - 10, 1000, None), (t - 9, 2000, b)]
+    stream = bare_stream(tmp_path, fed, whole=False, born=t - 20, given=3000)
     assert stream.contents(t - 50, t - 20) == (a,)
     assert stream.contents(t - 20, t) == (a, None, b)
     assert stream.contents(t - 200, t) == (hls.UNKNOWN, a, None, b)
+    # (By bytes, from whichever is earlier.)
+    assert stream.contents(t - 9.5, t, 1500) == (None, b)
+    assert stream.contents(t - 9.5, t, 500) == (a, None, b)
     (tmp_path / "s1.ts").write_bytes(b"x")
-    stream.label_new_pieces()
+    await stream.label_new_pieces()
     held = stream.holds["s1.ts"]  # (all since a little before it began)
     assert a in held and None in held and b in held
-    stream._newest_at = time.monotonic() - 0.2
-    stream.fed.append((time.monotonic(), a))
+    stream._before_newest = (time.monotonic() - 0.2, 3000)
+    stream.fed.append((time.monotonic(), 3000, a))
     (tmp_path / "s2.ts").write_bytes(b"x")
-    stream.label_new_pieces()
+    await stream.label_new_pieces()
     assert b in stream.holds["s2.ts"] and a in stream.holds["s2.ts"]
     (tmp_path / "s1.ts").unlink()
-    stream.label_new_pieces()
+    await stream.label_new_pieces()
     assert "s1.ts" not in stream.holds
-    assert stream.pieces_hold(["s9.ts"]) == (hls.UNKNOWN,)
+    assert await stream.pieces_hold(["s9.ts"]) == (hls.UNKNOWN,)
+
+
+async def test_a_piece_after_ffmpeg_stalls_holds_what_it_was_given_before(tmp_path):
+    """(The fourth cold audit of 1.39.0.) ffmpeg read the start of a piece,
+    then stalled (a slow disk) more than MARGIN_S before the piece before
+    it appeared; what it was given just before is Heist's end, older than
+    that by the clock. By bytes (what ffmpeg can't have been given and not
+    yet put in a piece) the piece still holds Heist, so it isn't Kit's."""
+    heist = SimpleNamespace(rating_key="301")
+    t = time.monotonic()
+    fed = [(t - 60, 0, heist), (t - 4.0, 5_000_000, None)]
+    stream = bare_stream(tmp_path, fed, born=t - 70, given=5_100_000)
+    stream._before_newest = (t - 0.2, 5_050_000)
+    (tmp_path / "s9.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    assert heist in stream.holds["s9.ts"], stream.holds
+
+
+async def test_several_new_pieces_at_once_each_hold_all_since_the_last(tmp_path):
+    """(The cold audit of 1.39.0.) Pieces that appear together (ffmpeg
+    catching up) can't be told apart, so each holds everything since the
+    last time, Heist's tail included: the first ones, and later ones."""
+    heist, ok = SimpleNamespace(rating_key="301"), SimpleNamespace(rating_key="201")
+    t = time.monotonic()
+    fed = [(t - 60, 0, heist), (t - 5, 9_000_000, ok)]
+    stream = bare_stream(tmp_path, fed, born=t - 70, given=9_500_000)
+    for n in range(4):
+        (tmp_path / f"s{n}.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    assert all(heist in stream.holds[f"s{n}.ts"] for n in range(4))
+    # Later: a look with nothing new, one with s4, then Heist and back, and
+    # three at once.
+    await stream.label_new_pieces()
+    (tmp_path / "s4.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    now = time.monotonic()
+    stream.fed.extend([(now, 9_500_000, heist), (now + 0.01, 9_600_000, ok)])
+    stream.given = 9_700_000
+    for n in range(5, 8):
+        (tmp_path / f"s{n}.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    held = [stream.holds[f"s{n}.ts"] for n in range(5, 8)]
+    assert all(heist in h and ok in h for h in held), held
+
+
+def test_a_new_stream_starts_its_record_from_nothing(tmp_path):
+    """(The cold audit of 1.39.0.) A stream's record starts from nothing
+    given to its ffmpeg: its first pieces hold what it was given, never
+    UNKNOWN; once its start is forgotten, what came before can't be told."""
+    puppet = SimpleNamespace(rating_key="201")
+    t = time.monotonic()
+    stream = bare_stream(tmp_path, [(t - 2, 0, None), (t - 1.5, 100, puppet)], born=t)
+    assert stream.contents(t - 40, t) == (None, None, puppet)
+    assert stream.contents(t - 40, t, -hls.SLACK_BYTES) == (None, None, puppet)
+    stream.fed_whole = False  # (its start forgotten: what came before can't be told)
+    assert stream.contents(t - 40, t)[0] is hls.UNKNOWN
+
+
+async def test_a_piece_holds_what_ffmpeg_was_given_however_long_ago_it_was_sent(
+    tmp_path, monkeypatch
+):
+    """(The second cold audit of 1.39.0.) What a piece holds goes by what
+    the stream's ffmpeg was given, as it was, not when the station sent it.
+    Heist's tail and then a card, sent a while before (here, more than
+    MARGIN_S): given to ffmpeg late, as a stream that's behind does, and as
+    a new stream gets the station's recent bytes after a stall, the pieces
+    made from them hold Heist. (By when they were sent, they held only the
+    card, and went to Kit.) And a session's old bytes carry their own
+    program."""
+    from app.broadcaster import Broadcaster
+
+    monkeypatch.setattr(hls, "MARGIN_S", 0.05)
+    heist = SimpleNamespace(rating_key="301")
+    b = Broadcaster(ctx=SimpleNamespace(), channel_id=1)
+    b._task = asyncio.get_running_loop().create_future()  # (as if it's running)
+    behind = b.subscribe("app viewers on 7", counted=False)
+    b._content = heist
+    b._emit(b"heist")
+    b._content = None
+    b._emit(b"card")
+    await asyncio.sleep(0.3)  # (the stall, or the stream behind)
+    late = b.subscribe("night-mode app viewers on 7", counted=False)  # (its recent bytes)
+
+    class Ffmpeg:
+        def write(self, chunk: bytes) -> None: ...
+
+        async def drain(self) -> None: ...
+
+    for n, viewer in enumerate((behind, late)):
+        folder = tmp_path / str(n)
+        folder.mkdir()
+        # (Long running: a piece just before, with a lot given already.)
+        stream = bare_stream(folder, given=50_000_000)
+        stream._before_newest = (time.monotonic(), stream.given)
+        stream._viewer = viewer
+        viewer.queue.put_nowait(None)  # (then the station stops)
+        await stream._feed(Ffmpeg())
+        assert [c for _at, _byte, c in stream.fed] == [heist, None]
+        (folder / "s1.ts").write_bytes(b"x")
+        await stream.label_new_pieces()
+        assert heist in stream.holds["s1.ts"], (n, stream.holds)
+    b._task.cancel()
 
 
 def test_the_station_never_names_on_screen_what_someone_it_is_allowed_for_may_not_watch(app):
@@ -472,83 +588,6 @@ def test_a_refused_app_isnt_watching_and_a_gone_piece_is_just_gone(app, monkeypa
         assert phone.get(kits.replace("index.m3u8", "s9.ts")).status_code == 404
         stream.holds = {"s2.ts": (puppet,)}
         assert phone.get(kits).status_code == 200 and len(stream.watching) == 1
-
-
-def test_several_new_pieces_at_once_each_hold_all_since_the_last(tmp_path):
-    """(The cold audit of 1.39.0.) Pieces that appear together (the station's
-    recent bytes, or ffmpeg catching up) can't be told apart, so each holds
-    everything since the last time, Heist's tail included."""
-    heist, ok = SimpleNamespace(rating_key="301"), SimpleNamespace(rating_key="201")
-    t = time.monotonic()
-    stream = hls.HlsStream.__new__(hls.HlsStream)
-    stream.fed, stream.fed_whole = deque([(t - 60, heist), (t - 5, ok)]), True
-    stream.folder, stream.holds = tmp_path, {}
-    stream._newest_at, stream._born = None, t - 70
-    for n in range(4):
-        (tmp_path / f"s{n}.ts").write_bytes(b"x")
-    stream.label_new_pieces()
-    assert all(heist in stream.holds[f"s{n}.ts"] for n in range(4))
-
-
-def test_a_new_stream_starts_its_record_from_nothing(tmp_path):
-    """(The cold audit of 1.39.0.) A stream's record starts from nothing
-    given to its ffmpeg: its first pieces hold what it was given, never
-    UNKNOWN; once its start is forgotten, what came before can't be told."""
-    puppet = SimpleNamespace(rating_key="201")
-    t = time.monotonic()
-    stream = hls.HlsStream.__new__(hls.HlsStream)
-    stream.fed, stream.fed_whole = deque([(t - 2, None), (t - 1.5, puppet)]), True
-    stream.folder, stream.holds = tmp_path, {}
-    stream._newest_at, stream._born = None, t
-    assert stream.contents(t - 40, t) == (None, None, puppet)
-    stream.fed_whole = False  # (its start forgotten: what came before can't be told)
-    assert stream.contents(t - 40, t)[0] is hls.UNKNOWN
-
-
-async def test_a_piece_holds_what_ffmpeg_was_given_however_long_ago_it_was_sent(
-    tmp_path, monkeypatch
-):
-    """(The second cold audit of 1.39.0.) What a piece holds goes by when
-    the stream's ffmpeg was given it, not when the station sent it. Heist's
-    tail and then a card, sent a while before (here, more than MARGIN_S):
-    given to ffmpeg late, as a stream that's behind does, and as a new
-    stream gets the station's recent bytes after a stall, the pieces made
-    from them hold Heist. (By when they were sent, they held only the card,
-    and went to Kit.) And a session's old bytes carry their own program."""
-    from app.broadcaster import Broadcaster
-
-    monkeypatch.setattr(hls, "MARGIN_S", 0.05)
-    heist = SimpleNamespace(rating_key="301")
-    b = Broadcaster(ctx=SimpleNamespace(), channel_id=1)
-    b._task = asyncio.get_running_loop().create_future()  # (as if it's running)
-    behind = b.subscribe("app viewers on 7", counted=False)
-    b._content = heist
-    b._emit(b"heist")
-    b._content = None
-    b._emit(b"card")
-    await asyncio.sleep(0.3)  # (the stall, or the stream behind)
-    late = b.subscribe("night-mode app viewers on 7", counted=False)  # (its recent bytes)
-
-    class Ffmpeg:
-        def write(self, chunk: bytes) -> None: ...
-
-        async def drain(self) -> None: ...
-
-    for n, viewer in enumerate((behind, late)):
-        folder = tmp_path / str(n)
-        folder.mkdir()
-        stream = hls.HlsStream.__new__(hls.HlsStream)
-        stream.fed, stream.fed_whole = deque(maxlen=hls.FED_KEPT), True
-        stream.folder, stream.holds, stream.ended_because = folder, {}, ""
-        stream._born = time.monotonic()
-        stream._newest_at = time.monotonic()  # (a piece just before)
-        stream._viewer = viewer
-        viewer.queue.put_nowait(None)  # (then the station stops)
-        await stream._feed(Ffmpeg())
-        (folder / "s1.ts").write_bytes(b"x")
-        stream.label_new_pieces()
-        assert heist in stream.holds["s1.ts"], (n, stream.holds)
-    b._task.cancel()
 
 
 def test_a_restricted_programs_special_isnt_named(app):
@@ -794,3 +833,36 @@ def test_her_app_is_told_when_her_station_is_back_by_what_it_really_plays(app, m
         ctx.broadcaster(ids[7]).behind_ms = 30 * 60_000
         back = phone.get(kits).json()["resumesAtMs"]
         assert abs(back - (now + 70 * 60_000)) < 5_000, back - now
+
+
+async def test_someone_tuning_in_as_a_station_stops_after_its_grace_gets_a_new_session(
+    monkeypatch,
+):
+    """(The fourth cold audit of 1.39.0.) The usual way a station stops:
+    the last viewer leaves, and after its grace it stops. Someone tuning in
+    while it does (its engine slow to end) gets a new session once it has,
+    rather than being turned away."""
+    from app.broadcaster import Broadcaster
+
+    sessions, late = [], asyncio.Event()
+
+    async def session(self):
+        sessions.append(self.channel_id)
+        await (late.wait() if len(sessions) == 1 else asyncio.Event().wait())
+
+    monkeypatch.setattr(Broadcaster, "_supervise", session)
+    ctx = SimpleNamespace(broadcasters={}, settings=SimpleNamespace(idle_grace_seconds=0.01))
+    b = Broadcaster(ctx=ctx, channel_id=1)
+    ctx.broadcasters[1] = b
+    first = b.subscribe("Plex on 1", counted=False)
+    await asyncio.sleep(0.01)
+    b.unsubscribe(first)
+    await asyncio.sleep(0.1)  # (its grace over: it's stopping, waiting for its engine)
+    assert b._stopping and sessions == [1]
+    newcomer = b.subscribe("an app on 1", counted=False)
+    await asyncio.sleep(0.05)
+    late.set()  # (its engine has ended)
+    await asyncio.sleep(0.1)
+    assert sessions == [1, 1], sessions
+    assert newcomer in b.viewers and not newcomer.closed and b.running
+    b._task.cancel()

@@ -68,12 +68,17 @@ IDLE_S = 30.0
 IDLE_CHECK_S = 2.0
 # Which program each piece holds (1.39.0, so someone with limits never gets a
 # piece of one they may not watch: see HlsStream.fed). A piece is taken to
-# hold whatever was given to ffmpeg from MARGIN_S before the one before it
-# appeared until a moment after it did, to be safe: a few seconds either
-# side of a program they may not watch are kept from them too. Looked for
-# every LABEL_EVERY_S. FED_KEPT: how many changes of program are kept, far
-# more than a playlist lists.
+# hold whatever was given to ffmpeg from before the one before it appeared
+# until a moment after it did: from MARGIN_S before, and from SLACK_BYTES
+# before (whichever is earlier), to be safe. (By time alone, ffmpeg stalling
+# a few seconds could hide a program's last moments: the fourth cold audit.
+# By bytes: what's between being given to ffmpeg and in a piece is at most
+# what waits to be written, the pipe and ffmpeg's own reading, well under
+# SLACK_BYTES.) So a few seconds either side of a program someone may not
+# watch are kept from them too. Looked for every LABEL_EVERY_S. FED_KEPT:
+# how many changes of program are kept, far more than a playlist lists.
 MARGIN_S = PIECE_S + 1.0
+SLACK_BYTES = 1 << 20
 LABEL_EVERY_S = 0.25
 FED_KEPT = 500
 # (What can't be told: as a program no one with limits may watch.)
@@ -181,15 +186,22 @@ class HlsStream:
         self._left = False
         self._proc: asyncio.subprocess.Process | None = None
         # What was given to ffmpeg, as it was (the second cold audit of
-        # 1.39.0: not as the station sent it, which may be long before): the
-        # program (None: not a program), and from when (time.monotonic), each
-        # change; and whether it goes back to the stream's start.
-        self.fed: deque = deque(maxlen=FED_KEPT)
+        # 1.39.0: not as the station sent it, which may be long before): from
+        # when (time.monotonic) and from how many bytes in, the program (None:
+        # not a program), each change; whether it goes back to the stream's
+        # start; and how many bytes it's been given.
+        self.fed: deque[tuple[float, int, object]] = deque(maxlen=FED_KEPT)
         self.fed_whole = True
-        # Each piece's programs (see MARGIN_S), and when the newest appeared.
+        self.given = 0
+        # Each piece's programs (see MARGIN_S). When the folder was last
+        # looked in, and how much ffmpeg had been given then; and the same
+        # for the look before the newest piece appeared (where what the next
+        # piece may hold begins).
         self.holds: dict[str, tuple] = {}
-        self._newest_at: float | None = None
         self._born = time.monotonic()
+        self._looked: tuple[float, int] = (self._born, 0)
+        self._before_newest: tuple[float, int] | None = None
+        self._labeling = asyncio.Lock()
         self._viewer: Viewer = b.subscribe(
             f"night-mode app viewers on {number}" if night else f"app viewers on {number}",
             counted=False,
@@ -376,48 +388,60 @@ class HlsStream:
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.shield(self._task)
 
-    def contents(self, since: float, until: float) -> tuple:
-        """What was given to ffmpeg from `since` to `until` (time.monotonic):
-        programs, None for what isn't one, UNKNOWN where it can't be told."""
+    def contents(self, since: float, until: float, since_byte: int | None = None) -> tuple:
+        """What was given to ffmpeg from `since` (time.monotonic), or from
+        `since_byte` bytes in if that's earlier, to `until`: programs, None
+        for what isn't one, UNKNOWN where it can't be told."""
         fed = list(self.fed)
-        if not fed or fed[0][0] > since:
-            # (Before the stream began, nothing was; before its record of it,
-            # what was can't be told.)
-            before = None if self.fed_whole else UNKNOWN
-            return (before, *(c for t, c in fed if t <= until))
-        current = None
-        later = []
-        for at, content in fed:
-            if at <= since:
-                current = content
-            elif at <= until:
-                later.append(content)
-        return (current, *later)
 
-    def label_new_pieces(self) -> None:
-        """Notes the programs each piece that's appeared since last time holds
-        (see MARGIN_S), and forgets the pieces that are gone."""
+        def later(entry) -> bool:
+            # (After the window's start: the earlier of the two.)
+            at, byte, _content = entry
+            return at > since or (since_byte is not None and byte > since_byte)
+
+        first = next((n for n, entry in enumerate(fed) if later(entry)), len(fed))
+        # (Before the stream began, nothing was; before its record of it,
+        # what was can't be told.)
+        whole = None if self.fed_whole else UNKNOWN
+        before = fed[first - 1][2] if first else whole
+        return (before, *(c for at, _byte, c in fed[first:] if at <= until))
+
+    def _pieces_now(self) -> set[str] | None:
         try:
-            names = {p.name for p in self.folder.iterdir() if PIECE.fullmatch(p.name)}
+            return {p.name for p in self.folder.iterdir() if PIECE.fullmatch(p.name)}
         except OSError:
-            return
-        now = time.monotonic()
-        new = sorted((n for n in names if n not in self.holds), key=lambda n: int(n[1:-3]))
-        if new:
-            # (Several at once, as the station's recent bytes come, or ffmpeg
-            # catches up: each may hold anything since the last time, as
-            # their own moments can't be told apart. The cold audit of 1.39.0.)
-            since = self._newest_at if self._newest_at is not None else self._born
-            held = self.contents(since - MARGIN_S, now + 0.5)
-            for name in new:
-                self.holds[name] = held
-            self._newest_at = now
-        for gone in [n for n in self.holds if n not in names]:
-            del self.holds[gone]
+            return None
 
-    def pieces_hold(self, names: list[str]) -> tuple:
+    async def label_new_pieces(self) -> None:
+        """Notes the programs each piece that's appeared since the last look
+        holds (see MARGIN_S), and forgets the pieces that are gone. (The
+        folder is looked in off the event loop: the fourth cold audit.)"""
+        async with self._labeling:
+            looking = (time.monotonic(), self.given)
+            names = await asyncio.to_thread(self._pieces_now)
+            if names is None:
+                return
+            last, self._looked = self._looked, looking
+            new = sorted((n for n in names if n not in self.holds), key=lambda n: int(n[1:-3]))
+            if new:
+                # (Several at once, as ffmpeg catches up: each may hold
+                # anything since the last time, as their own moments can't be
+                # told apart. The cold audit of 1.39.0. From before the look
+                # before the newest of the last ones appeared, by time and by
+                # bytes: it appeared after that look.)
+                since, since_byte = self._before_newest or (self._born, 0)
+                held = self.contents(
+                    since - MARGIN_S, time.monotonic() + 0.5, since_byte - SLACK_BYTES
+                )
+                for name in new:
+                    self.holds[name] = held
+                self._before_newest = last
+            for gone in [n for n in self.holds if n not in names]:
+                del self.holds[gone]
+
+    async def pieces_hold(self, names: list[str]) -> tuple:
         """What some pieces hold, together (UNKNOWN for one not yet looked at)."""
-        self.label_new_pieces()
+        await self.label_new_pieces()
         out: list = []
         for name in names:
             out.extend(self.holds.get(name, (UNKNOWN,)))
@@ -426,7 +450,7 @@ class HlsStream:
     async def _label_pieces(self) -> None:
         while True:
             await asyncio.sleep(LABEL_EVERY_S)
-            self.label_new_pieces()
+            await self.label_new_pieces()
 
     async def _run(self) -> None:
         said: deque[str] = deque(maxlen=5)
@@ -479,11 +503,12 @@ class HlsStream:
                 )
                 return
             chunk, content = sent
-            if not self.fed or self.fed[-1][1] is not content:
+            if not self.fed or self.fed[-1][2] is not content:
                 if len(self.fed) == self.fed.maxlen:
                     self.fed_whole = False  # (its start is forgotten from now)
-                self.fed.append((time.monotonic(), content))
+                self.fed.append((time.monotonic(), self.given, content))
             stdin.write(chunk)
+            self.given += len(chunk)
             await stdin.drain()
 
     async def _end_ffmpeg(self) -> None:

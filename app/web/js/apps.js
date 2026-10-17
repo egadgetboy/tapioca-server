@@ -659,7 +659,7 @@ async function loadAppLimits() {
     h('p', { class: 'muted small', style: 'margin:0' }, `Devices using tapiOca’s apps now: ${plural(got.watching.devices, 'device')}${got.watching.away ? ` (${got.watching.away} away from home)` : ''}.`),
     h('div', { class: 'scan-set' }, h('label', { for: 'appLimitDevices', style: 'min-width:220px' }, 'Devices watching at once'), devices),
     h('div', { class: 'scan-set' }, h('label', { for: 'appLimitAway', style: 'min-width:220px' }, 'Away from home, at most'), away),
-    h('p', { class: 'hint', style: 'margin:0' }, 'Leave a box empty for no limit. Devices away from home count toward the first number too: the second keeps your home’s internet upload from running out. A device that’s already watching can always change stations, and one waiting out a program its person may not watch keeps its place. Any device beyond a limit sees a message such as: “An Admin has limited tapiOca to 5 devices watching at once, so it runs smoothly for everyone. Please try again later.”'),
+    h('p', { class: 'hint', style: 'margin:0' }, 'Leave a box empty for no limit. Devices away from home count toward the first number too: the second keeps your home’s internet upload from running out. A device that’s already watching can always change stations. A device waiting for a restricted program to end keeps its place too. Any device beyond a limit sees a message such as: “An Admin has limited tapiOca to 5 devices watching at once, so it runs smoothly for everyone. Please try again later.”'),
     warnings,
     h('div', { class: 'limit-note' }, h('strong', {}, 'What tapiOca recommends'),
       h('ul', {},

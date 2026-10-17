@@ -1189,14 +1189,16 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             headers=hls.HEADERS,
         )
 
-    def holds_restricted(stream: hls.HlsStream, names: list[str], viewer: viewing.Viewer) -> bool:
+    async def holds_restricted(
+        stream: hls.HlsStream, names: list[str], viewer: viewing.Viewer
+    ) -> bool:
         """Whether any of these pieces holds a program someone may not watch
         (or what can't be told, to be safe)."""
         if viewer.everything:
             return False
         return any(
             content is hls.UNKNOWN or not ctx.viewing.may_watch(viewer, content)
-            for content in stream.pieces_hold(names)
+            for content in await stream.pieces_hold(names)
         )
 
     async def hls_playlist_for(
@@ -1268,7 +1270,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 headers=hls.HEADERS,
             )
         if viewer is not None:
-            if holds_restricted(stream, stream.listed(playlist), viewer):
+            if await holds_restricted(stream, stream.listed(playlist), viewer):
                 stream.blocked(client, away_)
                 return restricted(channel, viewer)
             stream.asked_by(client, away_, who)
@@ -1289,7 +1291,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(404, "That piece of the stream is gone")
         if user is not None and channel is not None:
             viewer = ctx.viewing.viewer(user)
-            if holds_restricted(stream, [piece], viewer):
+            if await holds_restricted(stream, [piece], viewer):
                 stream.blocked(client)
                 return restricted(channel, viewer)
         stream.asked_by(None)
