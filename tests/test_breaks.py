@@ -549,7 +549,11 @@ def test_titles_are_made_to_fit_not_cut_short():
 def test_the_card_says_whats_next_with_its_season_and_episode():
     from app.broadcaster import Broadcaster
 
-    ctx = SimpleNamespace(broken=SimpleNamespace(is_broken=lambda key: False))
+    ctx = SimpleNamespace(
+        broken=SimpleNamespace(is_broken=lambda key: False),
+        # (No one it's allowed for by hand who may not watch it: 1.39.0.)
+        viewing=SimpleNamespace(named_for_everyone=lambda channel_id, item: True),
+    )
     b = Broadcaster(ctx, 1)  # type: ignore[arg-type]
     here = Slot(episode("1"), 0, 0, 0, 60 * S)
 
