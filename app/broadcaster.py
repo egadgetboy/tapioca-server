@@ -135,6 +135,10 @@ MOST_BEHIND_MS = 2 * 3600 * 1000
 BANNER_WAIT_S = (1.0, 2.0)
 # Recent output kept so a new viewer starts instantly.
 RECENT_BYTES = 3 * 1024 * 1024
+# As a station stops: how long its engine is given to end, and then, once
+# it's cancelled, how long more (for anyone who tuned in meanwhile: see stop).
+STOP_WAIT_S = 10.0
+CANCEL_WAIT_S = 5.0
 # Stream waiting for a viewer that has stopped reading, at most (about two
 # minutes at the default quality) before it's disconnected.
 VIEWER_MAX_BYTES = 64 * 1024 * 1024
@@ -426,9 +430,14 @@ class Broadcaster:
         # fourth cold audit of 1.39.0.)
         self._stop_task = None
         if not self.viewers:
-            await self.stop()
+            await self.stop(restart=True)
 
-    async def stop(self, because: str = "the station stopped") -> None:
+    async def stop(self, because: str = "the station stopped", restart: bool = False) -> None:
+        """Stops the station: its engine and everyone watching. With
+        `restart` (as it stops after its grace, with no one watching), anyone
+        who tunes in meanwhile gets a new session once it has; otherwise
+        (deleted, a backup restored, its tuner needed) they're told it
+        stopped (the fifth cold audit of 1.39.0)."""
         self._stopping = True
         old = self._task
         # (At once: someone tuning in while it stops gets none of it. The
@@ -443,12 +452,12 @@ class Broadcaster:
         self.viewers.clear()
         if self._task:
             try:
-                await asyncio.wait_for(asyncio.shield(self._task), 10)
+                await asyncio.wait_for(asyncio.shield(self._task), STOP_WAIT_S)
             except (TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
                 # (A moment for it to end, so anyone who tuned in meanwhile
                 # gets a new session: see below.)
-                await asyncio.wait({self._task}, timeout=5)
+                await asyncio.wait({self._task}, timeout=CANCEL_WAIT_S)
         self._recent.clear()
         self._recent_bytes = 0
         self.now_playing = None
@@ -459,7 +468,7 @@ class Broadcaster:
             # here and the last has ended (the third cold audit of 1.39.0);
             # otherwise they're told it stopped.
             here = self.ctx.broadcasters.get(self.channel_id) is self
-            if here and (self._task is None or self._task.done()):
+            if restart and here and (self._task is None or self._task.done()):
                 self._stopping = False
                 self._task = asyncio.create_task(
                     self._supervise(), name=f"channel-{self.channel_id}"

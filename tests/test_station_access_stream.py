@@ -149,10 +149,14 @@ async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
 
     monkeypatch.setattr(intro, "find_show_audio", found)
     plex = FakePlex()
-    plex.add_show("100", "Test Show")
+    plex.add_show("100", "Test Show", contentRating=["TV-Y7"])
     plex.add_episode("201", "100", 1, 1, "long", str(long_one), LONG_S * 1000)
     for n, name in ((2, "good2"), (3, "good3")):
         plex.add_episode(str(200 + n), "100", 1, n, name, str(media[name]), CLIP_S * 1000)
+    # (Plex's own ratings, as it gives them each time it's asked: tapiOca
+    # takes an episode's from Plex again as it plays, so without this, the
+    # episode became unrated, its show's TV-Y7, after a minute or so.)
+    plex._set_tags(plex.episodes["201"], {"contentRating": ["TV-14"]})
     base, app, _settings, srv, task = await start_server(tmp_path, plex)
     ctx = app.state.ctx
     try:

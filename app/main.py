@@ -2840,18 +2840,22 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
         def listing() -> list[dict]:  # on a worker thread: a big shuffle takes a moment
             station = ctx.guide(channel)
-            return [
-                {
+
+            def row(slot) -> dict:
+                # (One they may not watch: its times and nothing else, not
+                # its special or that its file is broken. 1.39.0.)
+                hidden = limited is not None and not ctx.viewing.may_watch(limited, slot.item)
+                return {
                     **_shown_json(ctx.viewing, limited, slot.item),
                     "start": slot.start_ms,
                     "end": slot.end_ms,
-                    "broken": slot.item.rating_key in broken,
+                    "broken": not hidden and slot.item.rating_key in broken,
                     "special": None
-                    if limited is not None and not ctx.viewing.may_watch(limited, slot.item)
+                    if hidden
                     else specials.label(station.special(slot), slot.index),
                 }
-                for slot in station.between(now, until)
-            ]
+
+            return [row(slot) for slot in station.between(now, until)]
 
         return await asyncio.to_thread(listing)
 

@@ -72,13 +72,21 @@ IDLE_CHECK_S = 2.0
 # until a moment after it did: from MARGIN_S before, and from SLACK_BYTES
 # before (whichever is earlier), to be safe. (By time alone, ffmpeg stalling
 # a few seconds could hide a program's last moments: the fourth cold audit.
-# By bytes: what's between being given to ffmpeg and in a piece is at most
-# what waits to be written, the pipe and ffmpeg's own reading, well under
-# SLACK_BYTES.) So a few seconds either side of a program someone may not
-# watch are kept from them too. Looked for every LABEL_EVERY_S. FED_KEPT:
-# how many changes of program are kept, far more than a playlist lists.
+# By bytes: what's between being given to ffmpeg and in a piece is what
+# waits to be written (at most about 128 KB), the pipe (64 KB) and what
+# ffmpeg has read ahead, a few dozen KB once it's going. As it starts it
+# reads far more, measured at about 1.4 MB at over 10 Mbps (the fifth cold
+# audit), so for its first STARTUP_S every piece holds all since it began.)
+# The byte window reaches at most REACH_S further back than the time window
+# (a still picture's few bytes a second would otherwise reach back minutes,
+# keeping someone from their station long after). So a few seconds either
+# side of a program someone may not watch are kept from them too. Looked for
+# every LABEL_EVERY_S. FED_KEPT: how many changes of program are kept, far
+# more than a playlist lists.
 MARGIN_S = PIECE_S + 1.0
-SLACK_BYTES = 1 << 20
+SLACK_BYTES = 512 << 10
+STARTUP_S = 10.0
+REACH_S = 20.0
 LABEL_EVERY_S = 0.25
 FED_KEPT = 500
 # (What can't be told: as a program no one with limits may watch.)
@@ -397,7 +405,8 @@ class HlsStream:
         def later(entry) -> bool:
             # (After the window's start: the earlier of the two.)
             at, byte, _content = entry
-            return at > since or (since_byte is not None and byte > since_byte)
+            by_bytes = since_byte is not None and byte > since_byte and at > since - REACH_S
+            return at > since or by_bytes
 
         first = next((n for n, entry in enumerate(fed) if later(entry)), len(fed))
         # (Before the stream began, nothing was; before its record of it,
@@ -430,6 +439,8 @@ class HlsStream:
                 # before the newest of the last ones appeared, by time and by
                 # bytes: it appeared after that look.)
                 since, since_byte = self._before_newest or (self._born, 0)
+                if since < self._born + STARTUP_S:
+                    since, since_byte = self._born, 0
                 held = self.contents(
                     since - MARGIN_S, time.monotonic() + 0.5, since_byte - SLACK_BYTES
                 )

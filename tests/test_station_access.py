@@ -773,8 +773,11 @@ def test_the_last_one_watching_leaving_keeps_the_station_for_a_refused_app(app):
 
 async def test_someone_tuning_in_while_a_station_stops_gets_a_new_session(monkeypatch):
     """(The third cold audit of 1.39.0; older than it.) Someone who tunes in
-    while a station stops is watching once it has: a new session starts for
-    them, rather than nothing, forever. Not for a station that's gone."""
+    while a station stops after its grace is watching once it has: a new
+    session starts for them, rather than nothing, forever. Not for a station
+    that's gone, nor one stopped for good reason (deleted, a backup
+    restored, its tuner needed: the fifth cold audit), where they're told
+    it stopped."""
     from app.broadcaster import Broadcaster
 
     sessions = []
@@ -784,7 +787,7 @@ async def test_someone_tuning_in_while_a_station_stops_gets_a_new_session(monkey
         await asyncio.Event().wait()
 
     monkeypatch.setattr(Broadcaster, "_supervise", session)
-    for gone in (False, True):
+    for gone, restart in ((False, True), (True, True), (False, False)):
         b = Broadcaster(ctx=SimpleNamespace(broadcasters={}), channel_id=1)
         if not gone:
             b.ctx.broadcasters[1] = b
@@ -796,13 +799,13 @@ async def test_someone_tuning_in_while_a_station_stops_gets_a_new_session(monkey
 
         b._task = asyncio.create_task(ending())
         await started.wait()
-        stopping = asyncio.create_task(b.stop())
+        stopping = asyncio.create_task(b.stop(restart=restart))
         await asyncio.sleep(0.05)
         viewer = b.subscribe("app viewers on 1", counted=False)
         late.set()
         await stopping
         await asyncio.sleep(0.05)
-        if gone:
+        if gone or not restart:
             assert sessions == [1] and viewer.closed and viewer not in b.viewers
         else:
             assert sessions == [1] and b._task is not None and not b._task.done()
@@ -844,11 +847,15 @@ async def test_someone_tuning_in_as_a_station_stops_after_its_grace_gets_a_new_s
     rather than being turned away."""
     from app.broadcaster import Broadcaster
 
-    sessions, late = [], asyncio.Event()
+    sessions, late, cancelled = [], asyncio.Event(), []
 
     async def session(self):
         sessions.append(self.channel_id)
-        await (late.wait() if len(sessions) == 1 else asyncio.Event().wait())
+        try:
+            await (late.wait() if len(sessions) == 1 else asyncio.Event().wait())
+        except asyncio.CancelledError:
+            cancelled.append(len(sessions))
+            raise
 
     monkeypatch.setattr(Broadcaster, "_supervise", session)
     ctx = SimpleNamespace(broadcasters={}, settings=SimpleNamespace(idle_grace_seconds=0.01))
@@ -865,4 +872,131 @@ async def test_someone_tuning_in_as_a_station_stops_after_its_grace_gets_a_new_s
     await asyncio.sleep(0.1)
     assert sessions == [1, 1], sessions
     assert newcomer in b.viewers and not newcomer.closed and b.running
+    # (Its engine ended by itself: tuning in didn't cut the stop short.)
+    assert cancelled == [], cancelled
     b._task.cancel()
+
+
+async def test_someone_tuning_in_while_a_stuck_engine_is_ended_gets_a_new_session(
+    monkeypatch,
+):
+    """(The fifth cold audit of 1.39.0.) An engine that doesn't end within
+    STOP_WAIT_S is cancelled, and given a moment to end, so someone who
+    tuned in meanwhile still gets a new session."""
+    from app import broadcaster
+    from app.broadcaster import Broadcaster
+
+    monkeypatch.setattr(broadcaster, "STOP_WAIT_S", 0.05)
+    sessions = []
+
+    async def session(self):
+        sessions.append(self.channel_id)
+        await asyncio.Event().wait()  # (ends only when cancelled)
+
+    monkeypatch.setattr(Broadcaster, "_supervise", session)
+    ctx = SimpleNamespace(broadcasters={})
+    b = Broadcaster(ctx=ctx, channel_id=1)
+    ctx.broadcasters[1] = b
+    b.subscribe("Plex on 1", counted=False)
+    await asyncio.sleep(0.01)
+    stopping = asyncio.create_task(b.stop(restart=True))
+    await asyncio.sleep(0.01)
+    newcomer = b.subscribe("an app on 1", counted=False)
+    await stopping
+    await asyncio.sleep(0.01)
+    assert sessions == [1, 1] and newcomer in b.viewers and not newcomer.closed
+    b._task.cancel()
+
+
+def test_someone_with_limits_is_always_given_an_address_that_checks(app, monkeypatch):
+    """(The fifth cold audit of 1.39.0.) Whatever signed them in (an app,
+    or a browser, with no app's label), someone with limits is given their
+    own stream address, where every program is checked: never the plain
+    one at home, which isn't."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[7]): True})
+        phone = TestClient(app)
+        as_kit, as_ada = sign_in_app(app, KIT), sign_in_app(app, ADA)
+        monkeypatch.setattr(ctx.db, "session_app", lambda token_hash: "")  # (a browser)
+
+        def address(headers: dict) -> str:
+            got = phone.get("/api/v1/stations", headers=headers).json()["stations"]
+            return next(s for s in got if s["number"] == 7)["hls"]
+
+        assert address(as_kit).startswith("/hls/k/"), address(as_kit)
+        assert address(as_ada).startswith("/hls/7/")  # (an Admin's browser: as before)
+
+
+async def test_after_a_stall_the_next_piece_is_judged_from_the_look_before(tmp_path):
+    """(The fifth cold audit of 1.39.0.) ffmpeg stalled 5 seconds just after
+    the start of a piece, then caught up: what had waited for it (a card)
+    poured in before the piece before it was found. The next piece holds
+    what was given before the stall (Heist's end), as it's judged from the
+    look before that one appeared, not the look that found it."""
+    heist = SimpleNamespace(rating_key="301")
+    t = time.monotonic()
+    fed = [(t - 60, 0, heist), (t - 4.5, 1_000_000, None)]
+    stream = bare_stream(tmp_path, fed, born=t - 70, given=6_000_000)
+    stream._looked = (t - 5, 1_000_000)  # (the look before the stall)
+    (tmp_path / "s0.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    (tmp_path / "s1.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    assert heist in stream.holds["s1.ts"], stream.holds
+
+
+async def test_a_still_picture_after_a_restricted_program_isnt_kept_from_her_for_minutes(
+    tmp_path,
+):
+    """(The fifth cold audit of 1.39.0.) A still card's few bytes a second
+    would make the byte window reach back minutes; it reaches no more than
+    REACH_S further back than the time window, so Kit's back soon after
+    Heist ends, still picture or not."""
+    heist = SimpleNamespace(rating_key="301")
+    t = time.monotonic()
+    fed = [(t - 120, 0, heist), (t - 100, 100_000, None)]
+    stream = bare_stream(tmp_path, fed, born=t - 130, given=200_000)
+    stream._before_newest = (t - 1, 190_000)
+    (tmp_path / "s9.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    assert stream.holds["s9.ts"] == (None,), stream.holds
+
+
+def test_the_page_says_nothing_of_a_restricted_programs_file(app, monkeypatch):
+    """(The fifth cold audit of 1.39.0.) In the page's guide, a program Kit
+    may not watch is its times and nothing else: not even that its file is
+    broken. One she may watch says so, as before."""
+    ctx = app.state.ctx
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        kid(admin, {str(ids[7]): True})
+        puppet, heist = items(ctx, {"201", "301"})
+        plays(ctx, ids[7], [heist, puppet], int(time.time() * 1000) - 60 * 60_000)
+        monkeypatch.setattr(ctx.broken, "keys", lambda: {"201", "301"})
+        page = TestClient(app)
+        page.post("/api/access/sign-in", json=KIT)
+        rows = page.get(f"/api/channels/{ids[7]}/guide").json()
+        hidden = [r for r in rows if r.get("restricted")]
+        shown = [r for r in rows if not r.get("restricted")]
+        assert hidden and shown
+        assert not any(r["broken"] for r in hidden), hidden
+        assert all(r["broken"] for r in shown)
+        # (Its length is only its times: end less start.)
+        assert all(r["durationMs"] == r["end"] - r["start"] for r in hidden)
+
+
+async def test_a_new_streams_first_pieces_hold_all_since_it_began(tmp_path):
+    """(The fifth cold audit of 1.39.0.) As it starts, ffmpeg reads far
+    ahead (over a megabyte), more than SLACK_BYTES: for its first STARTUP_S,
+    each new piece holds everything since the stream began, Heist's start
+    included, however much it's been given since."""
+    heist = SimpleNamespace(rating_key="301")
+    t = time.monotonic()
+    fed = [(t - 5, 0, heist), (t - 4.9, 100_000, None)]
+    stream = bare_stream(tmp_path, fed, born=t - 5, given=3_000_000)
+    stream._before_newest = (t - 1, 2_900_000)  # (the look before the last piece)
+    (tmp_path / "s3.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    assert heist in stream.holds["s3.ts"], stream.holds

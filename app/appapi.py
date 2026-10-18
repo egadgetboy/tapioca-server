@@ -781,8 +781,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         when watching away from home is on; at home, for tapiOca's own
         apps whichever devices may use the tuner (so a signed-in app needn't
         be listed, and changing that never stops one: see tuner.py), and for
-        an API token's script while only listed devices may. None
-        otherwise."""
+        an API token's script while only listed devices may; and always for
+        someone with limits, as only these addresses check each program
+        (1.39.0, the fifth cold audit). None otherwise."""
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         user = access.signed_in(request)
         if not (token and user):
@@ -791,6 +792,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if access.outside(request.scope):
             return ctx.away.key_for(hashed, user)
         if ctx.tuner.only or ctx.db.session_app(hashed):
+            return ctx.away.key_for(hashed, user, home=True)
+        if not ctx.viewing.viewer(user).everything:
             return ctx.away.key_for(hashed, user, home=True)
         return None
 
