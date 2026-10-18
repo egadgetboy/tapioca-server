@@ -483,6 +483,13 @@ class Viewer:
     needs_clean: bool = False
 
     @property
+    def unchecked(self) -> bool:
+        """Whether nothing at all is checked for them (no limits, nothing
+        hidden, no Clean audio needed): only then may Media's shortcuts skip
+        sees()."""
+        return self.everything and not self.hidden and not self.needs_clean
+
+    @property
     def by_tags(self) -> bool:
         """Whether a title's tags decide what they see (so Media must know
         them whole)."""
@@ -492,16 +499,18 @@ class Viewer:
         """The one program check (1.40.0): whether they may watch or see
         `judged`, on every way of watching (a Station's pieces as they air,
         Media as it starts and while it plays, and every list)."""
-        if self.everything:
-            return True
         # (The rules, in order: docs/users.md. An episode hidden for them, or
         # a program without Clean audio ready when their level needs it, is
-        # refused whatever else allows it: Q-2, Q-7 and D04, where not known
-        # is never ready.)
+        # refused whatever else allows it, so these come before `everything`:
+        # Q-2, Q-7 and D04, where not known is never ready. Neither makes
+        # anyone limited: `everything` keeps its meaning, as the hiding
+        # handoff says.)
         if judged.own_key and judged.own_key in self.hidden:
             return False
         if self.needs_clean and judged.clean is not True:
             return False
+        if self.everything:
+            return True
         if judged.key and judged.key in self.own.blocks.title_keys:
             return False
         if judged.key and any(judged.key == k for k, _ in self.own.allowed):
@@ -743,10 +752,7 @@ class Viewing:
         if now is None or now.role == ADMIN:
             return False
         own = self._people.get(now.id, Person())
-        return (
-            self.level(now.level_id).limited or own is None or not own.blocks.empty
-            or bool(self.hidden_for(now)) or self.needs_clean(now)
-        )  # fmt: skip
+        return self.level(now.level_id).limited or own is None or not own.blocks.empty
 
     def hidden_for(self, user: User) -> frozenset[str]:
         """The episodes hidden for `user` as a limit (their own keys): none
@@ -779,14 +785,13 @@ class Viewing:
         clean = self.needs_clean(now)
         return Viewer(
             level,
-            everything=not level.limited and not blocked and own.blocks.empty
-            and not hidden and not clean,
+            everything=not level.limited and not blocked and own.blocks.empty,
             allowed=frozenset(c for c, allowed in stations.items() if allowed),
             blocked=blocked,
             own=own,
             hidden=hidden,
             needs_clean=clean,
-        )  # fmt: skip
+        )
 
     def sees_station(self, viewer: Viewer, channel_id: int) -> bool:
         if viewer.everything:
@@ -808,7 +813,7 @@ class Viewing:
         for them (an Admin's title exceptions; allowing a Station never
         allows what's on it). What isn't a program (None: a commercial, a
         card) and INFO's own film are for everyone."""
-        if viewer.everything or item is None or item.rating_key == INFO_KEY:
+        if viewer.unchecked or item is None or item.rating_key == INFO_KEY:
             return True
         return viewer.sees(self.titles.judge(item))
 

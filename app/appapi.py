@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 
     from .db import Channel, Item, SignedIn, User
     from .main import AppContext
+    from .ondemand import PlaySession
     from .schedule import Airs, Slot
 
 VERSION = 1
@@ -822,7 +823,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         airs on any station: viewing.Viewing.may_watch); None for anyone
         else. 1.39.0."""
         viewer = ctx.viewing.viewer(access.signed_in(request))
-        if viewer.everything:
+        if viewer.unchecked:
             return None
         return lambda item: ctx.viewing.may_watch(viewer, item)
 
@@ -987,6 +988,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         `features` lists `problems`): kept for the Logs tab, with which app
         and what kind of device, so an Admin can tell whose problem it is."""
         user = access.signed_in(request)
+        about = played_of(body, request) if body.kind in problems.LIBRARY_KINDS else None
+        if about is not None and about.restricted:
+            # (Stopped by its person's limits: no problem, and said once in
+            # the log as that. 1.40.0.)
+            return {"ok": True}
         sent = problems.Sent(
             body.kind, body.detail, body.station, body.title, body.app, body.version,
             body.device, body.deviceName, body.at, body.journal, body.lastedMs,
@@ -1000,16 +1006,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             )
         except problems.Refused as e:
             raise HTTPException(e.status, str(e)) from None
-        if body.kind in problems.LIBRARY_KINDS:
-            check_its_file(body, request)
+        if about is not None:
+            check_its_file(body, about)
         return {"ok": True}
 
-    def check_its_file(body: Problem, request: Request) -> None:
-        """Something from Media didn't play, or stopped: what it was
-        (its playing, as the app says, or else what this device played
-        last, for a problem just now) is checked there first (see
-        scanner.trouble). That's no verdict: only what the check finds puts
-        its file on the list."""
+    def played_of(body: Problem, request: Request) -> PlaySession | None:
+        """What a problem with something from Media is about: its playing, as
+        the app says, or else what this device played last, for a problem
+        just now."""
         sign_in = access.sign_in_of(request)
         session = None
         if body.session:
@@ -1029,8 +1033,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 and lately.started_ms <= happened + CLOCKS_APART_MS
             ):
                 session = lately
-        if session is None:
-            return
+        return session
+
+    def check_its_file(body: Problem, session: PlaySession) -> None:
+        """Something from Media didn't play, or stopped: what it was is
+        checked there first (see scanner.trouble). That's no verdict: only
+        what the check finds puts its file on the list."""
         at = body.positionMs if body.positionMs is not None else session.position_ms
         what = "didn't play" if body.kind == "library-failed" else "stopped playing"
         why = f"{session.user or 'someone'}'s app said it {what}"

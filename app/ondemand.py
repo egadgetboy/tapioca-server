@@ -121,10 +121,16 @@ COPY_RESTING_S = 600.0  # a copy unused this long has its pieces deleted
 WATCHING_S = 180.0  # counts as a device watching until unheard from this long
 SESSIONS_MOST = 500
 RECHECK_S = 60.0  # how often a session's sign-in is checked again
-# How often what's playing is checked against its person's limits again
-# (1.40.0: the one program check, while it plays, so an Admin's change
-# reaches it within this long).
-LIMITS_RECHECK_S = 15.0
+# How often what's playing is judged again by its person's limits, in the
+# background and from what tapiOca already knows, never asking Plex (1.40.0:
+# the one program check, while it plays, so an Admin's change stops it within
+# a few seconds).
+LIMITS_WATCH_S = 2.0
+# How long a title stopped by its person's limits is answered as restricted
+# (403, code "restricted") when their app asks to play it again, rather than
+# as one they can't see (404).
+RESTRICTED_SAID_S = 600.0
+RESTRICTED_KEPT = 200
 # The same program played again on the same device this soon after is the
 # same play (another sound track, a smaller version: see PlaySessions.start),
 # and the sessions ended lately kept for telling (at most this many).
@@ -435,6 +441,12 @@ class Catalog:
         if found is None or not self.shared_library(found):
             raise NotShared(key)
         return found
+
+    def known(self, key: str) -> Entry | None:
+        """A show, movie or episode as last asked about in detail, however
+        long ago (None if it isn't kept): never asks Plex."""
+        kept = self._entries.get(key)
+        return kept[1] if kept is not None else None
 
     async def check(self, key: str) -> None:
         """NotShared unless `key` is in a shared library (asking the library
@@ -1281,7 +1293,13 @@ class PlaySession:
     started_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     seen: float = field(default_factory=time.monotonic)
     checked: float = field(default_factory=time.monotonic)
-    judged: float = field(default_factory=time.monotonic)  # (limits, last checked: 1.40.0)
+    # The one program check while it plays (1.40.0): an episode's show, as it
+    # was when it started (it's judged by its show's rating and tags); whether
+    # its person's limits stopped it; and its byte answers going now (each an
+    # anyio.CancelScope, cancelled as it's stopped, so a long one is cut).
+    show: Entry | None = None
+    restricted: bool = False
+    streams: set[Any] = field(default_factory=set, repr=False, compare=False)
     # What the stats count (see stats.Stats.played): how long it's been
     # watched (the time between its requests, but for gaps longer than
     # WATCHING_S: paused, or gone), how much of that is counted, and whether
@@ -1315,6 +1333,8 @@ class PlaySessions:
         self.count_with: Callable[[PlaySession], None] | None = None
         # Sessions ended lately, by who played what on which device.
         self._ended: OrderedDict[tuple[int, str, str], PlaySession] = OrderedDict()
+        # Titles stopped lately by their person's limits: (user id, key) -> when.
+        self._restricted: OrderedDict[tuple[int, str], float] = OrderedDict()
 
     def start(self, **details: Any) -> PlaySession:
         self._tidy()
@@ -1382,6 +1402,34 @@ class PlaySessions:
         while len(self._ended) > ENDED_KEPT:
             self._ended.popitem(last=False)
         return session
+
+    def restrict(self, session_id: str) -> PlaySession | None:
+        """Stops a session its person's limits no longer allow (1.40.0): it
+        ends, what it's sending now is cut, and what's asked of it later, or
+        of its title by its person soon after, is answered as restricted.
+        None if it had already ended."""
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        session.restricted = True
+        for stream in list(session.streams):
+            stream.cancel()
+        key = (session.user_id, session.entry.key)
+        self._restricted.pop(key, None)
+        self._restricted[key] = time.monotonic()
+        while len(self._restricted) > RESTRICTED_KEPT:
+            self._restricted.popitem(last=False)
+        return self.end(session_id)
+
+    def restricted_lately(self, user_id: int, key: str) -> bool:
+        """Whether someone's limits stopped this title while they watched it,
+        in the last RESTRICTED_SAID_S."""
+        when = self._restricted.get((user_id, key))
+        return when is not None and time.monotonic() - when <= RESTRICTED_SAID_S
+
+    def going(self) -> list[PlaySession]:
+        """Every session still going (none ended for being unused here)."""
+        return list(self._sessions.values())
 
     def count(self) -> None:
         """Counts what's been watched of each session so far."""
