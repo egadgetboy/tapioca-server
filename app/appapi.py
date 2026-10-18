@@ -1017,16 +1017,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return {"ok": True}
 
     def names_it(said: str, names: set[str]) -> bool:
-        """Whether a report's title is one of `names`, as an app may put
-        it: the same (any case), or one followed by more after a " · ", " ("
-        or ": " ("Heist · Director's cut", "Heist (2000)"). Never a title
-        that merely holds its letters ("Theistic" holds "heist": the
-        re-check of 1.40.0)."""
-        said = said.strip().casefold()
-        for name in (n.casefold() for n in names):
-            if said == name or any(said.startswith(name + sep) for sep in (" · ", " (", ": ")):
-                return True
-        return False
+        """Whether a report's title is exactly one of `names`, in any case,
+        as the apps send it (made plain, as their cards' titles are): a
+        movie's title, or "Northbound · S2 E4" for an episode. Nothing that
+        merely holds its letters ("Theistic" holds "heist"), and no other
+        title that starts the same ("Heist: The Return"): the re-checks of
+        1.40.0."""
+        said = plain(said).casefold()
+        return any(said == plain(name).casefold() for name in names)
 
     def titles_of(e) -> set[str]:
         """The names an app may give a title in a report: its own, its

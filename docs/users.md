@@ -251,8 +251,8 @@ asked by every way of watching:
   longer allow it." Something that can't be told yet (a show or tags not
   known) leaves the title playing for that moment, since it was allowed,
   while tapiOca asks Plex about it in the background; the next check
-  judges it. While Plex can't answer, it asks again at most every 30
-  seconds. A play whose own address has ended (its person removed or
+  judges it. While Plex can't answer, it asks again within 30 seconds
+  each time. A play whose own address has ended (its person removed or
   signed out, its device revoked, its Media folder no longer shared, or
   watching away from home turned off) is cut too, and its addresses then
   answer 404, as for any ended play. No problem report is kept for a title
