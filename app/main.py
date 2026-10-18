@@ -4198,7 +4198,7 @@ def _shown_json(viewing_: viewing.Viewing, viewer: viewing.Viewer | None, item: 
         return _item_json(item)
     return {
         "ratingKey": "", "kind": "movie", "title": viewing.RESTRICTED_TITLE, "show": None, "season": None,
-        "episode": None, "year": None, "durationMs": item.duration_ms, "restricted": True,
+        "episode": None, "year": None, "durationMs": None, "restricted": True,
     }  # fmt: skip
 
 

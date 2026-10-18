@@ -223,7 +223,9 @@ def make_room(ctx: AppContext, b: Broadcaster) -> None:
     idle = [x for x in ctx.broadcasters.values() if x is not b and x.running and not x.viewers]
     if idle and len(on_air(ctx)) + len(idle) >= load(ctx.db).tuners:
         for x in idle:
-            task = asyncio.create_task(x.stop("another station needed its tuner"))
+            # (Anyone who tunes in to it meanwhile has passed the check of
+            # free tuners: a new session for them. The sixth cold audit.)
+            task = asyncio.create_task(x.stop("another station needed its tuner", restart=True))
             _stopping.add(task)
             task.add_done_callback(_stopping.discard)
 

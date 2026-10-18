@@ -121,8 +121,9 @@ class Station(_Shape):
     hls: str = Field(
         description="Where to play it (HLS): an address on the server. From the internet (with "
         "watching away from home on), or at home for tapiOca's own apps, or for any token "
-        "while only listed devices may use the tuner (from 1.32.0), an address of the token's "
-        "own, which needs no token itself"
+        "while only listed devices may use the tuner (from 1.32.0), or for anyone with limits "
+        "(from 1.39.0), an address of the token's own, which needs no token itself. For someone "
+        "with limits it answers 403 (code restricted) while a program they may not watch is on"
     )
     nightHls: str = Field(
         description="The same with night mode's sound: loud scenes much quieter, voices a little "

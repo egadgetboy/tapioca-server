@@ -258,6 +258,11 @@ async def test_her_app_never_gets_the_restricted_episode_and_comes_back(
         # it ended, and she got none of it: what the audit asked to catch.)
         # (From a program's start, it isn't looked for: see _play_intro.)
         assert show_sound == {"start": [], "now": [True], "break": [False]}[tune_in], show_sound
+        # (Episode 1 was TV-14 all along, as Plex gives it.)
+        episode_1 = next(
+            i for e in ctx.db.eras(channel["id"]) for i in e.items if i.rating_key == "201"
+        )
+        assert ctx.titles.judge(episode_1).age == 14
         # One shared stream all along.
         b = ctx.broadcasters[channel["id"]]
         assert b.running and len(b.viewers) == 1

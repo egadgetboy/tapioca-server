@@ -290,6 +290,7 @@ def bare_stream(folder, fed=(), whole=True, born=None, given=0) -> hls.HlsStream
     stream.given = given
     stream.folder, stream.holds, stream.ended_because = folder, {}, ""
     stream._born = time.monotonic() if born is None else born
+    stream._given_at = stream._born if given == 0 else time.monotonic()
     stream._looked, stream._before_newest = (stream._born, 0), None
     stream._labeling = asyncio.Lock()
     return stream
@@ -983,8 +984,9 @@ def test_the_page_says_nothing_of_a_restricted_programs_file(app, monkeypatch):
         assert hidden and shown
         assert not any(r["broken"] for r in hidden), hidden
         assert all(r["broken"] for r in shown)
-        # (Its length is only its times: end less start.)
-        assert all(r["durationMs"] == r["end"] - r["start"] for r in hidden)
+        # (Nor its length: a slot cut short where the station changed keeps
+        # the program's own. The sixth cold audit.)
+        assert all(r["durationMs"] is None for r in hidden)
 
 
 async def test_a_new_streams_first_pieces_hold_all_since_it_began(tmp_path):
@@ -1000,3 +1002,49 @@ async def test_a_new_streams_first_pieces_hold_all_since_it_began(tmp_path):
     (tmp_path / "s3.ts").write_bytes(b"x")
     await stream.label_new_pieces()
     assert heist in stream.holds["s3.ts"], stream.holds
+
+
+async def test_a_piece_after_ffmpeg_takes_nothing_for_half_a_minute_holds_what_it_had(tmp_path):
+    """(The sixth cold audit of 1.39.0.) ffmpeg takes nothing for 30 seconds
+    just after Heist ends (stuck), while the folder is looked in as ever.
+    The looks count from when it last took anything, so the second piece
+    after still holds Heist's end."""
+    heist = SimpleNamespace(rating_key="301")
+    t = time.monotonic()
+    fed = [(t - 60, 0, heist), (t - 30.5, 10_000_000, None)]
+    stream = bare_stream(tmp_path, fed, born=t - 70, given=10_150_000)
+    stream._given_at = t - 30  # (the last it took)
+    await stream.label_new_pieces()  # (looks while it's stuck)
+    await stream.label_new_pieces()
+    (tmp_path / "s0.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    (tmp_path / "s1.ts").write_bytes(b"x")
+    await stream.label_new_pieces()
+    assert heist in stream.holds["s1.ts"], stream.holds
+
+
+async def test_a_station_stopped_for_its_tuner_starts_again_for_someone_tuning_in(app):
+    """(The sixth cold audit of 1.39.0.) A station that no one's watching
+    is stopped when another needs its tuner; someone who tunes in to it
+    meanwhile has passed the check of free tuners, so it starts again for
+    them once it's stopped, rather than turning them away."""
+    from app import playback
+
+    ctx = app.state.ctx
+    stops = []
+
+    class Idle:
+        running, viewers = True, set()
+
+        async def stop(self, because="", restart=False):
+            stops.append((because, restart))
+
+    ctx.db.set_meta(playback.META_TUNERS, "1")
+    ctx.broadcasters[999] = Idle()
+    wanted = SimpleNamespace(running=False)
+    try:
+        playback.make_room(ctx, wanted)  # (with one tuner, and it in use)
+        await asyncio.sleep(0)
+    finally:
+        del ctx.broadcasters[999]
+    assert stops == [("another station needed its tuner", True)], stops

@@ -74,9 +74,10 @@ IDLE_CHECK_S = 2.0
 # a few seconds could hide a program's last moments: the fourth cold audit.
 # By bytes: what's between being given to ffmpeg and in a piece is what
 # waits to be written (at most about 128 KB), the pipe (64 KB) and what
-# ffmpeg has read ahead, a few dozen KB once it's going. As it starts it
-# reads far more, measured at about 1.4 MB at over 10 Mbps (the fifth cold
-# audit), so for its first STARTUP_S every piece holds all since it began.)
+# ffmpeg has read ahead, a few hundred KB at most once it's going (with
+# night mode's sound too). As it starts it reads far more, measured at 1.4
+# to 4.7 MB (the fifth and sixth cold audits), so for its first STARTUP_S
+# every piece holds all since it began.)
 # The byte window reaches at most REACH_S further back than the time window
 # (a still picture's few bytes a second would otherwise reach back minutes,
 # keeping someone from their station long after). So a few seconds either
@@ -207,6 +208,10 @@ class HlsStream:
         # piece may hold begins).
         self.holds: dict[str, tuple] = {}
         self._born = time.monotonic()
+        # (When ffmpeg last took what it was given: a look counts from then,
+        # so while it takes nothing, a stall, the clock doesn't move the
+        # window past what it still holds. The sixth cold audit of 1.39.0.)
+        self._given_at = self._born
         self._looked: tuple[float, int] = (self._born, 0)
         self._before_newest: tuple[float, int] | None = None
         self._labeling = asyncio.Lock()
@@ -426,7 +431,7 @@ class HlsStream:
         holds (see MARGIN_S), and forgets the pieces that are gone. (The
         folder is looked in off the event loop: the fourth cold audit.)"""
         async with self._labeling:
-            looking = (time.monotonic(), self.given)
+            looking = (self._given_at, self.given)
             names = await asyncio.to_thread(self._pieces_now)
             if names is None:
                 return
@@ -521,6 +526,7 @@ class HlsStream:
             stdin.write(chunk)
             self.given += len(chunk)
             await stdin.drain()
+            self._given_at = time.monotonic()
 
     async def _end_ffmpeg(self) -> None:
         proc = self._proc

@@ -215,8 +215,9 @@ counts; allowing the station never allows what's on it):
   `resumesAtMs`, when the schedule says permitted programming is back),
   and the app says "This program is restricted. Your station will resume
   automatically when permitted programming returns." It asks again on its
-  own. A few seconds either side are kept from them too, to be safe, and
-  what can't be told is kept from them. The broadcast never stops for
+  own. To be safe, a few seconds before it and about 15 seconds after it
+  are kept from them too (up to about 35 if a still card follows), and so
+  is anything that can't be told. The broadcast never stops for
   anyone else.
 - **Guides and lists.** Everywhere a program is listed for them (the
   guide, now and next, the page's stations and guide, status), one they may

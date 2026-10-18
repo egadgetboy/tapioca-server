@@ -434,10 +434,10 @@ class Broadcaster:
 
     async def stop(self, because: str = "the station stopped", restart: bool = False) -> None:
         """Stops the station: its engine and everyone watching. With
-        `restart` (as it stops after its grace, with no one watching), anyone
-        who tunes in meanwhile gets a new session once it has; otherwise
-        (deleted, a backup restored, its tuner needed) they're told it
-        stopped (the fifth cold audit of 1.39.0)."""
+        `restart` (as it stops after its grace, or as its tuner's needed by
+        another, with no one watching), anyone who tunes in meanwhile gets a
+        new session once it has; otherwise (deleted, a backup restored)
+        they're told it stopped (the fifth cold audit of 1.39.0)."""
         self._stopping = True
         old = self._task
         # (At once: someone tuning in while it stops gets none of it. The
