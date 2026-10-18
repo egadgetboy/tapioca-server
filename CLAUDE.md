@@ -99,16 +99,20 @@ follow them in every change.
 
 ## Resuming work
 - **Every time work resumes, and as each release starts,** tell the owner
-  in one paragraph (the owner, October 18): what was finished last; what's
-  being built now, and about how long it should take; the next 2 or 3 after
-  it; and which effort level he should be on (Medium, High, Extra high or
-  Max). Keep it current in the plan's `next.md`, "Where we are".
+  in one short paragraph (the owner, October 18): what was finished last;
+  what's being built now, and about how long it should take (work apart
+  from CI waits); the next 2 or 3 after it; the quality proof it gets; any
+  owner input needed (usually none); and which effort level he should be
+  on (Medium, High, Extra high or Max). It's FYI: don't wait for a reply.
+  Keep it current in the plan's `next.md`, "Where we are".
 
-## The order of work
-- **By development need, never by how recent a decision is** (the owner,
-  October 18): what's in progress, then what other work is built on, then
-  the apps' new shell before any new app screen, then features. Follow the
-  plan's release order; don't ask the owner what comes first.
+## How work runs (the owner, October 18, 12:42 PM; the plan's "How work runs until the beta" has it all)
+- **The lead developer decides every engineering question**: risk classes, tests, reviews, CI, module seams, the release order and what each release bundles. Report them as FYI; never ask the owner to approve them. The owner decides a feature's behavior, the look, launch scope and anything legal or commercial, only where the plan doesn't already say.
+- **By development need, never by how recent a decision is:** what's in progress, then what other work is built on, then the apps' new shell before any new app screen, then features. Follow the plan's release order.
+- **Stop only the affected work, and ask the owner,** when two controlling requirements contradict; a change would depart from the plan's product, security or compatibility contracts; an engineering conclusion contradicts an earlier decision without evidence that settles it; scope or behavior drifts; an ambiguity has materially different user-facing or security outcomes; or a step is outside the repos (the owner's TrueNAS server, router or Plex: the owner installs releases), needs a production secret, or can't be undone. Say: the blocked item, the exact conflict and its sections, the consequences, at most three options with a recommendation, and the safe work that goes on.
+- **Four states:** Exploratory; Implemented, pending release; Integrated, release candidate; Released. Built means Released.
+- **Classes,** by what a change can reach: A (words and looks), B (routine behavior and data), C (workflows and stored settings), D (sign-in, rosters, limits, what plays, stopping streams, casting, privacy, schema and migrations, critical concurrency). A change takes the highest class it can reach.
+- **Modular code:** one authoritative decision for each rule, called from every place that enforces it; seams are extracted in the release that needs them (characterization tests, a pure move, then the new behavior, then delete the copies). No rewrites, no splitting for size, no new frameworks or dependencies.
 
 ## Tests
 - **Every bug gets a failing test first,** then a root-cause fix. The test
@@ -116,26 +120,16 @@ follow them in every change.
 - **Never weaken a test:** don't loosen a tolerance, change an expected
   result to make it pass, skip it or delete it. If a test looks wrong, stop
   and explain why.
-- While working, run only the tests for the area being changed. The full
-  suite (35 to 45 minutes, `python -m pytest -q -p no:cacheprovider`) runs
-  once per release, in the main session.
+- While working, run the changed area's tests (and D's negative, race and restart cases), in a local environment matched to the image's pins where possible. The full suite (35 to 45 minutes) is proved by image.yml's Test step, in the exact image, on amd64 and arm64, once per release candidate; run it locally only to chase a failure.
 - Don't edit `tests/fakeplex.py`.
 - The wording scan passes (from 1.33.0).
 
 ## Releases
-- One release per feature, or per small bundle of fixes; tiny wording or
-  style fixes wait for the next feature release. Minor version for
-  features, patch for fixes. The version is in `app/__init__.py` and
+- **Releases are bundles:** compatible A to C work ships together when it belongs together, with one candidate and one gate; D work ships in a small candidate of its own. Tiny wording or style fixes wait for the next release. Minor version for features, patch for fixes. The version is in `app/__init__.py` and
   `pyproject.toml`. (From 1.34.0, the TrueNAS file and `docker-compose.yml`
   ask for the published image at `:latest`. The TrueNAS file is
   `tapioca-server.yaml` from 1.35.0, `stationplay.yaml` before.)
-- Each release: a hostile audit before building; build; tests (the area's,
-  then the full suite once; real FFmpeg streaming for playback; Playwright
-  at 390, 768 and 1440 wide, light and dark, for page changes;
-  `python tools/upgrade_check.py --from <previous release's commit>`;
-  `python tools/image_check.py` before every push to main, about 3 minutes;
-  `python -m tools.attack_check`); a `cold-auditor` audit; clean up; notes;
-  a report.
+- **Each release candidate,** by class (the plan's release gate has the table): a threat model and every-path matrix before D code; reviews by class (A and B a written self-review; C a focused independent review; D a `cold-auditor` audit before integration and of the final diff, with later rounds re-checking the fixed items unless the design changed); the area's tests while building; then, always: CI's full suite in the exact image on both architectures, `python tools/upgrade_check.py --from <previous release's commit>`, `python -m tools.attack_check`, `python tools/image_check.py` before the push to main (about 3 minutes), real FFmpeg streaming for affected playback, Playwright at 390, 768 and 1440 wide, light and dark, for page changes; then notes and a report.
 - Any database change on upgrade is preceded by an automatic backup
   (`data/backups/before-<version>-<date>.db`), and the notes give tested
   rollback steps.
@@ -151,22 +145,11 @@ follow them in every change.
   each release zip signed. The YAML and compose files use `:latest` and start without the
   internet (`pull_policy: missing`; each install's update steps pull: the
   lead developer, October 12, for the owner to confirm, as U2 had `always`). Building from source stays an advanced choice.
-- **Report** to the owner, 5 lines: version and summary; tests; choices;
-  known limits; one suggested improvement to the development process, for
-  the owner's approval. Then: which work went to `routine-builder`, and what
-  `cold-auditor` found and what was done about each item.
+- **Report** to the owner, 5 lines, for each published release: version and summary; tests; choices; known limits; one improvement made to the development process (FYI). Then: which work went to `routine-builder`, and what `cold-auditor` found and what was done about each item.
 - **Every 3 releases, stop** and tell the owner, who runs an independent
   audit before work continues. (Suspended by the owner on October 12 until
   the apps reach their beta: keep going, decide as the lead developer, and
   don't stop for anything aesthetic. He audits at the beta.)
-- **Stop and ask** when a decision isn't covered by the plan or these
-  rules, or two parts of the plan conflict; when an error can't be fixed at
-  its root; when a step would touch anything outside the repos (the owner's
-  TrueNAS server, router or Plex: the owner installs releases); or when a
-  step can't be undone. (Until the beta, the owner said on October 12:
-  decide what the plan and earlier decisions leave open as the lead
-  developer, the way that fits them, and list each choice in the report;
-  only the last two still stop the work.)
 
 ## High-risk areas
 Always built by the main session, never handed to `routine-builder`: the
@@ -182,9 +165,7 @@ passthrough, and anything that could expose data or stop playback.
   decisions, and what "done" means. Helpers don't see the conversation.
 - Review everything `routine-builder` returns before it goes into a
   release.
-- Send every finished release to `cold-auditor` before its report. Fix
-  everything it finds, or explain in the report why an item isn't a
-  problem. Each fix gets a test that would have caught it.
+- Send work to `cold-auditor` by class: every D change before integration and its final diff; C's affected flows when warranted. Fix everything it finds, or explain in the report why an item isn't a problem. Each fix gets a test that would have caught it.
 - Never set the `CLAUDE_CODE_EFFORT_LEVEL` environment variable: it
   overrides the helpers' effort levels.
 
