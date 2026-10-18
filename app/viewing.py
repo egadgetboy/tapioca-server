@@ -18,9 +18,12 @@ says); then a genre, tag, collection or studio the level or the person
 hides, or the title itself hidden by the level (Blocks). A level or person
 that hides by tags hides what's not known yet, as with ratings.
 
-A station is one stream that everyone watching shares, so it's all or
-nothing: allowed or blocked for someone by an Admin, or else seen only if
-everything it plays passes their level. What it plays is its lineup from
+A station is one stream that everyone watching shares, so it never changes
+for one person. Whether someone sees it is decided apart from what they may
+watch on it: allowed or blocked for them by an Admin, or else seen only if
+everything it plays passes their level; and, from 1.39.0, each program is
+checked as it airs (may_watch), so one they may not watch is blocked for
+them while it's on (the owner, October 17, 2:49 PM). What it plays is its lineup from
 the era airing now on, and the programs its specials draw on; what each
 needs is worked out once (a Reach) and kept until the lineup or a rating
 changes.
@@ -49,7 +52,7 @@ from .access import ADMIN
 from .catalog import EPISODE, MOVIE, SHOW, Entry, Tags
 from .db import Database, Item, User
 from .infostation import KEY as INFO_KEY
-from .text import plain
+from .text import plain, possessive
 from .titles import Judged, Titles
 
 if TYPE_CHECKING:
@@ -451,9 +454,9 @@ def judge_entry(entry: Entry, show: Entry | None = None, tags: Tags | None = Non
     if entry.kind == EPISODE:
         key = entry.show_key or ""
         if show is None:
-            return Judged(True, None, entry.library, False, key, tags)
+            return Judged(True, None, entry.library, False, key, tags, own_key=entry.key)
         age = ratings.stricter(ratings.age(show.content_rating), ratings.age(entry.content_rating))
-        return Judged(True, age, show.library or entry.library, True, key, tags)
+        return Judged(True, age, show.library or entry.library, True, key, tags, own_key=entry.key)
     return Judged(
         entry.kind == SHOW,
         ratings.age(entry.content_rating),
@@ -461,6 +464,7 @@ def judge_entry(entry: Entry, show: Entry | None = None, tags: Tags | None = Non
         entry.kind in (SHOW, MOVIE),
         entry.key,
         tags,
+        own_key=entry.key,
     )
 
 
@@ -474,6 +478,19 @@ class Viewer:
     allowed: frozenset[int] = frozenset()  # stations
     blocked: frozenset[int] = frozenset()
     own: Person = Person()  # (what's hidden or allowed for them: 1.33.0)
+    # The one program check's two rules still to come (1.40.0; the owner,
+    # October 18, Q-2 and Q-7): episodes hidden for them as a limit (their
+    # own keys: the hiding release fills it), and whether their level needs
+    # Clean audio (Clean audio's release C sets it). Both empty until then.
+    hidden: frozenset[str] = frozenset()
+    needs_clean: bool = False
+
+    @property
+    def unchecked(self) -> bool:
+        """Whether nothing at all is checked for them (no limits, nothing
+        hidden, no Clean audio needed): only then may Media's shortcuts skip
+        sees()."""
+        return self.everything and not self.hidden and not self.needs_clean
 
     @property
     def by_tags(self) -> bool:
@@ -482,9 +499,21 @@ class Viewer:
         return not self.everything and (self.level.blocks.by_tags or self.own.blocks.by_tags)
 
     def sees(self, judged: Judged) -> bool:
+        """The one program check (1.40.0): whether they may watch or see
+        `judged`, on every way of watching (a Station's pieces as they air,
+        Media as it starts and while it plays, and every list)."""
+        # (The rules, in order: docs/users.md. An episode hidden for them, or
+        # a program without Clean audio ready when their level needs it, is
+        # refused whatever else allows it, so these come before `everything`:
+        # Q-2, Q-7 and D04, where not known is never ready. Neither makes
+        # anyone limited: `everything` keeps its meaning, as the hiding
+        # handoff says.)
+        if judged.own_key and judged.own_key in self.hidden:
+            return False
+        if self.needs_clean and judged.clean is not True:
+            return False
         if self.everything:
             return True
-        # (The rules, in order: docs/users.md.)
         if judged.key and judged.key in self.own.blocks.title_keys:
             return False
         if judged.key and any(judged.key == k for k, _ in self.own.allowed):
@@ -728,6 +757,17 @@ class Viewing:
         own = self._people.get(now.id, Person())
         return self.level(now.level_id).limited or own is None or not own.blocks.empty
 
+    def hidden_for(self, user: User) -> frozenset[str]:
+        """The episodes hidden for `user` as a limit (their own keys): none
+        until the hiding release, which keeps them (the one program check,
+        1.40.0)."""
+        return frozenset()
+
+    def needs_clean(self, user: User) -> bool:
+        """Whether `user`'s level needs Clean audio: never, until Clean
+        audio's release C adds the setting (the one program check, 1.40.0)."""
+        return False
+
     def viewer(self, user: User | None) -> Viewer:
         """What `user` may see (None: signing in is off, so everything). Read
         as they are now: their level may have changed since they signed in."""
@@ -744,12 +784,16 @@ class Viewing:
             return NOTHING
         stations = self._stations.get(now.id, {})
         blocked = frozenset(c for c, allowed in stations.items() if not allowed)
+        hidden = self.hidden_for(now)
+        clean = self.needs_clean(now)
         return Viewer(
             level,
             everything=not level.limited and not blocked and own.blocks.empty,
             allowed=frozenset(c for c, allowed in stations.items() if allowed),
             blocked=blocked,
             own=own,
+            hidden=hidden,
+            needs_clean=clean,
         )
 
     def sees_station(self, viewer: Viewer, channel_id: int) -> bool:
@@ -772,7 +816,7 @@ class Viewing:
         for them (an Admin's title exceptions; allowing a Station never
         allows what's on it). What isn't a program (None: a commercial, a
         card) and INFO's own film are for everyone."""
-        if viewer.everything or item is None or item.rating_key == INFO_KEY:
+        if viewer.unchecked or item is None or item.rating_key == INFO_KEY:
             return True
         return viewer.sees(self.titles.judge(item))
 
@@ -1070,7 +1114,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             said.append(
                 f"{' and '.join(what)} for {user.name}"
                 if what
-                else f"cleared {user.name}'s allowed and blocked stations"
+                else f"cleared {possessive(user.name)} allowed and blocked stations"
             )
         if own is not None and own != before_own:
             hidden = hides_said(own.blocks)

@@ -683,3 +683,163 @@ def test_no_workflow_leaves_its_credentials_in_a_checkout():
         text = path.read_text()
         for found in re.finditer(r"uses: actions/checkout@\S+\n((?:\s{8,}.*\n)*)", text):
             assert "persist-credentials: false" in found.group(1), f"{path.name}: {found.group(0)}"
+
+
+# Release notes alone (the alpha process, October 18) -------------------------
+
+
+def _on(text: str) -> str:
+    """A workflow's `on:` block."""
+    return text[text.index("\non:\n") : text.index("\n\n", text.index("\non:\n") + 1)]
+
+
+def test_a_push_of_release_notes_alone_isn_t_built_again():
+    """The image is the one already tested at the version's commit, so a
+    notes-only push starts no 50-minute run. Only docs/releases/ is left out:
+    the rest of docs/ is in the test stage, and tests read it."""
+    on = _on(IMAGE.read_text())
+    ignored = re.findall(r"paths-ignore: \[(.*)\]", on)
+    assert ignored == ['"docs/releases/**"'], on
+    assert "branches: [main]" in on and "workflow_dispatch:" in on
+    assert not re.search(r"^\s+paths:", on, re.M)  # (nothing else narrows it)
+
+
+def test_a_push_of_release_notes_starts_the_release_workflow_itself():
+    """With no image run to follow, a notes push must start it, or nothing
+    is published; image runs still start it too, for a version whose tests
+    were running."""
+    on = _on(WORKFLOW.read_text())
+    assert re.search(r"workflow_run:\n\s+workflows: \[image\]\n\s+types: \[completed\]", on), on
+    push = on[on.index("  push:") :]
+    assert "branches: [main]" in push and 'paths: ["docs/releases/**"]' in push, on
+    assert "workflow_dispatch:" in on
+
+
+def test_the_notes_words_are_checked_before_anything_is_published():
+    text = WORKFLOW.read_text()
+    words = text.index("name: Check the notes' words")
+    assert words < text.index("name: Publish what's new")
+    assert "tests/test_wording.py" in text[words : text.index("name: Publish what's new")]
+
+
+def test_notes_naming_a_commit_no_image_run_tested_are_refused(run):
+    """Notes pushed for a version whose commit was never built and tested
+    (the image run skipped, say) publish nothing."""
+    said, status, out = run()
+    assert status == 1 and not creates(said)
+    assert "hasn't tested its commit" in out
+
+
+def test_a_run_on_a_later_commit_with_code_changed_doesn_t_count(run):
+    """A passing run counts for a version only at its commit, or at a later
+    one with nothing but release notes changed since."""
+    (run.work / "app" / "later.py").write_text("changed = True\n")
+    git(run.work, "add", ".")
+    git(run.work, "commit", "-q", "-m", "A code change after 1.32.1's notes")
+    git(run.work, "update-ref", "refs/remotes/origin/main", "HEAD")
+    run.commits["later"] = git(run.work, "rev-parse", "HEAD")
+    image_run(run, 9, version="later")
+    said, status, out = run()
+    assert status == 1 and not creates(said), said + out
+    assert "hasn't tested its commit" in out
+
+
+def test_a_run_on_the_notes_commit_itself_still_counts(run):
+    """(The path before: an image run at the notes' own commit, nothing but
+    notes since the version's, still publishes it.)"""
+    image_run(run, 10)
+    runs = run.assets / "runs.json"
+    listed = json.loads(runs.read_text())
+    listed["workflow_runs"][0]["head_sha"] = git(run.work, "rev-parse", "HEAD")  # (the notes')
+    runs.write_text(json.dumps(listed))
+    said, status, out = run()
+    assert status == 0, said + out
+    assert len(creates(said)) == 1
+
+
+def test_the_words_step_needs_nothing_but_pytest():
+    """The final-diff audit: the step's bare environment has only pytest,
+    and tests/conftest.py imports httpx and the app, so the step failed on
+    every run and nothing could be published."""
+    import ast
+    import sys
+
+    text = WORKFLOW.read_text()
+    step = text[text.index("name: Check the notes' words") : text.index("name: Publish what's new")]
+    assert "--noconftest" in step
+    tree = ast.parse((ROOT / "tests" / "test_wording.py").read_text())
+    imported = {
+        (node.module or "").split(".")[0] if isinstance(node, ast.ImportFrom) else a.name.split(".")[0]
+        for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+        for a in (node.names if isinstance(node, ast.Import) else [node])
+    }  # fmt: skip
+    outside = {m for m in imported if m not in sys.stdlib_module_names and m not in ("pytest", "")}
+    assert outside == set(), outside
+
+
+def test_a_push_with_code_in_it_leaves_publishing_to_its_image_run():
+    """The final-diff audit: a push of code and notes started this before
+    its image run was listed, and failed red with "hasn't tested its
+    commit" (the image run then published it)."""
+    text = WORKFLOW.read_text()
+    assert "github.event.before" in text and "docs/releases/" in text
+    assert re.search(r"if: .*github\.event_name != 'push'.*notes_only", text), "a code push waits"
+
+
+def test_a_version_never_tested_says_how_to_start_its_tests(run):
+    _said, status, out = run()
+    assert status == 1
+    assert "Run workflow" in out  # (its commit was pushed with [skip ci], say)
+
+
+def _pushed_step() -> str:
+    """The "Was this push release notes alone?" step's script."""
+    lines = WORKFLOW.read_text().splitlines()
+    start = next(
+        i for i, line in enumerate(lines) if "name: Was this push release notes alone?" in line
+    )
+    run_at = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |")
+    indent = len(lines[run_at + 1]) - len(lines[run_at + 1].lstrip())
+    body = []
+    for line in lines[run_at + 1 :]:
+        if line.strip() and len(line) - len(line.lstrip()) < indent:
+            break
+        body.append(line[indent:])
+    return "\n".join(body) + "\n"
+
+
+@pytest.mark.parametrize(
+    "case, notes_only",
+    [("notes", "true"), ("code", "false"), ("unknown after", "false"), ("no before", "true"),
+     ("no before, code", "false")],
+)  # fmt: skip
+def test_whether_a_push_was_notes_alone(tmp_path, case, notes_only):
+    """The re-check: a pushed commit missing from the checkout counted as
+    notes alone (git's error left nothing to compare), and a notes push
+    whose before wasn't fetched (forced) published nothing."""
+    work = tmp_path / "work"
+    (work / "docs" / "releases").mkdir(parents=True)
+    (work / "app").mkdir()
+    git(work, "init", "-q", "-b", "main")
+    (work / "app" / "a.py").write_text("x = 1\n")
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "code")
+    before = git(work, "rev-parse", "HEAD")
+    if "code" in case:
+        (work / "app" / "a.py").write_text("x = 2\n")
+    else:
+        (work / "docs" / "releases" / "v9.md").write_text("notes\n")
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "the push")
+    after = git(work, "rev-parse", "HEAD")
+    if case == "unknown after":
+        after = "0" * 39 + "1"
+    if case.startswith("no before"):
+        before = "0" * 40
+    out = tmp_path / "out"
+    done = subprocess.run(
+        ["bash", "-e", "-c", _pushed_step()], cwd=work, capture_output=True, text=True,
+        env={**os.environ, "BEFORE": before, "AFTER": after, "GITHUB_OUTPUT": str(out)},
+    )  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    assert out.read_text().strip() == f"notes_only={notes_only}", done.stdout

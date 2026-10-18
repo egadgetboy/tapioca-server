@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import hashlib
 import itertools
 import logging
@@ -62,7 +63,7 @@ from .library import LibraryError, NoPicture
 from .ondemand import NotShared
 from .plex import NOT_ANSWERING
 from .sources import find_file, learn_mapping, part_starts
-from .text import plain
+from .text import plain, possessive
 
 if TYPE_CHECKING:
     from .db import User
@@ -73,6 +74,9 @@ log = logging.getLogger(__name__)
 NONE_SHARED = "No Media folders are shared with tapiOca's apps"
 AWAY_OFF = "Media on this tapiOca server can only be watched at home right now."
 PLAY_ENDED = "That program's address has ended. Choose it again to play it."
+# Said as a title's limits stop it while it plays (1.40.0), as a Station's
+# restricted program is (403, code "restricted").
+RESTRICTED_TITLE = "This title is restricted."
 # Even sound for a show's episodes, as a copy's `why` says it (the apps show
 # it in their player).
 EVEN_WHY = "even sound for the show's episodes"
@@ -488,7 +492,7 @@ async def seen_only(
     (its show's, for an episode), whole, when their limits go by that (Plex
     is asked for what isn't known yet, as Titles.ensure says: lists carry
     only a few genres)."""
-    if viewer.everything or not entries:
+    if viewer.unchecked or not entries:
         return entries
     shows = await shows_of(cat, entries)
     titles = cat.titles
@@ -506,6 +510,117 @@ async def seen_only(
         e for e in entries
         if viewer.sees(viewing.judge_entry(e, shows.get(e.show_key or ""), tags(e)))
     ]  # fmt: skip
+
+
+class TitleRestricted(Exception):
+    """What's playing is no longer allowed for its person (1.40.0)."""
+
+
+def restricted_answer() -> JSONResponse:
+    """What an app is told of a title its person's limits stopped: as for a
+    Station's restricted program (1.39.0), without when it's back."""
+    return JSONResponse({"detail": RESTRICTED_TITLE, "code": "restricted"}, status_code=403)
+
+
+# A byte answer cut partway (Guarded) leaves its response unfinished, and the
+# web server says so in the log as an error. That's no error here: it's said
+# once, as "stopped: their limits no longer allow it".
+_cut = contextvars.ContextVar("tapioca_cut", default=False)
+UNFINISHED = "ASGI callable returned without completing response."
+
+
+class _QuietCut(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not (_cut.get() and record.getMessage() == UNFINISHED)
+
+
+def quiet_cuts() -> None:
+    """Keeps the web server's log free of the cuts (once)."""
+    found = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _QuietCut) for f in found.filters):
+        found.addFilter(_QuietCut())
+
+
+quiet_cuts()
+
+
+class Guarded(Response):
+    """A play session's bytes (its file, from Plex or the disk, or a piece of
+    its copy), cut the moment its person's limits stop it (1.40.0), however
+    long the request: a player that asks for the whole file at once, and
+    reads it as it plays, would otherwise get the rest of it. Asked for after
+    it was stopped, or stopped before its first byte, it answers as
+    restricted."""
+
+    def __init__(self, inner: Response, session: ondemand.PlaySession) -> None:
+        # (Not Response.__init__: `inner` makes the answer.)
+        self.inner = inner
+        self.session = session
+        self.background = None
+        self.status_code = inner.status_code
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        started = False
+
+        async def sending(message: dict) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+            self.session.sending = time.monotonic()  # (in use: see PlaySessions.idle)
+
+        if self.session.restricted:
+            await self._close_inner()
+            await restricted_answer()(scope, receive, send)
+            return
+        if self.session.ended:
+            # (Ended after its address was checked, while Plex or a sleeping
+            # disk was answering: nothing is sent. The final-diff audit. No
+            # await between this and the scope's being kept below, so an end
+            # after it cuts the scope.)
+            await self._close_inner()
+            await JSONResponse({"detail": PLAY_ENDED}, status_code=404)(scope, receive, send)
+            return
+        with anyio.CancelScope() as cut:
+            self.session.streams.add(cut)
+            try:
+                await self.inner(scope, receive, sending)
+            finally:
+                self.session.streams.discard(cut)
+        if cut.cancel_called:
+            await self._close_inner()
+            if not started and self.session.restricted:
+                await restricted_answer()(scope, receive, send)
+            elif not started:  # (its play ended otherwise: see PlaySessions.end)
+                await JSONResponse({"detail": PLAY_ENDED}, status_code=404)(scope, receive, send)
+            else:
+                _cut.set(True)  # (and the connection closes: see _QuietCut)
+            return
+        if self.background is not None:
+            await self.background()
+
+    async def _close_inner(self) -> None:
+        """What the answer was passing on (Plex's, for a file from Plex) is
+        closed, so nothing is left open."""
+        with anyio.CancelScope(shield=True):
+            got = getattr(self.inner, "got", None)
+            if got is not None:
+                await got.aclose()
+            closing = getattr(getattr(self.inner, "body_iterator", None), "aclose", None)
+            if closing is not None:
+                await closing()
+
+
+async def watch_limits_forever(ctx: Any) -> None:
+    """Judges what's playing in Media by its person's limits, again and
+    again (every LIMITS_WATCH_S), from what tapiOca knows: an Admin's change
+    stops a title within a few seconds, and playing never waits on it."""
+    while True:
+        await asyncio.sleep(ondemand.LIMITS_WATCH_S)
+        try:
+            ctx.stop_restricted()
+        except Exception:
+            log.exception("Checking what's playing in the apps against limits failed")
 
 
 async def must_see(cat: ondemand.Catalog, viewer: viewing.Viewer, entry: Entry) -> None:
@@ -705,7 +820,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         async with asking(request):
             going = await ondemand.continue_watching(cat, ctx.db, user_id)
             added = await cat.recently_added()
-            if not viewer.everything:
+            if not viewer.unchecked:
                 if viewer.by_tags and cat.titles is not None:
                     # (One ask for all Home shows, in the order it shows it.)
                     shown = [e for e, _ in going] + [
@@ -968,7 +1083,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         viewer = viewer_of(request)
         async with asking(request):
             await cat.check(key)  # (shared now, even if its picture was kept from before)
-            if not viewer.everything:
+            if not viewer.unchecked:
                 await must_see(cat, viewer, await cat.entry(key))
         kept = ctx.app_pictures.get((key, kind, width))
         if kept is None:
@@ -1538,7 +1653,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         session = ctx.plays.start(
             user_id=user_id, user=name, sign_in=sign_in,
             entry=e, media=media, path=path, plex=stream, client=client, away=away_, app=label,
-            tag=tag,
+            tag=tag, show=show_of(e),
             # (Subtitle files of their own, shown beside it: not of a copy that
             # joins several files, whose times are the first one's.)
             subtitles={
@@ -1634,7 +1749,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user_id, name = person(request)
         async with asking(request):
             e = await cat.entry(body.key)
-            await must_see(cat, viewer_of(request), e)
+            await must_see_or_restricted(user_id, e, request)
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
             raise HTTPException(400, NOT_PLAYABLE)
         if not e.media:
@@ -1765,6 +1880,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             away=away_,
             app=app_of(body, request),
             tag=tag,
+            show=show_of(e),
             subtitles={
                 t.id: (url, t.codec)
                 for t in media.subtitles
@@ -1829,7 +1945,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             e = session.entry if session is not None else await cat.entry(body.key)
             if not cat.shared_library(e):
                 raise NotShared(e.key)
-            await must_see(cat, viewer_of(request), e)
+            await must_see_or_restricted(user_id, e, request)
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
             raise HTTPException(400, NOT_PLAYABLE)
         kept = ctx.db.progress_of(user_id, [e.key]).get(e.key)
@@ -1900,6 +2016,174 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     bound_of: dict[str, str] = {}  # (each play session's trusted network: "" for none)
 
+    @app.exception_handler(TitleRestricted)
+    async def title_restricted(request: Request, e: TitleRestricted):
+        return restricted_answer()
+
+    def show_of(e: Entry) -> Entry | None:
+        """An episode's show, as it was just judged (kept: never asks Plex)."""
+        if e.kind != catalog.EPISODE or not e.show_key:
+            return None
+        return cat.known(e.show_key)
+
+    async def must_see_or_restricted(user_id: int, e: Entry, request: Request) -> None:
+        """must_see, but a title its person's limits stopped while they
+        watched it, lately, is said to be restricted (403), so their app can
+        say so: they knew of it, so that tells them nothing new."""
+        try:
+            await must_see(cat, viewer_of(request), e)
+        except NotShared:
+            if user_id and ctx.plays.restricted_lately(user_id, e.key):
+                raise TitleRestricted() from None
+            raise
+
+    learning: dict[str, asyncio.Task] = {}  # (by session: what judged_now couldn't tell)
+    # (By session: how many asks found nothing, and when it may ask again.)
+    unlearned: dict[str, tuple[int, float]] = {}
+
+    def stop_learning() -> None:
+        """As tapiOca stops: the asks still going end."""
+        for task in learning.values():
+            task.cancel()
+
+    ctx.stop_learning = stop_learning
+
+    def learn(session: ondemand.PlaySession, tags: bool) -> None:
+        """Finds out, in the background, what judging `session` needs and
+        tapiOca doesn't know yet: an episode's show (asked of Plex, kept
+        with the session) and, when `tags`, its show's or movie's tags
+        (Titles.ensure). Never waited on: a later pass judges it (the second
+        cold audit of 1.40.0: what wasn't known was never asked for, so a
+        title played on to its end). One at a time for each session; when an
+        ask finds nothing (Plex down, or a show gone), each next one waits
+        twice as long, up to LEARN_WAIT_MOST_S, and the log says so once (the
+        final-diff audit: it asked, and said so, every pass)."""
+        going = learning.get(session.id)
+        if going is not None and not going.done():
+            return
+        for done in [k for k, task in learning.items() if task.done()]:
+            del learning[done]
+        going_ids = {s.id for s in ctx.plays.going()}
+        for gone in [k for k in unlearned if k not in going_ids]:
+            del unlearned[gone]
+        tries, after = unlearned.get(session.id, (0, 0.0))
+        if time.monotonic() < after:
+            return
+        e = session.entry
+        wants_show = e.kind == catalog.EPISODE and session.show is None and bool(e.show_key)
+        if not wants_show and not (tags and cat.titles is not None):
+            return  # (nothing it could find out)
+
+        async def work() -> None:
+            trouble: Exception | None = None
+            try:
+                if wants_show:
+                    session.show = (await shows_of(cat, [e])).get(e.show_key or "")
+                if tags and cat.titles is not None:
+                    await cat.titles.ensure(tags_wanted([e]))
+            except Exception as ex:
+                trouble = ex
+            key = (e.show_key or "") if e.kind == catalog.EPISODE else e.key
+            known = (not wants_show or session.show is not None) and (
+                not tags or cat.titles is None or cat.titles.tags(key) is not None
+            )
+            if known:
+                unlearned.pop(session.id, None)
+                return
+            if tries == 0:
+                log.info(
+                    "Couldn't find out about %s to check it against limits (%s); "
+                    "it plays on, and is asked about again later",
+                    describe(e), trouble or "not known",
+                )  # fmt: skip
+            wait = min(ondemand.LEARN_WAIT_S * 2**tries, ondemand.LEARN_WAIT_MOST_S)
+            unlearned[session.id] = (tries + 1, time.monotonic() + wait)
+
+        learning[session.id] = asyncio.get_running_loop().create_task(work())
+
+    def judged_now(session: ondemand.PlaySession, viewer: viewing.Viewer) -> bool | None:
+        """Whether what `session` plays is still allowed for its person, by
+        the one program check as it started (1.40.0), from what tapiOca
+        knows: never asking Plex, so it never waits. None when that can't be
+        told (an episode's show, or tags its limits go by, not known): it was
+        allowed, so it stands."""
+        if viewer.unchecked:
+            return True
+        e = session.entry
+        titles = cat.titles
+        tags = None
+        if titles is not None:
+            tags = titles.tags((e.show_key or "") if e.kind == catalog.EPISODE else e.key)
+        unknown_tags = viewer.by_tags and tags is None
+        if (e.kind == catalog.EPISODE and session.show is None) or unknown_tags:
+            learn(session, unknown_tags)
+            return None
+        return viewer.sees(viewing.judge_entry(e, session.show, tags))
+
+    def no_longer_good(session: ondemand.PlaySession) -> bool:
+        """Whether a play session's own address has ended: its Media folder
+        no longer shared, signing in turned on since it started, watching
+        away from home turned off for one started there, or its sign-in
+        gone (its person removed, signed out or their device revoked).
+        From what tapiOca keeps; never asks Plex."""
+        return (
+            not cat.shared_library(session.entry)
+            or (ctx.access.required and session.sign_in is None)
+            or (session.away and not ctx.away.on)
+            or (
+                session.sign_in is not None
+                and ctx.access.session_user_hashed(session.sign_in, anywhere=True, used=False)
+                is None
+            )
+        )
+
+    failing: set[str] = set()  # (sessions whose check failed: said once each)
+
+    def stop_restricted() -> int:
+        """Ends what's playing that may no longer play (1.40.0), each play on
+        its own: a session whose address has ended (no_longer_good) ends,
+        and one its person's limits no longer allow (an Admin changed them,
+        or their level) is stopped as restricted, with the log saying so.
+        Either way what it's sending is cut. How many were restricted."""
+        viewers: dict[int, viewing.Viewer] = {}
+        signing_in = ctx.viewing.signing_in()
+        stopped = 0
+        for session in ctx.plays.going():
+            try:
+                if no_longer_good(session):
+                    ctx.plays.end(session.id)  # (and what it's sending is cut)
+                    continue
+                if not signing_in or not session.user_id:
+                    continue  # (no one has limits)
+                if session.user_id not in viewers:
+                    user = ctx.db.user(session.user_id)
+                    if user is None:  # (removed: its sign-in ends it, above)
+                        continue
+                    viewers[session.user_id] = ctx.viewing.viewer(user)
+                if judged_now(session, viewers[session.user_id]) is not False:
+                    continue
+                if ctx.plays.restrict(session.id) is None:
+                    continue
+                stopped += 1
+                said_stop(session)
+                ctx.access.record(
+                    logging.INFO,
+                    f"{possessive(session.user or 'Someone')} {describe(session.entry)} "
+                    "stopped: their limits no longer allow it",
+                )
+            except Exception:
+                # (One session never holds up the rest; a lasting failure is
+                # said once, not every pass.)
+                if session.id not in failing:
+                    failing.add(session.id)
+                    log.exception("Checking %s against limits failed", describe(session.entry))
+                continue
+            failing.discard(session.id)
+        failing.intersection_update(s.id for s in ctx.plays.going())
+        return stopped
+
+    ctx.stop_restricted = stop_restricted  # (watched by watch_limits_forever)
+
     def session_or_404(session_id: str, request: Request) -> ondemand.PlaySession:
         """A play session that's still good, now marked as used: its library
         still shared, and its sign-in (if signing in is on) still good.
@@ -1908,7 +2192,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         (at home, every RECHECK_S)."""
         outside = access.outside(request.scope)
         session = ctx.plays.find(session_id)
-        if session is None or (outside and not session.away):
+        if session is None:
+            gone = ctx.plays.ended(session_id)
+            if gone is not None and gone.restricted and (gone.away or not outside):
+                raise TitleRestricted()  # (stopped by its person's limits: 1.40.0)
+            raise HTTPException(404, PLAY_ENDED)
+        if outside and not session.away:
             raise HTTPException(404, PLAY_ENDED)
         # (Started with a sign-in a trusted network gave: good only there,
         # 1.36.0. Looked up once for each session.)
@@ -1936,6 +2225,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if ended:
             ctx.plays.end(session_id)
             raise HTTPException(404, PLAY_ENDED)
+        # (Its person's limits are judged again in the background, never
+        # here: see stop_restricted. 1.40.0.)
         session.used(now)
         return session
 
@@ -1946,8 +2237,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if session.path is not None:
             if not await asyncio.to_thread(Path(session.path).is_file):
                 raise HTTPException(503, NO_FILE)
-            return FileResponse(
-                session.path, media_type=kind, headers={"Cache-Control": "no-store"}
+            return Guarded(
+                FileResponse(session.path, media_type=kind, headers={"Cache-Control": "no-store"}),
+                session,
             )
         assert session.plex is not None
         if request.method == "HEAD" and session.media.size:
@@ -1959,7 +2251,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     "Cache-Control": "no-store",
                 }
             )
-        return await _from_plex(proxy(), session.plex, request, kind)
+        return Guarded(await _from_plex(proxy(), session.plex, request, kind), session)
 
     @app.get("/play/{session_id}/index.m3u8")
     async def copy_playlist(session_id: str, request: Request):
@@ -1979,13 +2271,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(404, PLAY_ENDED)
         found = await session.copy.piece(n, request.is_disconnected)
         if found is None:
+            if session.restricted:  # (stopped by its person's limits while waited on)
+                raise TitleRestricted()
             if session.copy.stopped:
                 raise HTTPException(404, PLAY_ENDED)
             if session.copy.broken or not 0 <= n < session.copy.end:
                 raise HTTPException(404, COPY_FAILED)
             raise HTTPException(503, "That part isn't ready yet. Try again in a moment.")
         ctx.plays.get(session_id)  # (still watching)
-        return FileResponse(found, media_type="video/mp2t", headers={"Cache-Control": "no-store"})
+        return Guarded(
+            FileResponse(found, media_type="video/mp2t", headers={"Cache-Control": "no-store"}),
+            session,
+        )
 
     @app.get("/play/{session_id}/subtitles/{track}.{ext}")
     async def play_subtitles(session_id: str, track: str, ext: str, request: Request):
@@ -2001,6 +2298,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(503, NO_FILE) from None
         if len(got.content) > SUBTITLES_MOST:
             raise HTTPException(503, NO_FILE)
+        if session.restricted:  # (stopped while Plex answered: the re-check of 1.40.0)
+            raise TitleRestricted()
+        if session.ended:
+            raise HTTPException(404, PLAY_ENDED)
         # (Its type is the track's, never what the address says: a subtitle
         # file is text from elsewhere, and is never shown as a page.)
         return Response(

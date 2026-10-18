@@ -41,7 +41,7 @@ from . import (
 )
 from . import scanner as sc
 from .broadcaster import now_ms
-from .text import plain
+from .text import plain, possessive
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 
     from .db import Channel, Item, SignedIn, User
     from .main import AppContext
+    from .ondemand import PlaySession
     from .schedule import Airs, Slot
 
 VERSION = 1
@@ -782,8 +783,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         apps whichever devices may use the tuner (so a signed-in app needn't
         be listed, and changing that never stops one: see tuner.py), and for
         an API token's script while only listed devices may; and always for
-        someone with limits, as only these addresses check each program
-        (1.39.0, the fifth cold audit). None otherwise."""
+        someone whose programs are checked (limits, or the rules still to
+        come: Viewer.unchecked), as only these addresses check each program
+        (1.39.0, the fifth cold audit; 1.40.0's second). None otherwise."""
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         user = access.signed_in(request)
         if not (token and user):
@@ -793,7 +795,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return ctx.away.key_for(hashed, user)
         if ctx.tuner.only or ctx.db.session_app(hashed):
             return ctx.away.key_for(hashed, user, home=True)
-        if not ctx.viewing.viewer(user).everything:
+        if not ctx.viewing.viewer(user).unchecked:
             return ctx.away.key_for(hashed, user, home=True)
         return None
 
@@ -822,7 +824,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         airs on any station: viewing.Viewing.may_watch); None for anyone
         else. 1.39.0."""
         viewer = ctx.viewing.viewer(access.signed_in(request))
-        if viewer.everything:
+        if viewer.unchecked:
             return None
         return lambda item: ctx.viewing.may_watch(viewer, item)
 
@@ -987,6 +989,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         `features` lists `problems`): kept for the Logs tab, with which app
         and what kind of device, so an Admin can tell whose problem it is."""
         user = access.signed_in(request)
+        about = played_of(body, request) if body.kind in problems.LIBRARY_KINDS else None
+        if about is not None and about.restricted:
+            if body.session or names_it((body.title or ""), titles_of(about.entry)):
+                # (Stopped by its person's limits: no problem, and said once
+                # in the log as that. 1.40.0.)
+                return {"ok": True}
+            # (About something else: the device's last play was the stopped
+            # one, but this report names another title. The second cold
+            # audit of 1.40.0: it was dropped.)
+            about = None
         sent = problems.Sent(
             body.kind, body.detail, body.station, body.title, body.app, body.version,
             body.device, body.deviceName, body.at, body.journal, body.lastedMs,
@@ -1000,16 +1012,33 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             )
         except problems.Refused as e:
             raise HTTPException(e.status, str(e)) from None
-        if body.kind in problems.LIBRARY_KINDS:
-            check_its_file(body, request)
+        if about is not None:
+            check_its_file(body, about)
         return {"ok": True}
 
-    def check_its_file(body: Problem, request: Request) -> None:
-        """Something from Media didn't play, or stopped: what it was
-        (its playing, as the app says, or else what this device played
-        last, for a problem just now) is checked there first (see
-        scanner.trouble). That's no verdict: only what the check finds puts
-        its file on the list."""
+    def names_it(said: str, names: set[str]) -> bool:
+        """Whether a report's title is one of `names`, as an app may put
+        it: the same (any case), or one followed by more after a " · ", " ("
+        or ": " ("Heist · Director's cut", "Heist (2000)"). Never a title
+        that merely holds its letters ("Theistic" holds "heist": the
+        re-check of 1.40.0)."""
+        said = said.strip().casefold()
+        for name in (n.casefold() for n in names):
+            if said == name or any(said.startswith(name + sep) for sep in (" · ", " (", ": ")):
+                return True
+        return False
+
+    def titles_of(e) -> set[str]:
+        """The names an app may give a title in a report: its own, its
+        show's, or as the log names it."""
+        from .applibrary import describe
+
+        return {name for name in (e.title, e.show_title, describe(e)) if name}
+
+    def played_of(body: Problem, request: Request) -> PlaySession | None:
+        """What a problem with something from Media is about: its playing, as
+        the app says, or else what this device played last, for a problem
+        just now."""
         sign_in = access.sign_in_of(request)
         session = None
         if body.session:
@@ -1029,11 +1058,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 and lately.started_ms <= happened + CLOCKS_APART_MS
             ):
                 session = lately
-        if session is None:
-            return
+        return session
+
+    def check_its_file(body: Problem, session: PlaySession) -> None:
+        """Something from Media didn't play, or stopped: what it was is
+        checked there first (see scanner.trouble). That's no verdict: only
+        what the check finds puts its file on the list."""
         at = body.positionMs if body.positionMs is not None else session.position_ms
         what = "didn't play" if body.kind == "library-failed" else "stopped playing"
-        why = f"{session.user or 'someone'}'s app said it {what}"
+        why = f"{possessive(session.user or 'someone')} app said it {what}"
         sc.trouble(ctx, session.entry, session.media, at / 1000 if at is not None else None, why)
 
     @app.get(

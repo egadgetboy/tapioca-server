@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from . import catalog
-from .text import plain
+from .text import plain, possessive
 
 if TYPE_CHECKING:
     from .catalog import Entry
@@ -203,7 +203,7 @@ class Watcher:
         (192.168.1.20)"."""
         if not self.person:
             return f"{'An' if start else 'an'} app {self.where}"
-        return f"{self.person}'s {own(self.app)} {self.where}"
+        return f"{possessive(self.person)} {own(self.app)} {self.where}"
 
 
 class Apps:

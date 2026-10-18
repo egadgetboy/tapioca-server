@@ -78,7 +78,7 @@ from pydantic import BaseModel, Field
 
 from . import networks
 from .db import Channel, Database, SignedIn, User
-from .text import plain
+from .text import plain, possessive
 from .tuner import is_tuner
 
 if TYPE_CHECKING:
@@ -1101,11 +1101,16 @@ class Access:
         needs only the first)."""
         return self.session_user_hashed(session_hash(token))
 
-    def session_user_hashed(self, hashed: str, anywhere: bool = False) -> User | None:
+    def session_user_hashed(
+        self, hashed: str, anywhere: bool = False, used: bool = True
+    ) -> User | None:
         """session_user, for a session known by its token's hash (an API
         token's too). `anywhere`: whether it's still good, wherever it was
-        made (for a stream's key, made where it could be: see away.py)."""
-        return self.session_of(hashed, where=None if anywhere else "")[0]
+        made (for a stream's key, made where it could be: see away.py).
+        `used`: False when nothing was asked of it (tapiOca checking a play
+        in the background, 1.40.0): its last use isn't moved, and a browser
+        left unused isn't signed out by the check itself."""
+        return self.session_of(hashed, where=None if anywhere else "", used=used)[0]
 
     def session_of(
         self,
@@ -1114,6 +1119,7 @@ class Access:
         active: bool = False,
         where: str | None = "",
         made: list[SignedIn] | None = None,
+        used: bool = True,
     ) -> tuple[User | None, bool]:
         """session_user_hashed, and whether the sign-in ended because no one
         used its browser for IDLE_SIGN_OUT_S (the access log says so, once).
@@ -1127,7 +1133,7 @@ class Access:
         if found is None:
             if hashed in self._idled:
                 return None, True
-            token = self._api_token_hashed(hashed)
+            token = self._api_token_hashed(hashed, used=used)
             return (token.as_user() if token else None), False
         if found.trusted and where is not None and found.trusted != where:
             return None, False  # (made through a trusted network: only there)
@@ -1136,6 +1142,8 @@ class Access:
             return None, False  # (a sign-in from a device's picker lasts a day unused)
         if not found.app:  # (a browser's)
             if now - found.active_ms > IDLE_SIGN_OUT_S * 1000:
+                if not used:
+                    return None, True  # (said, and ended, by its next request)
                 if self.db.end_session(hashed):
                     self.record(
                         logging.INFO, f"{user.name} was signed out after an hour without activity"
@@ -1146,7 +1154,7 @@ class Access:
                 return None, True
             if active and now - found.active_ms >= ACTIVE_EVERY_MS:
                 self.db.active(hashed, now)
-        if now - found.seen_ms > SEEN_EVERY_MS:
+        if used and now - found.seen_ms > SEEN_EVERY_MS:
             self.db.seen(hashed, now)
         return user, False
 
@@ -1203,7 +1211,7 @@ class Access:
             return None
         return self._api_token_hashed(_token_hash(token))
 
-    def _api_token_hashed(self, hashed: str) -> ApiToken | None:
+    def _api_token_hashed(self, hashed: str, used: bool = True) -> ApiToken | None:
         found = self.db.api_token(hashed)
         if found is None:
             return None
@@ -1211,7 +1219,7 @@ class Access:
         now = _now()
         if token.expires_ms is not None and now >= token.expires_ms:
             return None
-        if now - token.used_ms > SEEN_EVERY_MS:
+        if used and now - token.used_ms > SEEN_EVERY_MS:
             self.db.api_token_used(token.id, now)
         return token
 
@@ -2066,7 +2074,7 @@ def routes(app: FastAPI, access: Access) -> None:
         if not pin_works:
             raise HTTPException(
                 400,
-                f"{user.name}'s sign-in is Full, so it needs the password every time."
+                f"{possessive(user.name)} sign-in is Full, so it needs the password every time."
                 if user.admin_sign_in != LIGHT or not user.has_pin
                 else "Sign in with your password on this browser first. After that, your PIN "
                 "works here at home.",
@@ -2257,7 +2265,7 @@ def routes(app: FastAPI, access: Access) -> None:
         if body.role is not None and body.role != user.role:
             what.append(f"made {named} {a_role(body.role)}")
         if body.password is not None:
-            what.append(f"changed {named}'s password")
+            what.append(f"changed {possessive(named)} password")
         if limit_given and body.maxStations != user.max_stations:
             what.append(f"let {named} make {_stations_text(body.maxStations)}")
         if body.canChangePassword is not None and body.canChangePassword != user.own_password:

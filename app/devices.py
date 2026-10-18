@@ -46,7 +46,7 @@ from pydantic import BaseModel, Field
 from . import access
 from .access import ADMIN, Access, hash_password, password_matches
 from .db import Database, User
-from .text import and_list, plain
+from .text import and_list, plain, possessive
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -785,7 +785,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         try:
             if body.pin is not None:
                 await d.set_pin(user, body.pin)
-                said.append(f"{'set' if body.pin else 'removed'} {user.name}'s PIN")
+                said.append(f"{'set' if body.pin else 'removed'} {possessive(user.name)} PIN")
                 user = user_or_404(user_id)
             if body.showOn is not None or body.devices is not None:
                 was = d.show_on(user)

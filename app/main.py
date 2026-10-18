@@ -588,6 +588,10 @@ class AppContext:
     reports: reports.Reports = field(init=False)
     # The INFO station's panels, kept written (see infostation.py).
     info_panels: infostation.Panels = field(init=False)
+    # Stops what's playing that its person's limits no longer allow (set by
+    # applibrary.routes; watched by applibrary.watch_limits_forever: 1.40.0).
+    stop_restricted: Callable[[], int] = field(init=False, default_factory=lambda: lambda: 0)
+    stop_learning: Callable[[], None] | None = field(init=False, default=None)
 
     def restart(self) -> None:
         """Stops tapiOca; Docker starts it again."""
@@ -881,6 +885,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             asyncio.create_task(ctx.reach.run_forever()),
             asyncio.create_task(ctx.health.run_forever(lambda: stats.on_gpu(ctx))),
             asyncio.create_task(stats.count_plays_forever(ctx)),
+            asyncio.create_task(applibrary.watch_limits_forever(ctx)),
             asyncio.create_task(ctx.notify.run_forever()),
             asyncio.create_task(ctx.releases.run_forever()),
             asyncio.create_task(ctx.alerts.run_forever(ctx)),
@@ -888,6 +893,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         yield
         for task in background:
             task.cancel()
+        if ctx.stop_learning is not None:
+            ctx.stop_learning()  # (asking Plex about what's playing stops: 1.40.0)
         ctx.folders.stop()  # (reading a Media folder of your own stops at once)
         ctx.markers.cuts.cancel()  # (looking for cuts stops at once; saved below)
 
@@ -1194,7 +1201,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     ) -> bool:
         """Whether any of these pieces holds a program someone may not watch
         (or what can't be told, to be safe)."""
-        if viewer.everything:
+        if viewer.unchecked:
             return False
         return any(
             content is hls.UNKNOWN or not ctx.viewing.may_watch(viewer, content)
@@ -1998,7 +2005,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         viewer = ctx.viewing.viewer(user)
 
         def shown(item: Item) -> dict:  # (1.39.0)
-            return _shown_json(ctx.viewing, None if viewer.everything else viewer, item)
+            return _shown_json(ctx.viewing, None if viewer.unchecked else viewer, item)
 
         for cid, b in ctx.broadcasters.items():
             if not b.running or not ctx.viewing.sees_station(viewer, cid):
@@ -2346,7 +2353,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         def shown(c: Channel) -> dict:
             said = channel_json(
                 c,
-                None if viewer.everything else viewer,
+                None if viewer.unchecked else viewer,
                 # (Someone who only watches may change none, their own
                 # included: the last check of 1.39.0's cold audit.)
                 mayChange=access.may_change(user, c)
@@ -2638,7 +2645,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     previews = Turns("Other previews are being made. Try again in a moment.", most_waiting=2)
 
     @app.post("/api/intro/preview")
-    async def card_preview(body: CardPreview):
+    async def card_preview(body: CardPreview, request: Request):
         """The Intro Bumper, Station ID card or Feature Presentation card as
         the editor has it, as a short MP4 with sound."""
         feature = body.kind == intro.FEATURE
@@ -2650,7 +2657,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(400, f"seconds must be one of {', '.join(map(str, lengths))}")
         logo = ctx.logos.path(ctx.logos.resolve(body.logo)) if body.logo else None
         station = None
-        if body.channelId is not None and ctx.db.get_channel(body.channelId):
+        # (Only a Station they may see: never a few seconds of what one blocked
+        # for them plays, or what's on it. The one program check, 1.40.0.)
+        if (
+            body.channelId is not None
+            and ctx.db.get_channel(body.channelId)
+            and ctx.viewing.sees_station(
+                ctx.viewing.viewer(access.signed_in(request)), body.channelId
+            )
+        ):
             station = ctx.station(body.channelId)
         if feature:
             now = SAMPLE_FEATURE
@@ -2725,7 +2740,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return Response(data, media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
     @app.post("/api/upnext/preview")
-    async def banner_preview(body: BannerPreview):
+    async def banner_preview(body: BannerPreview, request: Request):
         """The Up Next Banner as the editor has it, with what's in the
         corner, over a plain picture, as a short MP4."""
         for name, value, allowed in (
@@ -2758,7 +2773,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         logo = ctx.logos.resolve(body.logo) if body.logo else ""
         channel = Channel(0, body.number, name, [], logo, **settings)
         title = SAMPLE_UP_NEXT[1]
-        if body.channelId is not None and ctx.db.get_channel(body.channelId):
+        # (Only a Station they may see names what's up next: 1.40.0.)
+        if (
+            body.channelId is not None
+            and ctx.db.get_channel(body.channelId)
+            and ctx.viewing.sees_station(
+                ctx.viewing.viewer(access.signed_in(request)), body.channelId
+            )
+        ):
             station = ctx.station(body.channelId)
             slot = station.locate(now_ms())
             following = station.locate(slot.end_ms) if slot else None
@@ -2836,7 +2858,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         now = now_ms()
         until = now + int(max(0.5, min(hours, STATION_GUIDE_MAX_HOURS)) * 3600 * 1000)
         viewer = ctx.viewing.viewer(access.signed_in(request))
-        limited = None if viewer.everything else viewer
+        limited = None if viewer.unchecked else viewer
 
         def listing() -> list[dict]:  # on a worker thread: a big shuffle takes a moment
             station = ctx.guide(channel)

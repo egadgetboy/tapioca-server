@@ -9,9 +9,11 @@ apps show only what the server sends.
 
 ## Goals
 
-1. **Off until it's used.** A tapiOca with one person, or none, works
+1. **Off until it's used.** On tapiOca's page and for Plex, Jellyfin and
+   other apps on the tuner, a tapiOca with one person, or none, works
    exactly as it always has. Viewing Levels, PINs and Who's tuning in?
-   appear only once there's a second person.
+   appear only once there's a second person. tapiOca's own apps are
+   different: each needs a signed-in person (below: planned).
 2. **Nothing leaks.** Anything a person can't see is missing from every
    list, search, guide, Resume row and "on now" for them. There's no title,
    no picture and no placeholder. A request for its key or address gets the
@@ -232,6 +234,41 @@ counts; allowing the station never allows what's on it):
   of (its sources, blocks and Feature Presentation), unless they may
   change it.
 
+**One program check (1.40.0).** The owner (October 18) asked for one shared
+check that every way of watching uses the same way. It's these rules,
+asked by every way of watching:
+
+- a Station's pieces as they air (above);
+- Media as it starts (`POST /api/internal/play`) and, from 1.40.0, while it
+  plays: every 2 seconds, in the background, what each play holds is judged
+  again by its person's limits, from what tapiOca already knows (never
+  asking Plex, so playing never waits on it). If an Admin's change no
+  longer allows it, its play ends at once and whatever it's sending is cut,
+  a long request for the whole file included. Its file, copy and subtitles
+  then answer 403 (`code: "restricted"`, "This title is restricted."), and
+  so does asking to play it again or saying where it was, for a while
+  after. The access log says so: "Kit's Heist stopped: their limits no
+  longer allow it." Something that can't be told yet (a show or tags not
+  known) leaves the title playing for that moment, since it was allowed,
+  while tapiOca asks Plex about it in the background; the next check
+  judges it. While Plex can't answer, it asks again at most every 30
+  seconds. A play whose own address has ended (its person removed or
+  signed out, its device revoked, its Media folder no longer shared, or
+  watching away from home turned off) is cut too, and its addresses then
+  answer 404, as for any ended play. No problem report is kept for a title
+  stopped by limits;
+- every list, and the station editor's previews of a Station's Intro Bumper
+  and Up Next Banner, which play and name nothing of a Station blocked for
+  whoever's making it (from 1.40.0).
+
+Two rules wait for their features. Their slots are in the check from
+1.40.0, but do nothing until their releases fill them, and nothing says
+they work before then: an episode hidden for someone as a limit is refused while it
+airs and in Media, whatever else allows it, and its show and Stations stay
+(Q-2, the hiding release); and a Viewing Level that needs Clean audio
+refuses a program until its Clean audio is ready, where "not known" is
+never ready (Q-7 and D04, Clean audio's release C).
+
 Still to come *(after 1.0)*: rating overrides, Station Audience warnings,
 Preview as user, and Why is this hidden for titles. (For stations, What
 they see already says why each one is hidden.)
@@ -383,6 +420,82 @@ once they signed in on it themselves:
 - **No password and no PIN.** Someone with neither, such as "Kids," is
   listed only at home, where anyone there can pick them.
 
+### Viewers, locks and shared TVs (planned)
+
+The owner's decisions of October 18. None of this is built yet: it comes in
+the releases "Viewer sessions and locks", "Viewing times, pauses and
+breaks", "User Groups and rosters", "Station creation apart from limits"
+and "Request more time", with the apps' side of each (the plan's Profiles
+has the whole design, its suggested defaults and its open questions).
+
+- **Every tapiOca app needs a signed-in person,** someone an Admin added
+  here. There's no anonymous or guest viewing. Until someone signs in, an
+  app shows only Sign in or Who's tuning in?, over generic, blurred tapiOca
+  artwork, never anyone's own screen. Each person's layouts and preferences
+  are theirs, on this server. An account may be shared on purpose (Kids,
+  say): it's still one account, with one history, Resume, viewing times and
+  break count for everyone using it.
+- **While signing in is off** (no one added on the Access tab), the page
+  and the tuner work as they always have, and Plex, Jellyfin and other apps
+  keep every address they use. tapiOca's apps don't open: they say an Admin
+  must turn signing in on first. Nothing is kept for a made-up person
+  (`user 0` stays only in the counts that name no one).
+- **A viewer, and a device.** A device's link (its token) and the person
+  watching on it (their session) are separate. **Lock** ends the session
+  and stops playing, and the device goes back to Who's tuning in?, still
+  linked. **Remove me from this device** still removes the person from it.
+- **TVs lock their viewer by themselves** wherever someone with limits can
+  use them (by their real level and limits): when the TV or device turns
+  off, sleeps or leaves the app, when the app starts again, when the Sleep
+  timer ends, after a while with nothing playing and no key, and when an
+  Admin locks it. There, an Admin and an Unrestricted person need their PIN
+  or password to be picked; the rule below that an Admin alone on their own
+  device may be picked with nothing doesn't apply on such a TV.
+- **Still watching?** needs a real press. Unanswered, playing stops and the
+  viewer is locked. Answering it never lifts anything else.
+- **An Admin's Lock this device and Pause.** Lock this device ends one
+  device's viewer at once. Pause stops a person on every device and cast,
+  for a few hours, until their next viewing time, or until an Admin ends it.
+  Both are logged in the access log.
+- **Viewing times:** each day of the week, for each person, in this
+  server's time zone. Outside them, nothing plays for that person; when a
+  window opens, nothing starts by itself. Before a window ends, a short
+  notice 10 minutes before, then a small banner for the whole last five
+  minutes, counting down, that never pauses or covers the picture.
+- **Required breaks:** after so much real watching, a break the person
+  can't skip, on any device; nothing plays by itself after it.
+- **Each account's own settings.** Viewing times and breaks are set for
+  each account; a level's limits never turn them on (an adult with genre
+  limits needn't have either).
+- **Request more time,** each account's own switch, off unless an Admin
+  turns it on. When on, a request and at most one reminder, only in the
+  last five minutes of a regular window, to Admins or adults the Admin
+  names. Every grant needs that adult's PIN or password, entered fresh,
+  checked here, even when they're signed in already. An unanswered request
+  never moves the end.
+- **User Groups.** An Admin's groups of accounts decide who's listed
+  together on an enrolled device: a home group on a device at home,
+  exactly one person or two on a device enrolled away. An unknown device
+  sees no names. A roster comes from the device's enrollment and the
+  group's membership, never from an address, Wi-Fi or a forwarded header.
+  Being listed never lets anyone watch as that person, and a group never
+  changes what anyone may watch.
+- **Making Stations apart from limits.** Whether an account may make
+  Stations, and how many, becomes its own setting. A limited account that
+  may make them sees and adds only what its limits allow, on every editor
+  path. Until that release, the rule in What's hidden or allowed for one
+  person stands: anyone with limits only watches.
+- **No terms in the apps.** Only the server owner acknowledges the Media &
+  Access Responsibilities notice, once, at first setup (planned, after
+  counsel's review). No app, viewer or other Admin is ever asked to accept
+  terms; signing in is security, never acceptance.
+- **One server decision.** The one program check (1.40.0) grows into the
+  one viewing check: a viewer's session, a lock, a pause, viewing times, a
+  break and the program's limits are all decided here, for every way of
+  watching (a Station's pieces, Media's direct play and ranges, copies,
+  casting), and a stream already going stops within seconds. The apps never
+  hold the rules themselves.
+
 ### Show on, before 1.38.0
 
 Before 1.38.0, each person's **Show on** said which devices listed them:
@@ -453,7 +566,8 @@ choose **Remove me from this device**.
   **invite code** for one person. It works once and expires after 7 days.
 - **Admins always unlock.** An Admin gives their PIN, or their password, on
   Who's tuning in? An Admin with no PIN, alone on their own device, may be
-  picked with nothing.
+  picked with nothing (planned: never on a TV someone with limits can use;
+  see Viewers, locks and shared TVs).
 - **An Admin's sign-in in the apps.** Picked with their PIN, an Admin gets
   their Admin tasks only in Light sign-in, at home, on a device they signed
   in on with their password (not just an invite code). Otherwise the
@@ -737,7 +851,8 @@ stations.)
 ## The apps
 
 - **What they show.** Who's tuning in? on start, a PIN pad, Sign in,
-  and Remove me from this device.
+  and Remove me from this device. Planned: nothing else until a person is
+  signed in, and the locks above (Viewers, locks and shared TVs).
 - **No filtering on the device.** The apps show exactly what the server
   sends.
 - **The Free tier's station.** In an app's Free tier, the one station is
@@ -752,6 +867,14 @@ stations.)
 - A station with one program above a person's level is hidden from them,
   unless an Admin allows that station for them; then that program is
   blocked for them while it's on, and shown as "Restricted program".
+- A title playing in Media stops within a few seconds on the server once
+  an Admin's change no longer allows it, its long requests cut, and its
+  addresses say "This title is restricted."; one still allowed plays on.
+  A play whose person is removed, or whose Media folder stops being
+  shared, is cut the same way (tests/test_program_check.py). How soon an
+  app shows it depends on what its player has buffered.
+- The station editor's previews never play or name what's on a Station
+  blocked for whoever's making them.
 - A User can't make an Admin, or change their own level.
 - A first Admin can't be added from the internet (as before).
 - A revoked device is signed out on its next request.

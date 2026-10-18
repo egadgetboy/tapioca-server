@@ -69,7 +69,9 @@ class Judged:
     """A program as limits see it: TV or a movie, its age (None: unrated),
     its library ("" if unknown), and whether its rating is known yet; and
     (from 1.33.0) the show or movie it is (an episode's show) and its tags
-    (None: not known yet)."""
+    (None: not known yet); and (from 1.40.0, for the one program check) the
+    program's own key (an episode's own) and whether it has Clean audio
+    ready (None: not known)."""
 
     tv: bool
     age: int | None
@@ -79,6 +81,8 @@ class Judged:
     # before 1.33.0.)
     key: str = field(default="", compare=False)
     tags: Tags | None = field(default=None, compare=False)
+    own_key: str = field(default="", compare=False)
+    clean: bool | None = field(default=None, compare=False)
 
 
 # Asks Plex about shows and movies: their keys → (rating, library, tags) for
@@ -384,18 +388,24 @@ class Titles:
             if show is None or not show.checked_ms:
                 return Judged(
                     True, None, show.library if show else "", False, item.show_key or "",
-                    show.tags if show else None,
+                    show.tags if show else None, own_key=item.rating_key,
                 )  # fmt: skip
             mine = ratings.age(own.rating) if own else None
             return Judged(
                 True, ratings.stricter(ratings.age(show.rating), mine), show.library, True,
-                item.show_key or "", show.tags,
+                item.show_key or "", show.tags, own_key=item.rating_key,
             )  # fmt: skip
         movie = self._known.get(item.rating_key)
         if movie is None:
-            return Judged(False, None, "", False, item.rating_key)
+            return Judged(False, None, "", False, item.rating_key, own_key=item.rating_key)
         return Judged(
-            False, ratings.age(movie.rating), movie.library, True, item.rating_key, movie.tags
+            False,
+            ratings.age(movie.rating),
+            movie.library,
+            True,
+            item.rating_key,
+            movie.tags,
+            own_key=item.rating_key,
         )
 
 

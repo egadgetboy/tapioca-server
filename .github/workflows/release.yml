@@ -44,6 +44,12 @@
 # running waits for them, and one whose tests failed isn't published, with
 # a line on the run's page saying why.
 #
+# A push of release notes alone starts no image run (image.yml leaves
+# docs/releases/ out), so it starts this directly; a version whose tests are
+# still running then waits, and is published when that run finishes. Either
+# way, the notes' words are checked first (tests/test_wording.py), and a
+# version is published only from an image run that tested its commit.
+#
 # It runs only in tapiOca's own repository (a fork's copy does nothing),
 # and keeps no credentials in its checkout.
 name: release
@@ -53,6 +59,9 @@ on:
     workflows: [image]
     types: [completed]
     branches: [main]
+  push:
+    branches: [main]
+    paths: ["docs/releases/**"]
   workflow_dispatch:
 
 permissions:
@@ -76,7 +85,40 @@ jobs:
           ref: main
           fetch-depth: 0 # (every version's commit)
           persist-credentials: false
+      # A push with anything besides release notes in it has its own image
+      # run, which starts this again when it finishes: publishing waits for
+      # that (and isn't refused before the run is even listed).
+      - name: Was this push release notes alone?
+        id: pushed
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # (What came before: the push's own "before", or, when that isn't
+          # here (a forced push, the first), the pushed commit's parent. A
+          # commit that can't be compared counts as more than notes.)
+          base=$BEFORE
+          git cat-file -e "$base^{commit}" 2>/dev/null || base="$AFTER^"
+          if changed=$(git diff --name-only "$base" "$AFTER" -- . ':(exclude)docs/releases/' 2>/dev/null) \
+            && [ -z "$changed" ]; then
+            echo "notes_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_only=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::This push has more than release notes: its image run publishes what's ready when it finishes (if no image run starts, run this workflow by hand)"
+          fi
+      # (The words test needs only pytest: --noconftest leaves out
+      # tests/conftest.py, which needs the app and its libraries.)
+      - name: Check the notes' words
+        if: github.event_name != 'push' || steps.pushed.outputs.notes_only == 'true'
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/words"
+          "$RUNNER_TEMP/words/bin/pip" install --quiet pytest==9.1.1
+          "$RUNNER_TEMP/words/bin/python" -m pytest -q -p no:cacheprovider --noconftest tests/test_wording.py
       - name: Publish what's new
+        if: github.event_name != 'push' || steps.pushed.outputs.notes_only == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           FIRST_PUBLIC: "1.32.0"
@@ -184,7 +226,7 @@ jobs:
                 echo "::error::$tag isn't published: its tests didn't pass (image run $failed)"
                 refused=1
               else
-                echo "::error::$tag isn't published: the image workflow hasn't tested its commit ${commit:0:7}, or a later main commit with nothing but release notes since"
+                echo "::error::$tag isn't published: the image workflow hasn't tested its commit ${commit:0:7}, or a later main commit with nothing but release notes since (if that commit was pushed with [skip ci], start the image workflow on main by hand: Run workflow)"
                 refused=1
               fi
               continue
