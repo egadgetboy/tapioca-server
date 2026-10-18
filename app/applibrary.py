@@ -2295,13 +2295,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             got = await proxy().get(url)
             got.raise_for_status()
         except httpx.HTTPError:
-            raise HTTPException(503, NO_FILE) from None
-        if len(got.content) > SUBTITLES_MOST:
-            raise HTTPException(503, NO_FILE)
-        if session.restricted:  # (stopped while Plex answered: the re-check of 1.40.0)
+            got = None
+        # (Stopped while Plex answered: the re-checks of 1.40.0. Said first,
+        # whatever Plex answered.)
+        if session.restricted:
             raise TitleRestricted()
         if session.ended:
             raise HTTPException(404, PLAY_ENDED)
+        if got is None or len(got.content) > SUBTITLES_MOST:
+            raise HTTPException(503, NO_FILE)
         # (Its type is the track's, never what the address says: a subtitle
         # file is text from elsewhere, and is never shown as a page.)
         return Response(

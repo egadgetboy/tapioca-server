@@ -937,7 +937,9 @@ def test_a_stream_still_sending_is_never_ended_as_unused():
 
 def test_a_report_naming_the_stopped_title_its_own_way_is_no_problem(app, monkeypatch):
     """The final-diff audit: only an exact title matched, so "heist" or
-    "Heist · Director's cut" brought back the first audit's problem rows."""
+    extra spaces brought back the first audit's problem rows. (A title that
+    only starts the same, such as a cut or a sequel, is another title: the
+    re-checks.)"""
     monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
     with TestClient(app) as admin:
         set_up(admin)
@@ -949,7 +951,7 @@ def test_a_report_naming_the_stopped_title_its_own_way_is_no_problem(app, monkey
         admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid_level(admin)})
         assert admin.portal.call(app.state.ctx.stop_restricted) == 1
         device = {"app": "tapiOca for Android", "version": "0.7.0", "device": "Pixel 8"}
-        for title in ("heist", "Heist · Director's cut"):
+        for title in ("heist", "  HEIST ", "Heist (2000)"):  # (as apps and the log put it)
             sent = phone.post(
                 "/api/internal/problem",
                 json={"kind": "library-stopped", "title": title, "detail": "It stopped", **device},
@@ -977,7 +979,9 @@ def _heist_stopped(app, admin):
     return phone, as_kit
 
 
-@pytest.mark.parametrize("title", ["Theistic Journeys", "Northbound"])
+@pytest.mark.parametrize(
+    "title", ["Theistic Journeys", "Northbound", "Heist: The Return", "Heist (2023)"]
+)
 def test_a_report_about_another_title_is_kept(app, monkeypatch, title):
     """The re-check: a title merely containing the stopped one's letters
     ("Theistic" holds "heist") was taken for it, and dropped."""
@@ -1122,3 +1126,22 @@ def test_a_stream_that_stopped_reading_is_ended_as_unused():
     stalled.seen = stalled.sending = long_ago
     plays.tidy()
     assert plays.find(stalled.id) is None
+
+
+def test_a_long_answer_marks_its_play_in_use_as_it_sends(app, monkeypatch, tmp_path):
+    """The last re-check: nothing tested that bytes going out keep a play in
+    use, so a player reading one long request without progress reports
+    could be ended as unused after 4 hours while still reading."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        admin.post("/api/access/users", json={**KIT, "role": "user"})
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        played = phone.post("/api/internal/play", json={"key": "300", "device": TV}, headers=as_kit)
+        session = app.state.ctx.plays.find(played.json()["session"])
+        assert session.sending == float("-inf")
+        before = time.monotonic()
+        assert file_of(phone, played.json(), as_kit).status_code == 200
+        assert session.sending >= before
