@@ -85,13 +85,35 @@ jobs:
           ref: main
           fetch-depth: 0 # (every version's commit)
           persist-credentials: false
+      # A push with anything besides release notes in it has its own image
+      # run, which starts this again when it finishes: publishing waits for
+      # that (and isn't refused before the run is even listed).
+      - name: Was this push release notes alone?
+        id: pushed
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+            && [ -z "$(git diff --name-only "$BEFORE" "$AFTER" -- . ':(exclude)docs/releases/')" ]; then
+            echo "notes_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_only=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::This push has more than release notes: its image run publishes what's ready when it finishes"
+          fi
+      # (The words test needs only pytest: --noconftest leaves out
+      # tests/conftest.py, which needs the app and its libraries.)
       - name: Check the notes' words
+        if: github.event_name != 'push' || steps.pushed.outputs.notes_only == 'true'
         run: |
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/words"
           "$RUNNER_TEMP/words/bin/pip" install --quiet pytest==9.1.1
-          "$RUNNER_TEMP/words/bin/python" -m pytest -q -p no:cacheprovider tests/test_wording.py
+          "$RUNNER_TEMP/words/bin/python" -m pytest -q -p no:cacheprovider --noconftest tests/test_wording.py
       - name: Publish what's new
+        if: github.event_name != 'push' || steps.pushed.outputs.notes_only == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           FIRST_PUBLIC: "1.32.0"
@@ -199,7 +221,7 @@ jobs:
                 echo "::error::$tag isn't published: its tests didn't pass (image run $failed)"
                 refused=1
               else
-                echo "::error::$tag isn't published: the image workflow hasn't tested its commit ${commit:0:7}, or a later main commit with nothing but release notes since"
+                echo "::error::$tag isn't published: the image workflow hasn't tested its commit ${commit:0:7}, or a later main commit with nothing but release notes since (if that commit was pushed with [skip ci], start the image workflow on main by hand: Run workflow)"
                 refused=1
               fi
               continue

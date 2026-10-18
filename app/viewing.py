@@ -52,7 +52,7 @@ from .access import ADMIN
 from .catalog import EPISODE, MOVIE, SHOW, Entry, Tags
 from .db import Database, Item, User
 from .infostation import KEY as INFO_KEY
-from .text import plain
+from .text import plain, possessive
 from .titles import Judged, Titles
 
 if TYPE_CHECKING:
@@ -1114,7 +1114,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             said.append(
                 f"{' and '.join(what)} for {user.name}"
                 if what
-                else f"cleared {user.name}'s allowed and blocked stations"
+                else f"cleared {possessive(user.name)} allowed and blocked stations"
             )
         if own is not None and own != before_own:
             hidden = hides_said(own.blocks)

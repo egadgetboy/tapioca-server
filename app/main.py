@@ -591,6 +591,7 @@ class AppContext:
     # Stops what's playing that its person's limits no longer allow (set by
     # applibrary.routes; watched by applibrary.watch_limits_forever: 1.40.0).
     stop_restricted: Callable[[], int] = field(init=False, default_factory=lambda: lambda: 0)
+    stop_learning: Callable[[], None] | None = field(init=False, default=None)
 
     def restart(self) -> None:
         """Stops tapiOca; Docker starts it again."""
@@ -892,6 +893,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         yield
         for task in background:
             task.cancel()
+        if ctx.stop_learning is not None:
+            ctx.stop_learning()  # (asking Plex about what's playing stops: 1.40.0)
         ctx.folders.stop()  # (reading a Media folder of your own stops at once)
         ctx.markers.cuts.cancel()  # (looking for cuts stops at once; saved below)
 

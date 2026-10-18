@@ -755,3 +755,38 @@ def test_a_run_on_the_notes_commit_itself_still_counts(run):
     said, status, out = run()
     assert status == 0, said + out
     assert len(creates(said)) == 1
+
+
+def test_the_words_step_needs_nothing_but_pytest():
+    """The final-diff audit: the step's bare environment has only pytest,
+    and tests/conftest.py imports httpx and the app, so the step failed on
+    every run and nothing could be published."""
+    import ast
+    import sys
+
+    text = WORKFLOW.read_text()
+    step = text[text.index("name: Check the notes' words") : text.index("name: Publish what's new")]
+    assert "--noconftest" in step
+    tree = ast.parse((ROOT / "tests" / "test_wording.py").read_text())
+    imported = {
+        (node.module or "").split(".")[0] if isinstance(node, ast.ImportFrom) else a.name.split(".")[0]
+        for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+        for a in (node.names if isinstance(node, ast.Import) else [node])
+    }  # fmt: skip
+    outside = {m for m in imported if m not in sys.stdlib_module_names and m not in ("pytest", "")}
+    assert outside == set(), outside
+
+
+def test_a_push_with_code_in_it_leaves_publishing_to_its_image_run():
+    """The final-diff audit: a push of code and notes started this before
+    its image run was listed, and failed red with "hasn't tested its
+    commit" (the image run then published it)."""
+    text = WORKFLOW.read_text()
+    assert "github.event.before" in text and "docs/releases/" in text
+    assert re.search(r"if: .*github\.event_name != 'push'.*notes_only", text), "a code push waits"
+
+
+def test_a_version_never_tested_says_how_to_start_its_tests(run):
+    said, status, out = run()
+    assert status == 1
+    assert "Run workflow" in out  # (its commit was pushed with [skip ci], say)

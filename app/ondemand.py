@@ -126,6 +126,11 @@ RECHECK_S = 60.0  # how often a session's sign-in is checked again
 # the one program check, while it plays, so an Admin's change stops it within
 # a few seconds).
 LIMITS_WATCH_S = 2.0
+# What judging a play needs and tapiOca doesn't know yet is asked of Plex in
+# the background; when an ask finds nothing, the next waits twice as long,
+# from LEARN_WAIT_S up to LEARN_WAIT_MOST_S (the final-diff audit of 1.40.0).
+LEARN_WAIT_S = 5.0
+LEARN_WAIT_MOST_S = 300.0
 # How long a title stopped by its person's limits is answered as restricted
 # (403, code "restricted") when their app asks to play it again, rather than
 # as one they can't see (404).
@@ -1299,6 +1304,7 @@ class PlaySession:
     # anyio.CancelScope, cancelled as it's stopped, so a long one is cut).
     show: Entry | None = None
     restricted: bool = False
+    ended: bool = False  # (set as it ends: an answer starting after that sends nothing)
     streams: set[Any] = field(default_factory=set, repr=False, compare=False)
     # What the stats count (see stats.Stats.played): how long it's been
     # watched (the time between its requests, but for gaps longer than
@@ -1339,7 +1345,8 @@ class PlaySessions:
     def start(self, **details: Any) -> PlaySession:
         self._tidy()
         while len(self._sessions) >= SESSIONS_MOST:
-            oldest = min(self._sessions.values(), key=lambda s: s.seen)
+            # (The longest unused, those still sending last.)
+            oldest = min(self._sessions.values(), key=lambda s: (bool(s.streams), s.seen))
             self.end(oldest.id)
         session = PlaySession(id=secrets.token_urlsafe(SESSION_ID_BYTES), **details)
         before = self.before(session.user_id, session.entry.key, session.client)
@@ -1382,7 +1389,7 @@ class PlaySessions:
         session = self._sessions.get(session_id)
         if session is None:
             return None
-        if time.monotonic() - session.seen > SESSION_IDLE_S:
+        if time.monotonic() - session.seen > SESSION_IDLE_S and not session.streams:
             self.end(session_id)
             return None
         return session
@@ -1396,6 +1403,7 @@ class PlaySessions:
         # (What it's sending now is cut, however long the request: an ended
         # play sends nothing more. The second cold audit of 1.40.0: only a
         # restricted stop cut it, so a removed person's went on.)
+        session.ended = True
         for stream in list(session.streams):
             stream.cancel()
         if session.copy is not None:
@@ -1525,7 +1533,7 @@ class PlaySessions:
     def _tidy(self) -> None:
         now = time.monotonic()
         for s in list(self._sessions.values()):
-            if now - s.seen > SESSION_IDLE_S:
+            if now - s.seen > SESSION_IDLE_S and not s.streams:  # (still sending: in use)
                 self.end(s.id)
 
     def __len__(self) -> int:

@@ -41,7 +41,7 @@ from . import (
 )
 from . import scanner as sc
 from .broadcaster import now_ms
-from .text import plain
+from .text import plain, possessive
 
 log = logging.getLogger(__name__)
 
@@ -991,7 +991,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user = access.signed_in(request)
         about = played_of(body, request) if body.kind in problems.LIBRARY_KINDS else None
         if about is not None and about.restricted:
-            if body.session or (body.title or "").strip() in titles_of(about.entry):
+            said = (body.title or "").strip().casefold()
+            if body.session or any(name.casefold() in said for name in titles_of(about.entry)):
                 # (Stopped by its person's limits: no problem, and said once
                 # in the log as that. 1.40.0.)
                 return {"ok": True}
@@ -1054,7 +1055,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         what the check finds puts its file on the list."""
         at = body.positionMs if body.positionMs is not None else session.position_ms
         what = "didn't play" if body.kind == "library-failed" else "stopped playing"
-        why = f"{session.user or 'someone'}'s app said it {what}"
+        why = f"{possessive(session.user or 'someone')} app said it {what}"
         sc.trouble(ctx, session.entry, session.media, at / 1000 if at is not None else None, why)
 
     @app.get(

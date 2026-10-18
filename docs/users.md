@@ -253,8 +253,9 @@ asked by every way of watching:
   while tapiOca asks Plex about it in the background; the next check
   judges it. A play whose own address has ended (its person removed or
   signed out, its device revoked, its Media folder no longer shared, or
-  watching away from home turned off) is cut the same way. No problem
-  report is kept for a title stopped by limits;
+  watching away from home turned off) is cut too, and its addresses then
+  answer 404, as for any ended play. No problem report is kept for a title
+  stopped by limits;
 - every list, and the station editor's previews of a Station's Intro Bumper
   and Up Next Banner, which play and name nothing of a Station blocked for
   whoever's making it (from 1.40.0).

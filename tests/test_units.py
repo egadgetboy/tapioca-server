@@ -905,3 +905,12 @@ async def test_a_plex_that_ignores_paging_is_read_once():
     client, requests = _paging_plex(2500, honour_paging=False)
     assert len(await client.section_items("1")) == 2500
     assert len(requests) == 1
+
+
+def test_a_names_possessive():
+    """(1.40.0's final-diff audit: "Kids's".)"""
+    from app.text import possessive
+
+    assert possessive("Kit") == "Kit's"
+    assert possessive("Kids") == "Kids'"
+    assert possessive("JAMES") == "JAMES'"

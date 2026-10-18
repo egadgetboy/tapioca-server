@@ -56,6 +56,7 @@ from . import scanner as sc
 from . import titles as titles_module
 from .appapi import APP_MAX, LanguagesIn, app_label, in_sentence, slot_program
 from .broadcaster import now_ms
+from .text import possessive
 from .broken import version_key
 from .catalog import Entry, Media, Track
 from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
@@ -324,11 +325,6 @@ def tracks(found: tuple[Track, ...], audio: bool) -> list[dict]:
     ]
 
 
-def possessive(name: str) -> str:
-    """A name's possessive, as the log says it: "Kit's", "Kids'"."""
-    return f"{name}'" if name.endswith(("s", "S")) else f"{name}'s"
-
-
 def describe(e: Entry) -> str:
     """A program, as the log names it: "Northbound · S2 E4", "Tidewater Night (1975)"."""
     return playing.title(e)
@@ -576,6 +572,14 @@ class Guarded(Response):
         if self.session.restricted:
             await self._close_inner()
             await restricted_answer()(scope, receive, send)
+            return
+        if self.session.ended:
+            # (Ended after its address was checked, while Plex or a sleeping
+            # disk was answering: nothing is sent. The final-diff audit. No
+            # await between this and the scope's being kept below, so an end
+            # after it cuts the scope.)
+            await self._close_inner()
+            await JSONResponse({"detail": PLAY_ENDED}, status_code=404)(scope, receive, send)
             return
         with anyio.CancelScope() as cut:
             self.session.streams.add(cut)
@@ -2034,6 +2038,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise
 
     learning: dict[str, asyncio.Task] = {}  # (by session: what judged_now couldn't tell)
+    # (By session: how many asks found nothing, and when it may ask again.)
+    unlearned: dict[str, tuple[int, float]] = {}
+
+    def stop_learning() -> None:
+        """As tapiOca stops: the asks still going end."""
+        for task in learning.values():
+            task.cancel()
+
+    ctx.stop_learning = stop_learning
 
     def learn(session: ondemand.PlaySession, tags: bool) -> None:
         """Finds out, in the background, what judging `session` needs and
@@ -2041,23 +2054,50 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         with the session) and, when `tags`, its show's or movie's tags
         (Titles.ensure). Never waited on: a later pass judges it (the second
         cold audit of 1.40.0: what wasn't known was never asked for, so a
-        title played on to its end). One at a time for each session."""
+        title played on to its end). One at a time for each session; when an
+        ask finds nothing (Plex down, or a show gone), each next one waits
+        twice as long, up to LEARN_WAIT_MOST_S, and the log says so once (the
+        final-diff audit: it asked, and said so, every pass)."""
         going = learning.get(session.id)
         if going is not None and not going.done():
             return
         for done in [k for k, task in learning.items() if task.done()]:
             del learning[done]
+        going_ids = {s.id for s in ctx.plays.going()}
+        for gone in [k for k in unlearned if k not in going_ids]:
+            del unlearned[gone]
+        tries, after = unlearned.get(session.id, (0, 0.0))
+        if time.monotonic() < after:
+            return
         e = session.entry
+        wants_show = e.kind == catalog.EPISODE and session.show is None and bool(e.show_key)
+        if not wants_show and not (tags and cat.titles is not None):
+            return  # (nothing it could find out)
 
         async def work() -> None:
+            trouble: Exception | None = None
             try:
-                if e.kind == catalog.EPISODE and session.show is None and e.show_key:
-                    session.show = (await shows_of(cat, [e])).get(e.show_key)
+                if wants_show:
+                    session.show = (await shows_of(cat, [e])).get(e.show_key or "")
                 if tags and cat.titles is not None:
                     await cat.titles.ensure(tags_wanted([e]))
-            except Exception as ex:  # (asked again on a later pass)
-                log.info("Couldn't find out about %s to check it against limits (%s)",
-                         describe(e), ex)  # fmt: skip
+            except Exception as ex:
+                trouble = ex
+            key = (e.show_key or "") if e.kind == catalog.EPISODE else e.key
+            known = (not wants_show or session.show is not None) and (
+                not tags or cat.titles is None or cat.titles.tags(key) is not None
+            )
+            if known:
+                unlearned.pop(session.id, None)
+                return
+            if tries == 0:
+                log.info(
+                    "Couldn't find out about %s to check it against limits (%s); "
+                    "it plays on, and is asked about again later",
+                    describe(e), trouble or "not known",
+                )  # fmt: skip
+            wait = min(ondemand.LEARN_WAIT_S * 2**tries, ondemand.LEARN_WAIT_MOST_S)
+            unlearned[session.id] = (tries + 1, time.monotonic() + wait)
 
         learning[session.id] = asyncio.get_running_loop().create_task(work())
 
@@ -2092,7 +2132,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             or (session.away and not ctx.away.on)
             or (
                 session.sign_in is not None
-                and ctx.access.session_user_hashed(session.sign_in, anywhere=True) is None
+                and ctx.access.session_user_hashed(session.sign_in, anywhere=True, used=False)
+                is None
             )
         )
 

@@ -769,3 +769,180 @@ def test_someone_with_rules_still_to_come_gets_their_own_station_addresses(app, 
         assert stations.status_code == 200, stations.text
         urls = [s["hls"] for s in stations.json()["stations"]]
         assert urls and all("/hls/k/" in u for u in urls), urls
+
+
+# The final-diff audit (1.40.0) ------------------------------------------------------
+
+
+def test_a_play_ended_just_before_its_answer_starts_is_never_sent(app, monkeypatch):
+    """The final-diff audit: a play ended between its address being checked
+    and its answer starting (the wait for Plex, or for a sleeping disk) was
+    never cut, and sent the rest of the file."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
+    real = applibrary._from_plex
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        admin.post("/api/access/users", json={**KIT, "role": "user"})
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        played = phone.post("/api/internal/play", json={"key": "300", "device": TV}, headers=as_kit)
+        assert played.status_code == 200, played.text
+        session_id = played.json()["session"]
+
+        async def ended_meanwhile(*a, **k):
+            answer = await real(*a, **k)
+            app.state.ctx.plays.end(session_id)  # (Kit removed while Plex answered, say)
+            return answer
+
+        monkeypatch.setattr(applibrary, "_from_plex", ended_meanwhile)
+        got = file_of(phone, played.json(), as_kit)
+        assert got.status_code == 404, (got.status_code, len(got.content))
+
+
+def test_learning_waits_longer_each_time_plex_cant_say(app, monkeypatch, caplog):
+    """The final-diff audit: with Plex down, an unknown show was asked about
+    again every pass, said in the log each time (about 700 lines an hour)."""
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        ctx = app.state.ctx
+        ctx.catalog.forget()
+        shift = phone.post("/api/internal/play", json={"key": "211", "device": TV}, headers=as_kit)
+        assert shift.status_code == 200, shift.text
+        ctx.plays.find(shift.json()["session"]).show = None
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid_level(admin)})
+        asked: list[str] = []
+
+        async def down(key):
+            asked.append(key)
+            raise RuntimeError("Plex isn't answering")
+
+        monkeypatch.setattr(ctx.catalog, "entry", down)
+        for _ in range(6):
+            admin.portal.call(ctx.stop_restricted)
+            time.sleep(0.05)  # (each pass's background ask runs)
+        assert len(asked) == 1, asked
+        said = [r for r in caplog.records if "Couldn't find out" in r.getMessage()]
+        assert len(said) == 1
+
+
+def test_the_check_never_counts_as_using_a_sign_in(app, monkeypatch):
+    """The final-diff audit: checking every 2 seconds moved each sign-in's
+    and API token's last use forward with no request made, stretching a
+    picker's day-long sign-in and the browsers' idle sign-out."""
+    from app import access
+
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
+    monkeypatch.setattr(access, "SEEN_EVERY_MS", 0)  # (any use would be written)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        admin.post("/api/access/users", json={**KIT, "role": "user"})
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        played = phone.post("/api/internal/play", json={"key": "300", "device": TV}, headers=as_kit)
+        ctx = app.state.ctx
+        hashed = ctx.plays.find(played.json()["session"]).sign_in
+        before = ctx.db.session_user(hashed, 0).seen_ms
+        time.sleep(0.01)
+        for _ in range(3):
+            admin.portal.call(ctx.stop_restricted)
+        assert ctx.db.session_user(hashed, 0).seen_ms == before
+
+
+def test_signing_out_or_signing_in_turned_on_ends_a_play(app, monkeypatch):
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 0.05)
+    with TestClient(app) as admin:
+        set_up(admin)
+        phone = TestClient(app)
+        # (Signing in off: a play with no sign-in, then an Admin added.)
+        open_play = phone.post("/api/internal/play", json={"key": "300", "device": TV})
+        assert open_play.status_code == 200, open_play.text
+        admin.post("/api/access/users", json=ADA)
+        assert until(lambda: app.state.ctx.plays.find(open_play.json()["session"]) is None)
+        admin.post("/api/access/users", json={**KIT, "role": "user"})
+        as_kit = sign_in_app(app, KIT)
+        picnic = phone.post("/api/internal/play", json={"key": "300", "device": TV}, headers=as_kit)
+        assert picnic.status_code == 200, picnic.text
+        assert phone.post("/api/internal/sign-out", headers=as_kit).status_code in (200, 204)
+        assert until(lambda: app.state.ctx.plays.find(picnic.json()["session"]) is None)
+
+
+def test_plays_that_may_go_on_go_on_across_checks(app, monkeypatch):
+    """Plays that may go on keep going pass after pass: an app's sign-in, on
+    two devices (the final-diff audit asked for it; API tokens can't play
+    Media: they work only under /api/v1)."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 0.05)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        admin.post("/api/access/users", json={**KIT, "role": "user"})
+        as_kit = sign_in_app(app, KIT)
+        on_tv = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        by_app = phone.post("/api/internal/play", json={"key": "300", "device": TV}, headers=as_kit)
+        by_script = phone.post("/api/internal/play", json={"key": "301", "device": TV}, headers=on_tv)
+        assert by_app.status_code == 200, by_app.text
+        assert by_script.status_code == 200, by_script.text
+        time.sleep(0.4)  # (several checks)
+        plays = app.state.ctx.plays
+        assert plays.find(by_app.json()["session"]) is not None
+        assert plays.find(by_script.json()["session"]) is not None
+
+
+def test_a_stream_still_sending_is_never_ended_as_unused():
+    """The final-diff audit: since an ended play's streams are cut, ending a
+    play unused for SESSION_IDLE_S cut one long request still sending (a
+    script that sends no progress), and making room ended those first."""
+    from app.catalog import Entry
+
+    plays = ondemand.PlaySessions()
+    e = Entry("301", "movie", "Heist", library="2")
+    media = None  # (not looked at here)
+    sending = plays.start(user_id=2, user="Kit", sign_in=None, entry=e, media=media,
+                          path=None, plex="x", client="a", away=False)  # fmt: skip
+    quiet = plays.start(user_id=2, user="Kit", sign_in=None, entry=e, media=media,
+                        path=None, plex="x", client="b", away=False)  # fmt: skip
+    class Sending:  # (a byte answer still going, as Guarded keeps one)
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    going = Sending()
+    sending.streams.add(going)
+    long_ago = time.monotonic() - ondemand.SESSION_IDLE_S - 1
+    sending.seen = quiet.seen = long_ago
+    plays.tidy()
+    assert plays.find(sending.id) is sending and not going.cancelled
+    assert plays.find(quiet.id) is None
+
+
+def test_a_report_naming_the_stopped_title_its_own_way_is_no_problem(app, monkeypatch):
+    """The final-diff audit: only an exact title matched, so "heist" or
+    "Heist · Director's cut" brought back the first audit's problem rows."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        phone.post("/api/internal/play", json={"key": "301", "device": TV}, headers=as_kit)
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid_level(admin)})
+        assert admin.portal.call(app.state.ctx.stop_restricted) == 1
+        device = {"app": "tapiOca for Android", "version": "0.7.0", "device": "Pixel 8"}
+        for title in ("heist", "Heist · Director's cut"):
+            sent = phone.post(
+                "/api/internal/problem",
+                json={"kind": "library-stopped", "title": title, "detail": "It stopped", **device},
+                headers=as_kit,
+            )
+            assert sent.status_code == 200, sent.text
+        assert admin.get("/api/problems?days=7").json()["problems"] == []

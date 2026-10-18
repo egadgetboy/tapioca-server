@@ -10,6 +10,11 @@ import re
 import unicodedata
 
 
+def possessive(name: str) -> str:
+    """A name's possessive, as the logs say it: "Kit's", "Kids'"."""
+    return f"{name}'" if name.endswith(("s", "S")) else f"{name}'s"
+
+
 def plain(text: str) -> str:
     """`text` on one line: control characters (line breaks, tabs, NUL...)
     become spaces, runs of spaces one, and none at either end. (Invisible
