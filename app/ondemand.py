@@ -121,6 +121,10 @@ COPY_RESTING_S = 600.0  # a copy unused this long has its pieces deleted
 WATCHING_S = 180.0  # counts as a device watching until unheard from this long
 SESSIONS_MOST = 500
 RECHECK_S = 60.0  # how often a session's sign-in is checked again
+# How often what's playing is checked against its person's limits again
+# (1.40.0: the one program check, while it plays, so an Admin's change
+# reaches it within this long).
+LIMITS_RECHECK_S = 15.0
 # The same program played again on the same device this soon after is the
 # same play (another sound track, a smaller version: see PlaySessions.start),
 # and the sessions ended lately kept for telling (at most this many).
@@ -1277,6 +1281,7 @@ class PlaySession:
     started_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     seen: float = field(default_factory=time.monotonic)
     checked: float = field(default_factory=time.monotonic)
+    judged: float = field(default_factory=time.monotonic)  # (limits, last checked: 1.40.0)
     # What the stats count (see stats.Stats.played): how long it's been
     # watched (the time between its requests, but for gaps longer than
     # WATCHING_S: paused, or gone), how much of that is counted, and whether

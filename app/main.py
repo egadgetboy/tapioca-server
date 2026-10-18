@@ -2638,7 +2638,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     previews = Turns("Other previews are being made. Try again in a moment.", most_waiting=2)
 
     @app.post("/api/intro/preview")
-    async def card_preview(body: CardPreview):
+    async def card_preview(body: CardPreview, request: Request):
         """The Intro Bumper, Station ID card or Feature Presentation card as
         the editor has it, as a short MP4 with sound."""
         feature = body.kind == intro.FEATURE
@@ -2650,7 +2650,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(400, f"seconds must be one of {', '.join(map(str, lengths))}")
         logo = ctx.logos.path(ctx.logos.resolve(body.logo)) if body.logo else None
         station = None
-        if body.channelId is not None and ctx.db.get_channel(body.channelId):
+        # (Only a Station they may see: never a few seconds of what one blocked
+        # for them plays, or what's on it. The one program check, 1.40.0.)
+        if (
+            body.channelId is not None
+            and ctx.db.get_channel(body.channelId)
+            and ctx.viewing.sees_station(
+                ctx.viewing.viewer(access.signed_in(request)), body.channelId
+            )
+        ):
             station = ctx.station(body.channelId)
         if feature:
             now = SAMPLE_FEATURE
@@ -2725,7 +2733,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return Response(data, media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
     @app.post("/api/upnext/preview")
-    async def banner_preview(body: BannerPreview):
+    async def banner_preview(body: BannerPreview, request: Request):
         """The Up Next Banner as the editor has it, with what's in the
         corner, over a plain picture, as a short MP4."""
         for name, value, allowed in (
@@ -2758,7 +2766,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         logo = ctx.logos.resolve(body.logo) if body.logo else ""
         channel = Channel(0, body.number, name, [], logo, **settings)
         title = SAMPLE_UP_NEXT[1]
-        if body.channelId is not None and ctx.db.get_channel(body.channelId):
+        # (Only a Station they may see names what's up next: 1.40.0.)
+        if (
+            body.channelId is not None
+            and ctx.db.get_channel(body.channelId)
+            and ctx.viewing.sees_station(
+                ctx.viewing.viewer(access.signed_in(request)), body.channelId
+            )
+        ):
             station = ctx.station(body.channelId)
             slot = station.locate(now_ms())
             following = station.locate(slot.end_ms) if slot else None

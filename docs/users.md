@@ -232,6 +232,30 @@ counts; allowing the station never allows what's on it):
   of (its sources, blocks and Feature Presentation), unless they may
   change it.
 
+**One program check (1.40.0).** The owner (October 18) asked for one shared
+check that every way of watching uses the same way. It's these rules,
+asked by every way of watching:
+
+- a Station's pieces as they air (above);
+- Media as it starts (`POST /api/internal/play`) and, from 1.40.0, while it
+  plays: every 15 seconds, its person's limits are checked again. If an
+  Admin's change no longer allows what's playing, its play ends at once,
+  and its file, copy and subtitles answer 403 (`code: "restricted"`, "This
+  title is restricted."). The access log says so: "Kit's Heist stopped:
+  their limits no longer allow it." A check that can't be made while
+  Plex isn't answering leaves the title playing until one can, since it
+  was allowed;
+- every list, and the station editor's previews of a Station's Intro Bumper
+  and Up Next Banner, which play and name nothing of a Station blocked for
+  whoever's making it (from 1.40.0).
+
+Two rules wait for their features, and are part of the same check when
+they come: an episode hidden for someone as a limit is refused while it
+airs and in Media, whatever else allows it, and its show and Stations stay
+(Q-2, the hiding release); and a Viewing Level that needs Clean audio
+refuses a program until its Clean audio is ready, where "not known" is
+never ready (Q-7 and D04, Clean audio's release C).
+
 Still to come *(after 1.0)*: rating overrides, Station Audience warnings,
 Preview as user, and Why is this hidden for titles. (For stations, What
 they see already says why each one is hidden.)
@@ -752,6 +776,11 @@ stations.)
 - A station with one program above a person's level is hidden from them,
   unless an Admin allows that station for them; then that program is
   blocked for them while it's on, and shown as "Restricted program".
+- A title playing in Media stops within 15 seconds, saying "This title is
+  restricted.", once an Admin's change no longer allows it; one still
+  allowed plays on (tests/test_program_check.py).
+- The station editor's previews never play or name what's on a Station
+  blocked for whoever's making them.
 - A User can't make an Admin, or change their own level.
 - A first Admin can't be added from the internet (as before).
 - A revoked device is signed out on its next request.

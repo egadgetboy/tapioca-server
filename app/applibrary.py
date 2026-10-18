@@ -73,6 +73,9 @@ log = logging.getLogger(__name__)
 NONE_SHARED = "No Media folders are shared with tapiOca's apps"
 AWAY_OFF = "Media on this tapiOca server can only be watched at home right now."
 PLAY_ENDED = "That program's address has ended. Choose it again to play it."
+# Said as a title's limits stop it while it plays (1.40.0), as a Station's
+# restricted program is (403, code "restricted").
+RESTRICTED_TITLE = "This title is restricted."
 # Even sound for a show's episodes, as a copy's `why` says it (the apps show
 # it in their player).
 EVEN_WHY = "even sound for the show's episodes"
@@ -506,6 +509,10 @@ async def seen_only(
         e for e in entries
         if viewer.sees(viewing.judge_entry(e, shows.get(e.show_key or ""), tags(e)))
     ]  # fmt: skip
+
+
+class TitleRestricted(Exception):
+    """What's playing is no longer allowed for its person (1.40.0)."""
 
 
 async def must_see(cat: ondemand.Catalog, viewer: viewing.Viewer, entry: Entry) -> None:
@@ -1900,7 +1907,27 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     bound_of: dict[str, str] = {}  # (each play session's trusted network: "" for none)
 
-    def session_or_404(session_id: str, request: Request) -> ondemand.PlaySession:
+    @app.exception_handler(TitleRestricted)
+    async def title_restricted(request: Request, e: TitleRestricted):
+        return JSONResponse({"detail": RESTRICTED_TITLE, "code": "restricted"}, status_code=403)
+
+    async def still_allowed(session: ondemand.PlaySession) -> bool:
+        """Whether what `session` plays is still allowed for its person (the
+        one program check, as it started: 1.40.0). One that can't be checked
+        now, with the library not answering, stands as it was: it was
+        allowed, and a check is made again soon."""
+        user = ctx.db.user(session.user_id)
+        if user is None:  # (gone: its play ends, as for a sign-in that ended)
+            return True
+        try:
+            await must_see(cat, ctx.viewing.viewer(user), session.entry)
+        except NotShared:
+            return False
+        except LibraryError:
+            return True
+        return True
+
+    async def session_or_404(session_id: str, request: Request) -> ondemand.PlaySession:
         """A play session that's still good, now marked as used: its library
         still shared, and its sign-in (if signing in is on) still good.
         Through the public port, only one an app started there, while
@@ -1936,12 +1963,24 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if ended:
             ctx.plays.end(session_id)
             raise HTTPException(404, PLAY_ENDED)
+        # (Its person's limits, again while it plays: an Admin may have
+        # changed them. The one program check, as it started: 1.40.0.)
+        if session.user_id and now - session.judged >= ondemand.LIMITS_RECHECK_S:
+            session.judged = now
+            if not await still_allowed(session):
+                ctx.plays.end(session_id)
+                ctx.access.record(
+                    logging.INFO,
+                    f"{session.user}'s {describe(session.entry)} stopped: their limits no "
+                    "longer allow it",
+                )
+                raise TitleRestricted()
         session.used(now)
         return session
 
     @app.api_route("/play/{session_id}/file.{ext}", methods=["GET", "HEAD"])
     async def play_file(session_id: str, ext: str, request: Request):
-        session = session_or_404(session_id, request)
+        session = await session_or_404(session_id, request)
         kind = _TYPES.get(session.media.container, "application/octet-stream")
         if session.path is not None:
             if not await asyncio.to_thread(Path(session.path).is_file):
@@ -1963,7 +2002,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.get("/play/{session_id}/index.m3u8")
     async def copy_playlist(session_id: str, request: Request):
-        session = session_or_404(session_id, request)
+        session = await session_or_404(session_id, request)
         if session.copy is None:
             raise HTTPException(404, PLAY_ENDED)
         return Response(
@@ -1974,7 +2013,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.get("/play/{session_id}/piece-{n}.ts")
     async def copy_piece(session_id: str, n: int, request: Request):
-        session = session_or_404(session_id, request)
+        session = await session_or_404(session_id, request)
         if session.copy is None:
             raise HTTPException(404, PLAY_ENDED)
         found = await session.copy.piece(n, request.is_disconnected)
@@ -1989,7 +2028,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.get("/play/{session_id}/subtitles/{track}.{ext}")
     async def play_subtitles(session_id: str, track: str, ext: str, request: Request):
-        session = session_or_404(session_id, request)
+        session = await session_or_404(session_id, request)
         found = session.subtitles.get(track)
         if found is None:
             raise HTTPException(404, "There's no such subtitle track")
