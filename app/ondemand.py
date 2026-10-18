@@ -130,7 +130,7 @@ LIMITS_WATCH_S = 2.0
 # the background; when an ask finds nothing, the next waits twice as long,
 # from LEARN_WAIT_S up to LEARN_WAIT_MOST_S (the final-diff audit of 1.40.0).
 LEARN_WAIT_S = 5.0
-LEARN_WAIT_MOST_S = 300.0
+LEARN_WAIT_MOST_S = 30.0  # (so a change is judged within about half a minute of Plex's answer)
 # How long a title stopped by its person's limits is answered as restricted
 # (403, code "restricted") when their app asks to play it again, rather than
 # as one they can't see (404).
@@ -1305,6 +1305,7 @@ class PlaySession:
     show: Entry | None = None
     restricted: bool = False
     ended: bool = False  # (set as it ends: an answer starting after that sends nothing)
+    sending: float = float("-inf")  # (time.monotonic() its bytes last went out: still in use)
     streams: set[Any] = field(default_factory=set, repr=False, compare=False)
     # What the stats count (see stats.Stats.played): how long it's been
     # watched (the time between its requests, but for gaps longer than
@@ -1346,7 +1347,7 @@ class PlaySessions:
         self._tidy()
         while len(self._sessions) >= SESSIONS_MOST:
             # (The longest unused, those still sending last.)
-            oldest = min(self._sessions.values(), key=lambda s: (bool(s.streams), s.seen))
+            oldest = min(self._sessions.values(), key=lambda s: max(s.seen, s.sending))
             self.end(oldest.id)
         session = PlaySession(id=secrets.token_urlsafe(SESSION_ID_BYTES), **details)
         before = self.before(session.user_id, session.entry.key, session.client)
@@ -1389,7 +1390,7 @@ class PlaySessions:
         session = self._sessions.get(session_id)
         if session is None:
             return None
-        if time.monotonic() - session.seen > SESSION_IDLE_S and not session.streams:
+        if self.idle(session, time.monotonic()):
             self.end(session_id)
             return None
         return session
@@ -1530,10 +1531,17 @@ class PlaySessions:
                 out[s.client] = out.get(s.client, False) or s.away
         return out
 
+    @staticmethod
+    def idle(session: PlaySession, now: float) -> bool:
+        """Unused for SESSION_IDLE_S: nothing asked of it and no bytes sent
+        (a long request still sending keeps it in use; one whose player
+        stopped reading doesn't: the re-check of 1.40.0)."""
+        return now - max(session.seen, session.sending) > SESSION_IDLE_S
+
     def _tidy(self) -> None:
         now = time.monotonic()
         for s in list(self._sessions.values()):
-            if now - s.seen > SESSION_IDLE_S and not s.streams:  # (still sending: in use)
+            if self.idle(s, now):
                 self.end(s.id)
 
     def __len__(self) -> int:

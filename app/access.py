@@ -2074,7 +2074,7 @@ def routes(app: FastAPI, access: Access) -> None:
         if not pin_works:
             raise HTTPException(
                 400,
-                f"{user.name}'s sign-in is Full, so it needs the password every time."
+                f"{possessive(user.name)} sign-in is Full, so it needs the password every time."
                 if user.admin_sign_in != LIGHT or not user.has_pin
                 else "Sign in with your password on this browser first. After that, your PIN "
                 "works here at home.",

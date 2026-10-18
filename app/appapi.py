@@ -991,8 +991,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user = access.signed_in(request)
         about = played_of(body, request) if body.kind in problems.LIBRARY_KINDS else None
         if about is not None and about.restricted:
-            said = (body.title or "").strip().casefold()
-            if body.session or any(name.casefold() in said for name in titles_of(about.entry)):
+            if body.session or names_it((body.title or ""), titles_of(about.entry)):
                 # (Stopped by its person's limits: no problem, and said once
                 # in the log as that. 1.40.0.)
                 return {"ok": True}
@@ -1016,6 +1015,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if about is not None:
             check_its_file(body, about)
         return {"ok": True}
+
+    def names_it(said: str, names: set[str]) -> bool:
+        """Whether a report's title is one of `names`, as an app may put
+        it: the same (any case), or one followed by more after a " · ", " ("
+        or ": " ("Heist · Director's cut", "Heist (2000)"). Never a title
+        that merely holds its letters ("Theistic" holds "heist": the
+        re-check of 1.40.0)."""
+        said = said.strip().casefold()
+        for name in (n.casefold() for n in names):
+            if said == name or any(said.startswith(name + sep) for sep in (" · ", " (", ": ")):
+                return True
+        return False
 
     def titles_of(e) -> set[str]:
         """The names an app may give a title in a report: its own, its

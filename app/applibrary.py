@@ -56,7 +56,6 @@ from . import scanner as sc
 from . import titles as titles_module
 from .appapi import APP_MAX, LanguagesIn, app_label, in_sentence, slot_program
 from .broadcaster import now_ms
-from .text import possessive
 from .broken import version_key
 from .catalog import Entry, Media, Track
 from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
@@ -64,7 +63,7 @@ from .library import LibraryError, NoPicture
 from .ondemand import NotShared
 from .plex import NOT_ANSWERING
 from .sources import find_file, learn_mapping, part_starts
-from .text import plain
+from .text import plain, possessive
 
 if TYPE_CHECKING:
     from .db import User
@@ -568,6 +567,7 @@ class Guarded(Response):
             if message["type"] == "http.response.start":
                 started = True
             await send(message)
+            self.session.sending = time.monotonic()  # (in use: see PlaySessions.idle)
 
         if self.session.restricted:
             await self._close_inner()
@@ -2298,6 +2298,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(503, NO_FILE) from None
         if len(got.content) > SUBTITLES_MOST:
             raise HTTPException(503, NO_FILE)
+        if session.restricted:  # (stopped while Plex answered: the re-check of 1.40.0)
+            raise TitleRestricted()
+        if session.ended:
+            raise HTTPException(404, PLAY_ENDED)
         # (Its type is the track's, never what the address says: a subtitle
         # file is text from elsewhere, and is never shown as a page.)
         return Response(

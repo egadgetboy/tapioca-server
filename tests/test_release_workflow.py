@@ -787,6 +787,59 @@ def test_a_push_with_code_in_it_leaves_publishing_to_its_image_run():
 
 
 def test_a_version_never_tested_says_how_to_start_its_tests(run):
-    said, status, out = run()
+    _said, status, out = run()
     assert status == 1
     assert "Run workflow" in out  # (its commit was pushed with [skip ci], say)
+
+
+def _pushed_step() -> str:
+    """The "Was this push release notes alone?" step's script."""
+    lines = WORKFLOW.read_text().splitlines()
+    start = next(
+        i for i, line in enumerate(lines) if "name: Was this push release notes alone?" in line
+    )
+    run_at = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |")
+    indent = len(lines[run_at + 1]) - len(lines[run_at + 1].lstrip())
+    body = []
+    for line in lines[run_at + 1 :]:
+        if line.strip() and len(line) - len(line.lstrip()) < indent:
+            break
+        body.append(line[indent:])
+    return "\n".join(body) + "\n"
+
+
+@pytest.mark.parametrize(
+    "case, notes_only",
+    [("notes", "true"), ("code", "false"), ("unknown after", "false"), ("no before", "true"),
+     ("no before, code", "false")],
+)  # fmt: skip
+def test_whether_a_push_was_notes_alone(tmp_path, case, notes_only):
+    """The re-check: a pushed commit missing from the checkout counted as
+    notes alone (git's error left nothing to compare), and a notes push
+    whose before wasn't fetched (forced) published nothing."""
+    work = tmp_path / "work"
+    (work / "docs" / "releases").mkdir(parents=True)
+    (work / "app").mkdir()
+    git(work, "init", "-q", "-b", "main")
+    (work / "app" / "a.py").write_text("x = 1\n")
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "code")
+    before = git(work, "rev-parse", "HEAD")
+    if "code" in case:
+        (work / "app" / "a.py").write_text("x = 2\n")
+    else:
+        (work / "docs" / "releases" / "v9.md").write_text("notes\n")
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "the push")
+    after = git(work, "rev-parse", "HEAD")
+    if case == "unknown after":
+        after = "0" * 39 + "1"
+    if case.startswith("no before"):
+        before = "0" * 40
+    out = tmp_path / "out"
+    done = subprocess.run(
+        ["bash", "-e", "-c", _pushed_step()], cwd=work, capture_output=True, text=True,
+        env={**os.environ, "BEFORE": before, "AFTER": after, "GITHUB_OUTPUT": str(out)},
+    )  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    assert out.read_text().strip() == f"notes_only={notes_only}", done.stdout

@@ -96,12 +96,17 @@ jobs:
           AFTER: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
-            && [ -z "$(git diff --name-only "$BEFORE" "$AFTER" -- . ':(exclude)docs/releases/')" ]; then
+          # (What came before: the push's own "before", or, when that isn't
+          # here (a forced push, the first), the pushed commit's parent. A
+          # commit that can't be compared counts as more than notes.)
+          base=$BEFORE
+          git cat-file -e "$base^{commit}" 2>/dev/null || base="$AFTER^"
+          if changed=$(git diff --name-only "$base" "$AFTER" -- . ':(exclude)docs/releases/' 2>/dev/null) \
+            && [ -z "$changed" ]; then
             echo "notes_only=true" >> "$GITHUB_OUTPUT"
           else
             echo "notes_only=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::This push has more than release notes: its image run publishes what's ready when it finishes"
+            echo "::notice::This push has more than release notes: its image run publishes what's ready when it finishes (if no image run starts, run this workflow by hand)"
           fi
       # (The words test needs only pytest: --noconftest leaves out
       # tests/conftest.py, which needs the app and its libraries.)
