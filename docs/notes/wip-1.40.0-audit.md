@@ -1,0 +1,17 @@
+# 1.40.0's second cold audit (October 18, 12:15 PM): open items
+
+WIP only: delete this file and `wip-1.40.0-audit-repros.py.txt` before 1.40.0 is released. 1.40.0 is paused here (the owner, 12:19 PM: the process and modularity review comes first). Nothing below is fixed yet. Each fix gets a failing test first; the auditor's reproductions are in `wip-1.40.0-audit-repros.py.txt` (they ran in a scratch copy, with a Horror movie "302" added to the fixture).
+
+1. **Blocker: a title can play to its end after a change.** Episodes: someone without limits at the start never has their show fetched (`seen_only` returns early), so `session.show` is None and `judged_now` returns None for good. Tags: they're fetched only while someone is limited by tags, and the watcher never asks. Planned fix: learn the show in the background as a play starts, and when the watcher can't judge, start a background `shows_of` and `titles.ensure` so a later pass can (the fail-open test stays as it is).
+2. **Removing a person, revoking a device, unsharing a folder or turning Away off never cuts a long request.** Only `restrict()` cancels `session.streams`; `end()` doesn't, and the watcher skips removed people. Planned fix: `end()` cancels streams (Guarded answers 404 PLAY_ENDED if no byte was sent, 403 only if restricted); the watcher ends sessions that `session_or_404` would end (folder unshared, sign-in gone, Away off).
+3. **A real problem report is dropped** when a report without a session falls back to the device's last play and that play was restricted. Planned fix: skip only when the report names that session, or its title matches the restricted title.
+4. **A copy piece being waited on gets 404, not 403** (`copy_piece`, after `copy.stop()`). Planned fix: 403 when the session was restricted.
+5. **Docs:** `docs/internal-api.md` says "every 15 seconds" and "then 404"; the code is every 2 s and 403 while among the last 200 ended. `users.md` credits "within 15 seconds" to the tests, which check only the server. Rewrite to what's tested.
+6. **Notes:** "the same way everywhere" and "One check, everywhere" need "in tapiOca's apps" and what Plex, Jellyfin and the tuner don't get; "blocked only while it airs" is wrong for Media (a hidden episode is refused in Media too).
+7. **The inert slots' wiring:** `appapi.away_key` uses `.everything` (should be `.unchecked`); the previews check only `sees_station` (safe today: only people without limits reach them); a show's unwatched count includes hidden episodes; `needs_clean` would empty Media's lists once release C turns it on. Fix the first now; record the rest in the hiding and Clean audio sections.
+8. **One bad session stalls the watcher's pass** (no try per session; a lasting error logs every 2 s). Planned fix: a try per session, and a lasting error said once.
+9. **"Kids's Heist"** in the access log: a possessive for names ending in s.
+
+Sound, per the audit: no Plex calls in the watcher; cut timing; `_QuietCut`; no title in 403 bodies; no database change; Plex, Jellyfin and the tuner untouched; the lists all go through `must_see` or `seen_only`. Note: this machine runs Python 3.11 with Starlette 1.0.0; the image pins 3.13 and Starlette 1.7.0 (the auditor ran the program-check tests under 1.7.0 too: 18 of 18).
+
+Checks done before the audit, now stale once fixes land: upgrade_check from 42217a0 (105 passed), attack_check (812 of 812). The full suite was stopped at 14% when the audit's findings came in (to be run once, after the fixes).
