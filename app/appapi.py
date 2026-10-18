@@ -783,8 +783,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         apps whichever devices may use the tuner (so a signed-in app needn't
         be listed, and changing that never stops one: see tuner.py), and for
         an API token's script while only listed devices may; and always for
-        someone with limits, as only these addresses check each program
-        (1.39.0, the fifth cold audit). None otherwise."""
+        someone whose programs are checked (limits, or the rules still to
+        come: Viewer.unchecked), as only these addresses check each program
+        (1.39.0, the fifth cold audit; 1.40.0's second). None otherwise."""
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         user = access.signed_in(request)
         if not (token and user):
@@ -794,7 +795,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return ctx.away.key_for(hashed, user)
         if ctx.tuner.only or ctx.db.session_app(hashed):
             return ctx.away.key_for(hashed, user, home=True)
-        if not ctx.viewing.viewer(user).everything:
+        if not ctx.viewing.viewer(user).unchecked:
             return ctx.away.key_for(hashed, user, home=True)
         return None
 
@@ -990,9 +991,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user = access.signed_in(request)
         about = played_of(body, request) if body.kind in problems.LIBRARY_KINDS else None
         if about is not None and about.restricted:
-            # (Stopped by its person's limits: no problem, and said once in
-            # the log as that. 1.40.0.)
-            return {"ok": True}
+            if body.session or (body.title or "").strip() in titles_of(about.entry):
+                # (Stopped by its person's limits: no problem, and said once
+                # in the log as that. 1.40.0.)
+                return {"ok": True}
+            # (About something else: the device's last play was the stopped
+            # one, but this report names another title. The second cold
+            # audit of 1.40.0: it was dropped.)
+            about = None
         sent = problems.Sent(
             body.kind, body.detail, body.station, body.title, body.app, body.version,
             body.device, body.deviceName, body.at, body.journal, body.lastedMs,
@@ -1009,6 +1015,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if about is not None:
             check_its_file(body, about)
         return {"ok": True}
+
+    def titles_of(e) -> set[str]:
+        """The names an app may give a title in a report: its own, its
+        show's, or as the log names it."""
+        from .applibrary import describe
+
+        return {name for name in (e.title, e.show_title, describe(e)) if name}
 
     def played_of(body: Problem, request: Request) -> PlaySession | None:
         """What a problem with something from Media is about: its playing, as

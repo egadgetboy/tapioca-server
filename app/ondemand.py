@@ -1393,6 +1393,11 @@ class PlaySessions:
         session = self._sessions.pop(session_id, None)
         if session is None:
             return None
+        # (What it's sending now is cut, however long the request: an ended
+        # play sends nothing more. The second cold audit of 1.40.0: only a
+        # restricted stop cut it, so a removed person's went on.)
+        for stream in list(session.streams):
+            stream.cancel()
         if session.copy is not None:
             session.copy.stop()
         self._count(session)
@@ -1405,15 +1410,13 @@ class PlaySessions:
 
     def restrict(self, session_id: str) -> PlaySession | None:
         """Stops a session its person's limits no longer allow (1.40.0): it
-        ends, what it's sending now is cut, and what's asked of it later, or
+        ends (and so what it's sending now is cut), and what's asked of it later, or
         of its title by its person soon after, is answered as restricted.
         None if it had already ended."""
         session = self._sessions.get(session_id)
         if session is None:
             return None
         session.restricted = True
-        for stream in list(session.streams):
-            stream.cancel()
         key = (session.user_id, session.entry.key)
         self._restricted.pop(key, None)
         self._restricted[key] = time.monotonic()

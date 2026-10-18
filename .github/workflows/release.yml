@@ -44,6 +44,12 @@
 # running waits for them, and one whose tests failed isn't published, with
 # a line on the run's page saying why.
 #
+# A push of release notes alone starts no image run (image.yml leaves
+# docs/releases/ out), so it starts this directly; a version whose tests are
+# still running then waits, and is published when that run finishes. Either
+# way, the notes' words are checked first (tests/test_wording.py), and a
+# version is published only from an image run that tested its commit.
+#
 # It runs only in tapiOca's own repository (a fork's copy does nothing),
 # and keeps no credentials in its checkout.
 name: release
@@ -53,6 +59,9 @@ on:
     workflows: [image]
     types: [completed]
     branches: [main]
+  push:
+    branches: [main]
+    paths: ["docs/releases/**"]
   workflow_dispatch:
 
 permissions:
@@ -76,6 +85,12 @@ jobs:
           ref: main
           fetch-depth: 0 # (every version's commit)
           persist-credentials: false
+      - name: Check the notes' words
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/words"
+          "$RUNNER_TEMP/words/bin/pip" install --quiet pytest==9.1.1
+          "$RUNNER_TEMP/words/bin/python" -m pytest -q -p no:cacheprovider tests/test_wording.py
       - name: Publish what's new
         env:
           GH_TOKEN: ${{ github.token }}

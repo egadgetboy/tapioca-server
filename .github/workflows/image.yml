@@ -10,11 +10,20 @@
 # one, sha-<commit>. release.yml gives a version's tags (:<version>,
 # :<major.minor>, :latest) to exactly that one, once this workflow has
 # passed on its commit, with the lists of packages each image had.
+#
+# A push that changes nothing but release notes (docs/releases/) isn't built
+# or tested again (the alpha process, October 18): its image is the one
+# already tested at the version's commit, which release.yml publishes by
+# digest, as it always has for "a later main commit with nothing but
+# release notes changed since". A push with anything else in it runs here as
+# before. Only docs/releases/ is left out: the rest of docs/ is in the test
+# stage, and tests read it.
 name: image
 
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/releases/**"]
   workflow_dispatch:
 
 jobs:

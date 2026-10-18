@@ -324,6 +324,11 @@ def tracks(found: tuple[Track, ...], audio: bool) -> list[dict]:
     ]
 
 
+def possessive(name: str) -> str:
+    """A name's possessive, as the log says it: "Kit's", "Kids'"."""
+    return f"{name}'" if name.endswith(("s", "S")) else f"{name}'s"
+
+
 def describe(e: Entry) -> str:
     """A program, as the log names it: "Northbound · S2 E4", "Tidewater Night (1975)"."""
     return playing.title(e)
@@ -580,8 +585,10 @@ class Guarded(Response):
                 self.session.streams.discard(cut)
         if cut.cancel_called:
             await self._close_inner()
-            if not started:
+            if not started and self.session.restricted:
                 await restricted_answer()(scope, receive, send)
+            elif not started:  # (its play ended otherwise: see PlaySessions.end)
+                await JSONResponse({"detail": PLAY_ENDED}, status_code=404)(scope, receive, send)
             else:
                 _cut.set(True)  # (and the connection closes: see _QuietCut)
             return
@@ -2026,6 +2033,34 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 raise TitleRestricted() from None
             raise
 
+    learning: dict[str, asyncio.Task] = {}  # (by session: what judged_now couldn't tell)
+
+    def learn(session: ondemand.PlaySession, tags: bool) -> None:
+        """Finds out, in the background, what judging `session` needs and
+        tapiOca doesn't know yet: an episode's show (asked of Plex, kept
+        with the session) and, when `tags`, its show's or movie's tags
+        (Titles.ensure). Never waited on: a later pass judges it (the second
+        cold audit of 1.40.0: what wasn't known was never asked for, so a
+        title played on to its end). One at a time for each session."""
+        going = learning.get(session.id)
+        if going is not None and not going.done():
+            return
+        for done in [k for k, task in learning.items() if task.done()]:
+            del learning[done]
+        e = session.entry
+
+        async def work() -> None:
+            try:
+                if e.kind == catalog.EPISODE and session.show is None and e.show_key:
+                    session.show = (await shows_of(cat, [e])).get(e.show_key)
+                if tags and cat.titles is not None:
+                    await cat.titles.ensure(tags_wanted([e]))
+            except Exception as ex:  # (asked again on a later pass)
+                log.info("Couldn't find out about %s to check it against limits (%s)",
+                         describe(e), ex)  # fmt: skip
+
+        learning[session.id] = asyncio.get_running_loop().create_task(work())
+
     def judged_now(session: ondemand.PlaySession, viewer: viewing.Viewer) -> bool | None:
         """Whether what `session` plays is still allowed for its person, by
         the one program check as it started (1.40.0), from what tapiOca
@@ -2035,43 +2070,75 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if viewer.unchecked:
             return True
         e = session.entry
-        if e.kind == catalog.EPISODE and session.show is None:
-            return None
         titles = cat.titles
         tags = None
         if titles is not None:
             tags = titles.tags((e.show_key or "") if e.kind == catalog.EPISODE else e.key)
-        if viewer.by_tags and tags is None:
+        unknown_tags = viewer.by_tags and tags is None
+        if (e.kind == catalog.EPISODE and session.show is None) or unknown_tags:
+            learn(session, unknown_tags)
             return None
         return viewer.sees(viewing.judge_entry(e, session.show, tags))
 
+    def no_longer_good(session: ondemand.PlaySession) -> bool:
+        """Whether a play session's own address has ended: its Media folder
+        no longer shared, signing in turned on since it started, watching
+        away from home turned off for one started there, or its sign-in
+        gone (its person removed, signed out or their device revoked).
+        From what tapiOca keeps; never asks Plex."""
+        return (
+            not cat.shared_library(session.entry)
+            or (ctx.access.required and session.sign_in is None)
+            or (session.away and not ctx.away.on)
+            or (
+                session.sign_in is not None
+                and ctx.access.session_user_hashed(session.sign_in, anywhere=True) is None
+            )
+        )
+
+    failing: set[str] = set()  # (sessions whose check failed: said once each)
+
     def stop_restricted() -> int:
-        """Stops what's playing that its person's limits no longer allow (an
-        Admin changed them, or their level): each play ends, what it's
-        sending is cut, and the log says so. How many stopped."""
-        if not ctx.viewing.signing_in():
-            return 0  # (no one has limits)
-        viewers: dict[int, viewing.Viewer | None] = {}
+        """Ends what's playing that may no longer play (1.40.0), each play on
+        its own: a session whose address has ended (no_longer_good) ends,
+        and one its person's limits no longer allow (an Admin changed them,
+        or their level) is stopped as restricted, with the log saying so.
+        Either way what it's sending is cut. How many were restricted."""
+        viewers: dict[int, viewing.Viewer] = {}
+        signing_in = ctx.viewing.signing_in()
         stopped = 0
         for session in ctx.plays.going():
-            if not session.user_id:
+            try:
+                if no_longer_good(session):
+                    ctx.plays.end(session.id)  # (and what it's sending is cut)
+                    continue
+                if not signing_in or not session.user_id:
+                    continue  # (no one has limits)
+                if session.user_id not in viewers:
+                    user = ctx.db.user(session.user_id)
+                    if user is None:  # (removed: its sign-in ends it, above)
+                        continue
+                    viewers[session.user_id] = ctx.viewing.viewer(user)
+                if judged_now(session, viewers[session.user_id]) is not False:
+                    continue
+                if ctx.plays.restrict(session.id) is None:
+                    continue
+                stopped += 1
+                said_stop(session)
+                ctx.access.record(
+                    logging.INFO,
+                    f"{possessive(session.user or 'Someone')} {describe(session.entry)} "
+                    "stopped: their limits no longer allow it",
+                )
+            except Exception:
+                # (One session never holds up the rest; a lasting failure is
+                # said once, not every pass.)
+                if session.id not in failing:
+                    failing.add(session.id)
+                    log.exception("Checking %s against limits failed", describe(session.entry))
                 continue
-            if session.user_id not in viewers:
-                user = ctx.db.user(session.user_id)
-                # (Someone removed: their sign-in's check ends it.)
-                viewers[session.user_id] = ctx.viewing.viewer(user) if user else None
-            viewer = viewers[session.user_id]
-            if viewer is None or judged_now(session, viewer) is not False:
-                continue
-            if ctx.plays.restrict(session.id) is None:
-                continue
-            stopped += 1
-            said_stop(session)
-            ctx.access.record(
-                logging.INFO,
-                f"{session.user or 'Someone'}'s {describe(session.entry)} stopped: their "
-                "limits no longer allow it",
-            )
+            failing.discard(session.id)
+        failing.intersection_update(s.id for s in ctx.plays.going())
         return stopped
 
     ctx.stop_restricted = stop_restricted  # (watched by watch_limits_forever)
@@ -2163,6 +2230,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(404, PLAY_ENDED)
         found = await session.copy.piece(n, request.is_disconnected)
         if found is None:
+            if session.restricted:  # (stopped by its person's limits while waited on)
+                raise TitleRestricted()
             if session.copy.stopped:
                 raise HTTPException(404, PLAY_ENDED)
             if session.copy.broken or not 0 <= n < session.copy.end:

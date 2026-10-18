@@ -683,3 +683,75 @@ def test_no_workflow_leaves_its_credentials_in_a_checkout():
         text = path.read_text()
         for found in re.finditer(r"uses: actions/checkout@\S+\n((?:\s{8,}.*\n)*)", text):
             assert "persist-credentials: false" in found.group(1), f"{path.name}: {found.group(0)}"
+
+
+# Release notes alone (the alpha process, October 18) -------------------------
+
+
+def _on(text: str) -> str:
+    """A workflow's `on:` block."""
+    return text[text.index("\non:\n") : text.index("\n\n", text.index("\non:\n") + 1)]
+
+
+def test_a_push_of_release_notes_alone_isn_t_built_again():
+    """The image is the one already tested at the version's commit, so a
+    notes-only push starts no 50-minute run. Only docs/releases/ is left out:
+    the rest of docs/ is in the test stage, and tests read it."""
+    on = _on(IMAGE.read_text())
+    ignored = re.findall(r"paths-ignore: \[(.*)\]", on)
+    assert ignored == ['"docs/releases/**"'], on
+    assert "branches: [main]" in on and "workflow_dispatch:" in on
+    assert not re.search(r"^\s+paths:", on, re.M)  # (nothing else narrows it)
+
+
+def test_a_push_of_release_notes_starts_the_release_workflow_itself():
+    """With no image run to follow, a notes push must start it, or nothing
+    is published; image runs still start it too, for a version whose tests
+    were running."""
+    on = _on(WORKFLOW.read_text())
+    assert re.search(r"workflow_run:\n\s+workflows: \[image\]\n\s+types: \[completed\]", on), on
+    push = on[on.index("  push:") :]
+    assert "branches: [main]" in push and 'paths: ["docs/releases/**"]' in push, on
+    assert "workflow_dispatch:" in on
+
+
+def test_the_notes_words_are_checked_before_anything_is_published():
+    text = WORKFLOW.read_text()
+    words = text.index("name: Check the notes' words")
+    assert words < text.index("name: Publish what's new")
+    assert "tests/test_wording.py" in text[words : text.index("name: Publish what's new")]
+
+
+def test_notes_naming_a_commit_no_image_run_tested_are_refused(run):
+    """Notes pushed for a version whose commit was never built and tested
+    (the image run skipped, say) publish nothing."""
+    said, status, out = run()
+    assert status == 1 and not creates(said)
+    assert "hasn't tested its commit" in out
+
+
+def test_a_run_on_a_later_commit_with_code_changed_doesn_t_count(run):
+    """A passing run counts for a version only at its commit, or at a later
+    one with nothing but release notes changed since."""
+    (run.work / "app" / "later.py").write_text("changed = True\n")
+    git(run.work, "add", ".")
+    git(run.work, "commit", "-q", "-m", "A code change after 1.32.1's notes")
+    git(run.work, "update-ref", "refs/remotes/origin/main", "HEAD")
+    run.commits["later"] = git(run.work, "rev-parse", "HEAD")
+    image_run(run, 9, version="later")
+    said, status, out = run()
+    assert status == 1 and not creates(said), said + out
+    assert "hasn't tested its commit" in out
+
+
+def test_a_run_on_the_notes_commit_itself_still_counts(run):
+    """(The path before: an image run at the notes' own commit, nothing but
+    notes since the version's, still publishes it.)"""
+    image_run(run, 10)
+    runs = run.assets / "runs.json"
+    listed = json.loads(runs.read_text())
+    listed["workflow_runs"][0]["head_sha"] = git(run.work, "rev-parse", "HEAD")  # (the notes')
+    runs.write_text(json.dumps(listed))
+    said, status, out = run()
+    assert status == 0, said + out
+    assert len(creates(said)) == 1

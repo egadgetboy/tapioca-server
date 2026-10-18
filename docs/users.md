@@ -248,9 +248,13 @@ asked by every way of watching:
   then answer 403 (`code: "restricted"`, "This title is restricted."), and
   so does asking to play it again or saying where it was, for a while
   after. The access log says so: "Kit's Heist stopped: their limits no
-  longer allow it." Something that can't be told now (a show or tags not
-  known) leaves the title playing, since it was allowed, and no problem
-  report is kept for a title stopped this way;
+  longer allow it." Something that can't be told yet (a show or tags not
+  known) leaves the title playing for that moment, since it was allowed,
+  while tapiOca asks Plex about it in the background; the next check
+  judges it. A play whose own address has ended (its person removed or
+  signed out, its device revoked, its Media folder no longer shared, or
+  watching away from home turned off) is cut the same way. No problem
+  report is kept for a title stopped by limits;
 - every list, and the station editor's previews of a Station's Intro Bumper
   and Up Next Banner, which play and name nothing of a Station blocked for
   whoever's making it (from 1.40.0).
@@ -861,9 +865,12 @@ stations.)
 - A station with one program above a person's level is hidden from them,
   unless an Admin allows that station for them; then that program is
   blocked for them while it's on, and shown as "Restricted program".
-- A title playing in Media stops within 15 seconds, saying "This title is
-  restricted.", once an Admin's change no longer allows it; one still
-  allowed plays on (tests/test_program_check.py).
+- A title playing in Media stops within a few seconds on the server once
+  an Admin's change no longer allows it, its long requests cut, and its
+  addresses say "This title is restricted."; one still allowed plays on.
+  A play whose person is removed, or whose Media folder stops being
+  shared, is cut the same way (tests/test_program_check.py). How soon an
+  app shows it depends on what its player has buffered.
 - The station editor's previews never play or name what's on a Station
   blocked for whoever's making them.
 - A User can't make an Admin, or change their own level.

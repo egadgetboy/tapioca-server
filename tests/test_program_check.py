@@ -362,7 +362,7 @@ class Endless(httpx.AsyncByteStream):
         self.closed = True
 
 
-async def _a_long_request_is_cut(app, tmp_path, where: str) -> dict:
+async def _a_long_request_is_cut(app, tmp_path, where: str, change: str = "limits") -> dict:
     ctx = app.state.ctx
     upstream = Endless()
     if where == "plex":
@@ -422,10 +422,14 @@ async def _a_long_request_is_cut(app, tmp_path, where: str) -> dict:
                 await asyncio.sleep(0.3)  # (the player's buffer is full: it stops reading)
                 async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", headers=PAGE) as admin2:
                     await admin2.post("/api/access/sign-in", json=ADA)
-                    changed = await admin2.put(
-                        f"/api/access/users/{kit['id']}/viewing", json={"level": kid}
-                    )
-                    assert changed.status_code == 200, changed.text
+                    if change == "limits":
+                        changed = await admin2.put(
+                            f"/api/access/users/{kit['id']}/viewing", json={"level": kid}
+                        )
+                        assert changed.status_code == 200, changed.text
+                    else:  # (Kit removed)
+                        changed = await admin2.delete(f"/api/access/users/{kit['id']}")
+                        assert changed.status_code == 204, changed.text
                 await asyncio.sleep(0.5)  # (the background check stops it)
                 try:
                     async for chunk in chunks:
@@ -451,6 +455,15 @@ def test_a_long_request_is_cut_as_its_title_stops(app, monkeypatch, tmp_path, wh
     assert not [s for s in found["said"] if "ASGI" in s or "Exception" in s], found["said"]
     if where == "plex":
         assert found["closed"]  # (nothing left open to Plex)
+
+
+def test_a_long_request_is_cut_as_its_person_is_removed(app, monkeypatch, tmp_path):
+    """The second cold audit: removing someone left their long request
+    streaming (300 MB after the removal), as only a new request ended it."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 0.05)
+    found = asyncio.run(_a_long_request_is_cut(app, tmp_path, "disk", change="removed"))
+    assert found["cut"]
+    assert not [s for s in found["said"] if "ASGI" in s or "Exception" in s], found["said"]
 
 
 def test_only_a_cut_quiets_the_unfinished_answer_line():
@@ -533,3 +546,226 @@ def test_the_up_next_preview_never_names_whats_next_on_a_station_blocked_for_its
             == 200
         )
         assert named
+
+
+# The second cold audit (1.40.0) -----------------------------------------------------
+
+
+@pytest.fixture
+def fright_app(plex, tmp_path):
+    """Who sees what's library, with a horror movie no Station plays."""
+    from app.config import Settings
+    from app.main import create_app
+    from app.plex import PlexClient
+
+    plex.add_movie("302", "Fright", "/m/fright.mkv", 90 * 60_000, section="2",
+                   contentRating=["PG"], genres=["Horror"])  # fmt: skip
+    plex.describe("302")
+    plex.files["302"] = b"a program" * 100
+    settings = Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data")
+    made = create_app(settings, PlexClient("http://plex.test", "token", transport=plex.transport()))
+    made.state.ctx.play_transport = plex.transport()
+    return made
+
+
+def test_an_episode_started_without_limits_stops_when_limits_come(app, monkeypatch):
+    """The second cold audit: someone without limits as an episode started
+    never had its show fetched, so the check could never judge it, and a
+    TV-MA episode played on to its end for a Kid."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 0.05)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        app.state.ctx.catalog.forget()  # (nothing known of Night Shift: as after a restart)
+        shift = phone.post("/api/internal/play", json={"key": "211", "device": TV}, headers=as_kit)
+        assert shift.status_code == 200, shift.text
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid_level(admin)})
+        assert until(lambda: app.state.ctx.plays.find(shift.json()["session"]) is None)
+
+
+def test_tags_not_known_are_learned_and_then_stop_it(fright_app, monkeypatch):
+    """The second cold audit: tags are asked for only while someone is
+    limited by them, and the check never asked, so a genre hidden mid-movie
+    never stopped it."""
+    app = fright_app
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 0.05)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        fright = phone.post("/api/internal/play", json={"key": "302", "device": TV}, headers=as_kit)
+        assert fright.status_code == 200, fright.text
+        hides = {"own": {"blocks": {"genres": ["horror"]}}}
+        assert admin.put(f"/api/access/users/{kit['id']}/viewing", json=hides).status_code == 200
+        assert until(lambda: app.state.ctx.plays.find(fright.json()["session"]) is None, 8.0)
+
+
+def test_a_person_removed_or_signed_out_stops_playing(app, monkeypatch):
+    """The second cold audit: only a new request ended a play whose person
+    was removed, so a long one went on."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 0.05)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        picnic = phone.post("/api/internal/play", json={"key": "300", "device": TV}, headers=as_kit)
+        assert picnic.status_code == 200, picnic.text
+        assert admin.delete(f"/api/access/users/{kit['id']}").status_code == 204
+        assert until(lambda: app.state.ctx.plays.find(picnic.json()["session"]) is None)
+        assert file_of(phone, picnic.json(), as_kit).status_code == 404  # (ended, not restricted)
+
+
+def test_a_folder_no_longer_shared_stops_playing(app, monkeypatch):
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 0.05)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        admin.post("/api/access/users", json={**KIT, "role": "user"})
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        picnic = phone.post("/api/internal/play", json={"key": "300", "device": TV}, headers=as_kit)
+        assert picnic.status_code == 200, picnic.text
+        assert admin.put("/api/app-libraries", json={"libraries": ["1"]}).status_code == 200
+        assert until(lambda: app.state.ctx.plays.find(picnic.json()["session"]) is None)
+
+
+def test_one_session_that_cant_be_judged_never_holds_up_the_rest(app, monkeypatch, caplog):
+    """The second cold audit: one session's error skipped every session
+    after it, on every pass."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        shift = phone.post("/api/internal/play", json={"key": "211", "device": TV}, headers=as_kit)
+        on_tv = sign_in_app(app, KIT)
+        heist = phone.post("/api/internal/play", json={"key": "301", "device": TV}, headers=on_tv)
+        assert shift.status_code == heist.status_code == 200
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid_level(admin)})
+        real = viewing.judge_entry
+
+        def judge(e, *a, **k):
+            if e.key == "211":
+                raise RuntimeError("a broken title")
+            return real(e, *a, **k)
+
+        monkeypatch.setattr(viewing, "judge_entry", judge)
+        assert admin.portal.call(app.state.ctx.stop_restricted) == 1  # (Heist, still)
+        assert app.state.ctx.plays.find(heist.json()["session"]) is None
+
+
+def test_a_real_problem_after_a_restricted_stop_is_kept(app, monkeypatch):
+    """The second cold audit: a report with no session fell back to the
+    device's last play, and if that was a restricted stop, a real problem
+    with another title was dropped (and still answered ok)."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        heist = phone.post("/api/internal/play", json={"key": "301", "device": TV}, headers=as_kit)
+        assert heist.status_code == 200
+        levels = admin.get("/api/access/viewing").json()["levels"]
+        teen = next(lv["id"] for lv in levels if lv["builtin"] == "teen")
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": teen})
+        assert admin.portal.call(app.state.ctx.stop_restricted) == 1
+        device = {"app": "tapiOca for Android", "version": "0.7.0", "device": "Pixel 8"}
+        sent = phone.post(
+            "/api/internal/problem",
+            json={"kind": "library-failed", "title": "Picnic", "detail": "It didn't start",
+                  **device},
+            headers=as_kit,
+        )  # fmt: skip
+        assert sent.status_code == 200, sent.text
+        problems = admin.get("/api/problems?days=7").json()["problems"]
+        assert problems, "Picnic's real problem was dropped"
+
+
+def test_a_copy_piece_waited_on_as_its_title_stops_is_restricted(app, monkeypatch):
+    """The second cold audit: a piece being waited on as the stop came said
+    404 (as for any ended play), not 403 restricted, as the docs promise."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        played = phone.post("/api/internal/play", json={"key": "301", "device": TV}, headers=as_kit)
+        session_id = played.json()["session"]
+        session = app.state.ctx.plays.find(session_id)
+
+        class Waited:
+            stopped = False
+            broken = False
+            end = 10
+
+            def playlist(self, start_s):
+                return "#EXTM3U\n"
+
+            def stop(self):
+                self.stopped = True
+
+            async def piece(self, n, gone):
+                # (The stop comes while this piece is awaited.)
+                app.state.ctx.plays.restrict(session_id)
+                return None
+
+        session.copy = Waited()
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid_level(admin)})
+        refused = phone.get(f"/play/{session_id}/piece-0.ts", headers=as_kit)
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["code"] == "restricted"
+
+
+def test_the_log_names_a_shared_account_plainly(app, monkeypatch):
+    """The second cold audit: "Kids's Heist stopped"."""
+    monkeypatch.setattr(ondemand, "LIMITS_WATCH_S", 3600.0)
+    kids = {"name": "Kids", "password": "orange marmalade"}
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        made = admin.post("/api/access/users", json={**kids, "role": "user"}).json()
+        as_kids = sign_in_app(app, kids)
+        phone = TestClient(app)
+        assert phone.post(
+            "/api/internal/play", json={"key": "301", "device": TV}, headers=as_kids
+        ).status_code == 200
+        admin.put(f"/api/access/users/{made['id']}/viewing", json={"level": kid_level(admin)})
+        assert admin.portal.call(app.state.ctx.stop_restricted) == 1
+        logs = admin.get("/api/logs?access_log=true").json()["text"]
+        assert "Kids' Heist" in logs and "Kids's" not in logs
+
+
+def test_someone_with_rules_still_to_come_gets_their_own_station_addresses(app, monkeypatch):
+    """The second cold audit: whether someone's Stations come through
+    addresses that check each program went by `everything`, so someone with
+    a hidden episode (and no limits) would get the shared ones, which check
+    nothing, once the hiding release fills the slot."""
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        monkeypatch.setattr(
+            viewing.Viewing, "hidden_for",
+            lambda self, u: frozenset({"212"}) if u.id == kit["id"] else frozenset(),
+        )  # fmt: skip
+        # (tapiOca's own apps always get them; this is a browser's or a
+        # script's sign-in, which gets them only when its person is checked.)
+        page = TestClient(app, headers=PAGE)
+        assert page.post("/api/access/sign-in", json=KIT).status_code == 200
+        stations = page.get("/api/v1/stations")
+        assert stations.status_code == 200, stations.text
+        urls = [s["hls"] for s in stations.json()["stations"]]
+        assert urls and all("/hls/k/" in u for u in urls), urls
