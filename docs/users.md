@@ -16,10 +16,13 @@ apps show only what the server sends.
    list, search, guide, Resume row and "on now" for them. There's no title,
    no picture and no placeholder. A request for its key or address gets the
    same answer as one that doesn't exist.
-3. **Stations are all or nothing.** Everyone watching a station shares one
-   stream, so a station can't change for each person. A person sees a
-   station only if everything on it is within their limits, or an Admin
-   allowed that station for them.
+3. **Which stations, and what's on them.** Everyone watching a station
+   shares one stream, so a station can't change for each person. A person
+   sees a station if everything on it is within their limits, or an Admin
+   allowed that station for them. Either way, from 1.39.0, a program they
+   may not watch is blocked for them while it's on (the owner, October 17:
+   "Station visibility determines what users can choose. Program
+   restrictions determine what they can actually watch.").
 4. **Plain rules, in order.** The first rule that applies decides, so an
    Admin can always tell why something is hidden.
 5. **Lean.** Plex stays the catalog. tapiOca keeps a title's rating and
@@ -168,7 +171,7 @@ shows **Also hides** ("2 genres and 1 studio", or "Nothing more"). Beside
 each person, **What they see** (formerly **Stations**; "(3 set)" when
 anything is chosen) opens "What Kit sees", in three parts: **Stations**
 (allowed, blocked, or as their level says, each with why it's shown or
-hidden), **Also hidden for Kit**, and **Allowed for Kit in Media**. Shows
+hidden), **Also hidden for Kit**, and **Allowed for Kit**. Shows
 and movies are found by typing part of a title.
 
 **It's logged.** The access log records each change: "Ada changed the
@@ -200,6 +203,34 @@ it plays passes rules 2 and 4 to 7. "Every program" means everything in its
 current lineup, including its specials' programs. A title allowed for the
 person doesn't make a station shown: an Admin allows the station instead.
 Station numbers don't change when some stations are hidden.
+
+What's on a station is checked as it airs (1.39.0), on every station a
+person with limits watches, by rules 2 to 7 (a title allowed for them
+counts; allowing the station never allows what's on it):
+
+- **Their stream.** In tapiOca's apps, each piece of the stream says which
+  programs it holds (from what the station really sent, not its
+  schedule: see hls.py). While a piece they may not watch is in it, their
+  app's playlist and that piece answer 403 (`code: "restricted"`, with
+  `resumesAtMs`, when the schedule says permitted programming is back),
+  and the app says "This program is restricted. Your station will resume
+  automatically when permitted programming returns." It asks again on its
+  own. To be safe, a few seconds before it and about 15 seconds after it
+  are kept from them too (up to about 35 if a still card follows), and so
+  is anything that can't be told. The broadcast never stops for
+  anyone else.
+- **Guides and lists.** Everywhere a program is listed for them (the
+  guide, now and next, the page's stations and guide, status), one they may
+  not watch is "Restricted program", with its times and nothing else
+  (`restricted: true`). Search never finds a station by it.
+- **The station's own picture,** shared by everyone, never names a
+  program someone it's allowed for by hand may not watch: there's no Up
+  Next Banner before it, and its cards say "Stay tuned" or leave the title
+  out. Its commercials and trailers go no higher than the strictest level
+  it's allowed for by hand.
+- **The page** leaves out what a station allowed for them by hand is made
+  of (its sources, blocks and Feature Presentation), unless they may
+  change it.
 
 Still to come *(after 1.0)*: rating overrides, Station Audience warnings,
 Preview as user, and Why is this hidden for titles. (For stations, What
@@ -251,14 +282,20 @@ and the docs say plainly what they don't cover.
 
 **Enforced.** For someone signed in as themselves, on tapiOca's own
 server, in tapiOca's apps and on its page: what they can find, see and
-play, as Viewing Levels and the rules above say; stations, all or nothing;
-and commercials and trailers, as above.
+play, as Viewing Levels and the rules above say; which stations they
+see, and, from 1.39.0, each program on them as it airs; and commercials
+and trailers, as above.
 
 **Not covered:**
 
-- **Plex, Jellyfin and anything else on the tuner.** They don't say who's
-  watching, so they show every station (see the README's Tuner access and
-  Blocking stations for some Plex users).
+- **Plex, Jellyfin and anything else on the tuner, or playing a station's
+  stream address at home** (`/hls/{number}/`, such as VLC). They don't say
+  who's watching, so they show every station and every program (see the
+  README's Tuner access and Blocking stations for some Plex users). With
+  Tuner access set to **Only these devices**, only the devices listed get
+  those addresses.
+- **Apps that don't yet know a restricted program** (1.39.0) show an error
+  while one is on; the person tunes in again afterward.
 - **Devices without PINs.** On a shared device, anyone can pick anyone
   without a PIN on Who's tuning in? Everyone without limits should have a
   PIN on devices people with limits use.
@@ -713,7 +750,8 @@ stations.)
   guide, Resume row or "on now," and its key and stream address are
   refused.
 - A station with one program above a person's level is hidden from them,
-  unless an Admin allows that station for them.
+  unless an Admin allows that station for them; then that program is
+  blocked for them while it's on, and shown as "Restricted program".
 - A User can't make an Admin, or change their own level.
 - A first Admin can't be added from the internet (as before).
 - A revoked device is signed out on its next request.

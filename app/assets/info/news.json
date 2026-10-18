@@ -1,8 +1,8 @@
 {
-  "version": "1.38.0",
+  "version": "1.39.0",
   "new": [
-    "Full or Light sign-in for each Admin",
-    "Sign-in screens show only who signed in there",
-    "No Admin tabs before tapiOca knows who you are"
+    "In tapiOca's apps, programs above limits are blocked",
+    "Each station comes back on its own afterward",
+    "Guides show blocked programs as \"Restricted program\""
   ]
 }

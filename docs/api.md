@@ -133,7 +133,7 @@ Every station, in number order, with what's on now and next.
 | `stations[].colors.dark` | string | The darkest background, as `#RRGGBB` |
 | `stations[].colors.light` | string | A lighter background |
 | `stations[].colors.accent` | string | The accent |
-| `stations[].hls` | string | The station as HLS, to play: `/hls/<number>/index.m3u8` at home, and an address of the token's own from outside. At home, it's one of the token's own too while only listed devices may use the tuner, and for tapiOca's own apps always (from 1.32.0; see Away from home) |
+| `stations[].hls` | string | The station as HLS, to play: `/hls/<number>/index.m3u8` at home, and an address of the token's own from outside. At home, it's one of the token's own too while only listed devices may use the tuner, and for tapiOca's own apps always (from 1.32.0; see Away from home), and for anyone with limits always (from 1.39.0). For someone with limits, it answers 403 with `code: "restricted"` while a program they may not watch is on |
 | `stations[].nightHls` | string | The same with night mode's sound (from 1.23.0): `/hls/<number>/night/index.m3u8` at home, or the token's own address, as for `hls`. Loud scenes are much quieter, voices a little quieter, and nothing is louder (from 1.32.0; before, everything was then turned up 8 dB); rumble under 50 Hz is cut (from 1.36.4); the picture is the same. It's made only while something plays it, from the same tuner. An app that leaves reports it at `.../night/leave` |
 | `stations[].now` | program or null | What's on now (null before the station's first program) |
 | `stations[].next` | program or null | What's on next |
@@ -281,3 +281,4 @@ How the stations and the guide describe a program.
 | `summary` | string | What it's about (may be empty) |
 | `art` | string | Its picture, on the home network: the show's, or the movie's. It's part of the tuner: while only listed devices may use it (from 1.32.0), only they get it |
 | `special` | string or null | The special it's part of: "Feature Presentation", a block's name, or "Maple Street Marathon (1 of 3)" |
+| `restricted` | boolean | From 1.39.0, for someone with limits: a program they may not watch. Its `title` is "Restricted program", and it has nothing else but its times. Their app's stream answers 403 (`code`: `restricted`, `resumesAtMs`) while it's on |

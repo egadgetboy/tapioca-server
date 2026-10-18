@@ -175,8 +175,14 @@ def test_a_clip_chosen_before_isnt_played_where_it_no_longer_may(app):
         kit = next(u for u in ctx.db.users() if u.name == "Kit")
         admin.put(f"/api/access/users/{kit.id}/viewing", json={"stations": {str(ids[7]): True}})
         assert not Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)
-        # Rated R, at the station's R: it plays again.
+        # Rated R, at the station's R: from 1.39.0 it still doesn't play, as
+        # Kit (Kid: 10) has the station by hand, and a break goes no higher
+        # than the strictest level it's allowed for (the owner, October 17:
+        # allowing a station never overrides content limits). Rated 10, it
+        # plays again.
         admin.put("/api/access/clips", json={"ratings": {"trailers": 17}})
+        assert not Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 10}})
         assert Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)
         # A clip that's gone from the folders isn't played where it counts.
         assert not Broadcaster._clip_allowed(playing, channel, slot, "/movies/trailers/gone.mkv")
@@ -557,3 +563,48 @@ def test_a_station_is_judged_whole_as_it_follows_plex(app, specials):
         assert trailers_of(ctx.db.latest_items(eight)) == set()
         sets = ctx.db.program_sets(eight)
         assert sets and all(trailers_of(s) == set() for s in sets.values())
+
+
+def test_a_station_allowed_by_hand_plays_no_clip_above_the_strictest_level_its_allowed_for(app):
+    """(1.39.0) Station 7's lineup is an R movie, so its trailers may be R.
+    Allowed for Kit (Kid: up to 10) by hand, its trailers go no higher than
+    10, so a break never shows her what she may not watch."""
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        channel = ctx.db.get_channel(ids[7])
+        playing = SimpleNamespace(ctx=ctx)
+        slot = SimpleNamespace(item=SimpleNamespace(kind="movie"))
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 17}})
+        kit = next(u for u in ctx.db.users() if u.name == "Kit")
+        # (No one with limits sees it: any rated clip.)
+        assert Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)
+        admin.put(f"/api/access/users/{kit.id}/viewing", json={"stations": {str(ids[7]): True}})
+        assert not Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 10}})
+        assert Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)
+        admin.put(f"/api/access/users/{kit.id}/viewing", json={"stations": {}})
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 17}})
+        assert Broadcaster._clip_allowed(
+            playing, channel, slot, TRAILER.path
+        )  # (no one with limits)
+
+
+def test_a_station_allowed_by_hand_is_dealt_only_clips_it_will_play(app):
+    """(The third cold audit of 1.39.0.) Station 7, allowed for Kit (Kid: up
+    to 10) by hand, isn't dealt its R trailer, which it wouldn't play (a
+    plain card for everyone in its place); rated 10, it's dealt and plays."""
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        channel = ctx.db.get_channel(ids[7])
+        playing = SimpleNamespace(ctx=ctx)
+        slot = SimpleNamespace(item=SimpleNamespace(kind="movie"))
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 17}})
+        kit = next(u for u in ctx.db.users() if u.name == "Kit")
+        admin.put(f"/api/access/users/{kit.id}/viewing", json={"stations": {str(ids[7]): True}})
+        assert TRAILER.path not in chosen(ctx, ids[7])
+        assert not Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)
+        admin.put("/api/access/clips", json={"ratings": {"trailers": 10}})
+        assert TRAILER.path in chosen(ctx, ids[7])
+        assert Broadcaster._clip_allowed(playing, channel, slot, TRAILER.path)

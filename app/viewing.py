@@ -74,6 +74,9 @@ UNRESTRICTED_STAYS = (
     "or add one of your own."
 )
 LEVELS_MOST = 50
+# What a program someone may not watch is, to them, wherever it's listed
+# (1.39.0, the owner, October 17): this, with its times, and nothing else.
+RESTRICTED_TITLE = "Restricted program"
 NAME_MAX = 40
 # The level new people start on (1.34.1, the owner), by its id; none:
 # Unrestricted. An Admin may choose another as each is added.
@@ -758,6 +761,58 @@ class Viewing:
             return True
         reach = self.reach(channel_id)
         return viewer.level.allows_reach(reach) and viewer.own.blocks.meets(reach) is None
+
+    # Programs as they air (1.39.0, the owner, October 17, 2:49 PM: "Station
+    # visibility determines what users can choose. Program restrictions
+    # determine what they can actually watch.") ------------------------------
+
+    def may_watch(self, viewer: Viewer, item: Item | None) -> bool:
+        """Whether someone may watch a program as it airs, on any Station:
+        by their level, its ratings and tags, and what's hidden or allowed
+        for them (an Admin's title exceptions; allowing a Station never
+        allows what's on it). What isn't a program (None: a commercial, a
+        card) and INFO's own film are for everyone."""
+        if viewer.everything or item is None or item.rating_key == INFO_KEY:
+            return True
+        return viewer.sees(self.titles.judge(item))
+
+    def allowed_by_hand(self, viewer: Viewer, channel_id: int) -> bool:
+        """Whether someone with limits has a Station only because an Admin
+        allowed it for them (so what it plays may be above them)."""
+        return not viewer.everything and channel_id in viewer.allowed
+
+    def _hand_viewers(self, channel_id: int) -> list[Viewer]:
+        """Everyone with limits who has a Station allowed for them by hand."""
+        if not self.signing_in():
+            return []
+        found = []
+        for user in self.db.users():
+            if self._stations.get(user.id, {}).get(channel_id) is True:
+                viewer = self.viewer(user)
+                if not viewer.everything:
+                    found.append(viewer)
+        return found
+
+    def named_for_everyone(self, channel_id: int, item: Item | None) -> bool:
+        """Whether a Station's own picture may name a program (its Up Next
+        Banner, its Station ID and Feature Presentation cards): only if
+        everyone who may watch it may watch that. (One shared picture: on a
+        Station allowed by hand for someone that program is above, it's
+        "Stay tuned" instead.)"""
+        return all(self.may_watch(v, item) for v in self._hand_viewers(channel_id))
+
+    def clip_most(self, channel_id: int, most: int | None, tv: bool = False) -> int | None:
+        """The highest a Station's commercials (`tv`) or trailers may be rated
+        (an age; None: none may play), given `most` from its lineup: no
+        higher than the strictest level it's allowed for by hand (its TV age
+        for commercials, its movie age for trailers), so a break never shows
+        anyone what they may not watch (it's no program, and plays for
+        everyone)."""
+        for viewer in self._hand_viewers(channel_id):
+            age = viewer.level.tv_age if tv else viewer.level.movie_age
+            if age is not None and most is not None:
+                most = min(most, age)
+        return most
 
     @property
     def signature(self) -> str:

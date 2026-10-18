@@ -66,6 +66,32 @@ READY_WAIT_S = 25.0
 IDLE_S = 30.0
 # How often that's checked.
 IDLE_CHECK_S = 2.0
+# Which program each piece holds (1.39.0, so someone with limits never gets a
+# piece of one they may not watch: see HlsStream.fed). A piece is taken to
+# hold whatever was given to ffmpeg from before the one before it appeared
+# until a moment after it did: from MARGIN_S before, and from SLACK_BYTES
+# before (whichever is earlier), to be safe. (By time alone, ffmpeg stalling
+# a few seconds could hide a program's last moments: the fourth cold audit.
+# By bytes: what's between being given to ffmpeg and in a piece is what
+# waits to be written (at most about 128 KB), the pipe (64 KB) and what
+# ffmpeg has read ahead, a few hundred KB at most once it's going (with
+# night mode's sound too). As it starts it reads far more, measured at 1.4
+# to 4.7 MB (the fifth and sixth cold audits), so for its first STARTUP_S
+# every piece holds all since it began.)
+# The byte window reaches at most REACH_S further back than the time window
+# (a still picture's few bytes a second would otherwise reach back minutes,
+# keeping someone from their station long after). So a few seconds either
+# side of a program someone may not watch are kept from them too. Looked for
+# every LABEL_EVERY_S. FED_KEPT: how many changes of program are kept, far
+# more than a playlist lists.
+MARGIN_S = PIECE_S + 1.0
+SLACK_BYTES = 512 << 10
+STARTUP_S = 10.0
+REACH_S = 20.0
+LABEL_EVERY_S = 0.25
+FED_KEPT = 500
+# (What can't be told: as a program no one with limits may watch.)
+UNKNOWN = object()
 # Night mode's sound: it only ever turns sound down, so turning night mode
 # on never makes anything louder (through 1.31, everything was then turned
 # up 8 dB, so most programs got louder: the owner's report). Below -29 dB
@@ -158,11 +184,37 @@ class HlsStream:
         self.away: set[str] = set()
         self.since: dict[str, int] = {}
         self.who: dict[str, playing.Watcher] = {}
+        # Apps that hold a place among the devices an Admin allows without
+        # watching (1.39.0): someone with limits, while their first ask is
+        # checked or while a program they may not watch is on. When each
+        # last asked, and whether it's away from home.
+        self.waiting: dict[str, tuple[float, bool]] = {}
         self.ended = False
         self.ended_because = ""
         self._stopping = False
         self._left = False
         self._proc: asyncio.subprocess.Process | None = None
+        # What was given to ffmpeg, as it was (the second cold audit of
+        # 1.39.0: not as the station sent it, which may be long before): from
+        # when (time.monotonic) and from how many bytes in, the program (None:
+        # not a program), each change; whether it goes back to the stream's
+        # start; and how many bytes it's been given.
+        self.fed: deque[tuple[float, int, object]] = deque(maxlen=FED_KEPT)
+        self.fed_whole = True
+        self.given = 0
+        # Each piece's programs (see MARGIN_S). When the folder was last
+        # looked in, and how much ffmpeg had been given then; and the same
+        # for the look before the newest piece appeared (where what the next
+        # piece may hold begins).
+        self.holds: dict[str, tuple] = {}
+        self._born = time.monotonic()
+        # (When ffmpeg last took what it was given: a look counts from then,
+        # so while it takes nothing, a stall, the clock doesn't move the
+        # window past what it still holds. The sixth cold audit of 1.39.0.)
+        self._given_at = self._born
+        self._looked: tuple[float, int] = (self._born, 0)
+        self._before_newest: tuple[float, int] | None = None
+        self._labeling = asyncio.Lock()
         self._viewer: Viewer = b.subscribe(
             f"night-mode app viewers on {number}" if night else f"app viewers on {number}",
             counted=False,
@@ -183,9 +235,28 @@ class HlsStream:
             self.since[client] = _now_ms()
             self.who[client] = who
             log.info("%s is watching %s", who.subject(), self.label)
+        self.waiting.pop(client, None)
         self.clients[client] = now
         if away:
             self.away.add(client)
+
+    def blocked(self, client: str, away: bool | None = None) -> None:
+        """An app was refused, as a program its person may not watch is on
+        (1.39.0): its watching ends there, for the stats and the count of
+        who's watching, and starts again when it's back. It keeps its place
+        among the devices allowed, so it can come back (away from home, if
+        it was or `away` says so)."""
+        if away is None:
+            away = client in self.away or self.waiting.get(client, (0.0, False))[1]
+        if client in self.clients:
+            self._settle(client, "a program they may not watch came on")
+        self.holds_place(client, away)
+
+    def holds_place(self, client: str, away: bool = False) -> None:
+        """An app that isn't watching keeps its place among the devices an
+        Admin allows for IDLE_S from now (see waiting)."""
+        if client not in self.clients:
+            self.waiting[client] = (time.monotonic(), away)
 
     def still_watching(self, client: str) -> None:
         """An app watching asked for a piece (one that isn't watching yet
@@ -195,12 +266,15 @@ class HlsStream:
 
     def left_by(self, client: str) -> None:
         """An app said it stopped watching: the stream stops now if no other
-        app has asked for it lately. (An address that wasn't watching changes
-        nothing, so one device can't stop another's.)"""
-        if client not in self.clients:
+        app has asked for it lately, or holds a place (see waiting: the third
+        cold audit of 1.39.0). (An address that wasn't watching or waiting
+        changes nothing, so one device can't stop another's.)"""
+        waited = self.waiting.pop(client, None) is not None
+        if client in self.clients:
+            self._settle(client)
+        elif not waited:
             return
-        self._settle(client)
-        if self.watching() == 0:
+        if not self.places():
             self.stop("the last app watching it tuned away")
 
     def viewing(self) -> list[tuple[playing.Watcher, int]]:
@@ -268,6 +342,18 @@ class HlsStream:
         now = time.monotonic()
         return {c: c in self.away for c, at in self.clients.items() if now - at < IDLE_S}
 
+    def places(self) -> dict[str, bool]:
+        """The apps holding a place among the devices an Admin allows: those
+        watching, and those waiting (see waiting); and whether each is away
+        from home."""
+        now = time.monotonic()
+        for client, (at, _away) in list(self.waiting.items()):
+            if now - at >= IDLE_S:
+                del self.waiting[client]
+        out = {c: away for c, (_at, away) in self.waiting.items()}
+        out.update(self.watchers())
+        return out
+
     async def playlist(self) -> str | None:
         """The playlist, once it has enough pieces for a player to start; None
         if it doesn't in time, or the stream has ended."""
@@ -282,6 +368,10 @@ class HlsStream:
             await asyncio.sleep(0.25)
         return None
 
+    def listed(self, playlist: str) -> list[str]:
+        """The pieces a playlist lists."""
+        return [line.strip() for line in playlist.splitlines() if PIECE.fullmatch(line.strip())]
+
     async def piece(self, name: str) -> bytes | None:
         """One piece of the stream, if it's still there."""
         if not PIECE.fullmatch(name) or self.ended:
@@ -294,6 +384,7 @@ class HlsStream:
         if not self.ended_because:
             self.ended_because = because
         self._stopping = True
+        self.waiting.clear()
         self._leave()
         if self._proc is not None and self._proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
@@ -310,9 +401,77 @@ class HlsStream:
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.shield(self._task)
 
+    def contents(self, since: float, until: float, since_byte: int | None = None) -> tuple:
+        """What was given to ffmpeg from `since` (time.monotonic), or from
+        `since_byte` bytes in if that's earlier, to `until`: programs, None
+        for what isn't one, UNKNOWN where it can't be told."""
+        fed = list(self.fed)
+
+        def later(entry) -> bool:
+            # (After the window's start: the earlier of the two.)
+            at, byte, _content = entry
+            by_bytes = since_byte is not None and byte > since_byte and at > since - REACH_S
+            return at > since or by_bytes
+
+        first = next((n for n, entry in enumerate(fed) if later(entry)), len(fed))
+        # (Before the stream began, nothing was; before its record of it,
+        # what was can't be told.)
+        whole = None if self.fed_whole else UNKNOWN
+        before = fed[first - 1][2] if first else whole
+        return (before, *(c for at, _byte, c in fed[first:] if at <= until))
+
+    def _pieces_now(self) -> set[str] | None:
+        try:
+            return {p.name for p in self.folder.iterdir() if PIECE.fullmatch(p.name)}
+        except OSError:
+            return None
+
+    async def label_new_pieces(self) -> None:
+        """Notes the programs each piece that's appeared since the last look
+        holds (see MARGIN_S), and forgets the pieces that are gone. (The
+        folder is looked in off the event loop: the fourth cold audit.)"""
+        async with self._labeling:
+            looking = (self._given_at, self.given)
+            names = await asyncio.to_thread(self._pieces_now)
+            if names is None:
+                return
+            last, self._looked = self._looked, looking
+            new = sorted((n for n in names if n not in self.holds), key=lambda n: int(n[1:-3]))
+            if new:
+                # (Several at once, as ffmpeg catches up: each may hold
+                # anything since the last time, as their own moments can't be
+                # told apart. The cold audit of 1.39.0. From before the look
+                # before the newest of the last ones appeared, by time and by
+                # bytes: it appeared after that look.)
+                since, since_byte = self._before_newest or (self._born, 0)
+                if since < self._born + STARTUP_S:
+                    since, since_byte = self._born, 0
+                held = self.contents(
+                    since - MARGIN_S, time.monotonic() + 0.5, since_byte - SLACK_BYTES
+                )
+                for name in new:
+                    self.holds[name] = held
+                self._before_newest = last
+            for gone in [n for n in self.holds if n not in names]:
+                del self.holds[gone]
+
+    async def pieces_hold(self, names: list[str]) -> tuple:
+        """What some pieces hold, together (UNKNOWN for one not yet looked at)."""
+        await self.label_new_pieces()
+        out: list = []
+        for name in names:
+            out.extend(self.holds.get(name, (UNKNOWN,)))
+        return tuple(out)
+
+    async def _label_pieces(self) -> None:
+        while True:
+            await asyncio.sleep(LABEL_EVERY_S)
+            await self.label_new_pieces()
+
     async def _run(self) -> None:
         said: deque[str] = deque(maxlen=5)
         idle = asyncio.create_task(self._stop_when_idle())
+        labeling = asyncio.create_task(self._label_pieces())
         listening: asyncio.Task | None = None
         try:
             self._proc = proc = await asyncio.create_subprocess_exec(
@@ -323,15 +482,7 @@ class HlsStream:
             )
             listening = asyncio.create_task(_collect(proc, said))
             assert proc.stdin is not None
-            while True:
-                chunk = await self._viewer.next_chunk()
-                if chunk is None:
-                    self.ended_because = (
-                        self.ended_because or self._viewer.ended_because or "the station stopped"
-                    )
-                    break
-                proc.stdin.write(chunk)
-                await proc.stdin.drain()
+            await self._feed(proc.stdin)
         except (BrokenPipeError, ConnectionResetError):
             if not self._stopping:
                 # ffmpeg stopped by itself: say what it said.
@@ -347,6 +498,7 @@ class HlsStream:
         finally:
             self.ended = True
             idle.cancel()
+            labeling.cancel()
             self._settle_idle(f"the stream ended: {self.ended_because or 'it stopped'}")
             self._leave()
             await self._end_ffmpeg()
@@ -355,6 +507,26 @@ class HlsStream:
             await asyncio.to_thread(shutil.rmtree, self.folder, True)
             self.streams.forget(self)
             log.info("Stopped the stream for apps of %s: %s", self.label, self.ended_because)
+
+    async def _feed(self, stdin) -> None:
+        """Gives ffmpeg the station, chunk by chunk, noting each program as
+        it's given (see fed), until the station's stream ends."""
+        while True:
+            sent = await self._viewer.next_sent()
+            if sent is None:
+                self.ended_because = (
+                    self.ended_because or self._viewer.ended_because or "the station stopped"
+                )
+                return
+            chunk, content = sent
+            if not self.fed or self.fed[-1][2] is not content:
+                if len(self.fed) == self.fed.maxlen:
+                    self.fed_whole = False  # (its start is forgotten from now)
+                self.fed.append((time.monotonic(), self.given, content))
+            stdin.write(chunk)
+            self.given += len(chunk)
+            await stdin.drain()
+            self._given_at = time.monotonic()
 
     async def _end_ffmpeg(self) -> None:
         proc = self._proc
@@ -422,6 +594,17 @@ class HlsStreams:
         for stream in self._by_station.values():
             if not stream.over:
                 out.update(stream.watchers())
+        return out
+
+    def places(self) -> dict[str, bool]:
+        """Every device holding a place among those an Admin allows, through
+        the apps' stations (see HlsStream.places), each once: away from home
+        if it is on any."""
+        out = dict(self.watchers())
+        for stream in self._by_station.values():
+            if not stream.over:
+                for client, away in stream.places().items():
+                    out[client] = out.get(client, False) or away
         return out
 
     async def stop_all(self, because: str) -> None:

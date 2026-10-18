@@ -368,10 +368,13 @@ class Updater:
             reach = viewing_reach_of(items + rest, titles)
             judged = reach.known and (reach.tagged or not titles.want_tags)
             if judged and self.ctx.viewing.limited_audience(channel.id, reach):
-                most = cliprules.cap(reach)
+                # (No higher than the strictest level it's allowed for by
+                # hand, as they're judged when they play: 1.39.0.)
+                most, clip_most = cliprules.cap(reach), self.ctx.viewing.clip_most
+                tv, film = clip_most(channel.id, most, tv=True), clip_most(channel.id, most)
                 rated = self.ctx.clip_ratings.rated
-                commercials = [c for c in commercials if rated(COMMERCIALS, c, most)]
-                trailers = [c for c in trailers if rated(TRAILERS, c, most)]
+                commercials = [c for c in commercials if rated(COMMERCIALS, c, tv)]
+                trailers = [c for c in trailers if rated(TRAILERS, c, film)]
         return with_breaks(
             items,
             channel.breaks,

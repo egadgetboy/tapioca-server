@@ -135,6 +135,10 @@ MOST_BEHIND_MS = 2 * 3600 * 1000
 BANNER_WAIT_S = (1.0, 2.0)
 # Recent output kept so a new viewer starts instantly.
 RECENT_BYTES = 3 * 1024 * 1024
+# As a station stops: how long its engine is given to end, and then, once
+# it's cancelled, how long more (for anyone who tuned in meanwhile: see stop).
+STOP_WAIT_S = 10.0
+CANCEL_WAIT_S = 5.0
 # Stream waiting for a viewer that has stopped reading, at most (about two
 # minutes at the default quality) before it's disconnected.
 VIEWER_MAX_BYTES = 64 * 1024 * 1024
@@ -181,13 +185,14 @@ class Viewer:
         self.client = client
         self.agent = agent
         self.started_ms = now_ms()
-        self.queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        # Each chunk, with the program it holds (see Broadcaster._content).
+        self.queue: asyncio.Queue[tuple[bytes, Item | None] | None] = asyncio.Queue()
         self.queued_bytes = 0
         self.closed = False
         # Why tapiOca ended this viewer's stream, if it did.
         self.ended_because: str | None = None
 
-    def push(self, chunk: bytes) -> None:
+    def push(self, chunk: bytes, content: Item | None = None) -> None:
         if self.closed:
             return
         if self.queued_bytes + len(chunk) > VIEWER_MAX_BYTES:
@@ -199,14 +204,20 @@ class Viewer:
             )
             return
         self.queued_bytes += len(chunk)
-        self.queue.put_nowait(chunk)
+        self.queue.put_nowait((chunk, content))
 
     async def next_chunk(self) -> bytes | None:
         """The next piece of stream, or None when the stream has ended."""
-        chunk = await self.queue.get()
-        if chunk:
-            self.queued_bytes -= len(chunk)
-        return chunk
+        sent = await self.next_sent()
+        return sent[0] if sent else None
+
+    async def next_sent(self) -> tuple[bytes, Item | None] | None:
+        """The next piece of stream and the program it holds (None: not a
+        program), or None when the stream has ended."""
+        sent = await self.queue.get()
+        if sent:
+            self.queued_bytes -= len(sent[0])
+        return sent
 
     def close(self, because: str | None = None) -> None:
         if self.closed:
@@ -290,6 +301,11 @@ class Broadcaster:
     channel_id: int
     viewers: set[Viewer] = field(default_factory=set)
     now_playing: NowPlaying | None = None
+    # The program being sent now (1.39.0; None: a commercial, a card,
+    # anything else). Each chunk goes to viewers with it, so a station's
+    # stream for apps can tell which of its pieces hold which program (see
+    # hls.py), for programs someone may not watch (viewing.Viewing.may_watch).
+    _content: Item | None = None
     started_at_ms: int = 0
     _task: asyncio.Task | None = None
     _stop_task: asyncio.Task | None = None
@@ -371,8 +387,8 @@ class Broadcaster:
         self, ident: str, *, counted: bool = True, client: str = "", agent: str = ""
     ) -> Viewer:
         viewer = Viewer(ident, counted, client, agent)
-        for chunk in self._recent:
-            viewer.push(chunk)
+        for chunk, content in self._recent:
+            viewer.push(chunk, content)
         self.viewers.add(viewer)
         if self._stop_task:
             self._stop_task.cancel()
@@ -409,11 +425,25 @@ class Broadcaster:
             await asyncio.sleep(self.settings.idle_grace_seconds)
         except asyncio.CancelledError:
             return
+        # (Stopping from here on: someone tuning in now doesn't cancel the
+        # stop, which starts a new session for them once it's done. The
+        # fourth cold audit of 1.39.0.)
+        self._stop_task = None
         if not self.viewers:
-            await self.stop()
+            await self.stop(restart=True)
 
-    async def stop(self, because: str = "the station stopped") -> None:
+    async def stop(self, because: str = "the station stopped", restart: bool = False) -> None:
+        """Stops the station: its engine and everyone watching. With
+        `restart` (as it stops after its grace, or as its tuner's needed by
+        another, with no one watching), anyone who tunes in meanwhile gets a
+        new session once it has; otherwise (deleted, a backup restored)
+        they're told it stopped (the fifth cold audit of 1.39.0)."""
         self._stopping = True
+        old = self._task
+        # (At once: someone tuning in while it stops gets none of it. The
+        # second cold audit of 1.39.0.)
+        self._recent.clear()
+        self._recent_bytes = 0
         self._kill()
         for task in list(self._side_tasks):
             task.cancel()
@@ -422,13 +452,31 @@ class Broadcaster:
         self.viewers.clear()
         if self._task:
             try:
-                await asyncio.wait_for(asyncio.shield(self._task), 10)
+                await asyncio.wait_for(asyncio.shield(self._task), STOP_WAIT_S)
             except (TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
+                # (A moment for it to end, so anyone who tuned in meanwhile
+                # gets a new session: see below.)
+                await asyncio.wait({self._task}, timeout=CANCEL_WAIT_S)
         self._recent.clear()
         self._recent_bytes = 0
         self.now_playing = None
         self.encoder_now = None
+        if self.viewers and self._task is old:
+            # Someone tuned in while it stopped (and no new session started
+            # for them as they did): a new one now, if the station's still
+            # here and the last has ended (the third cold audit of 1.39.0);
+            # otherwise they're told it stopped.
+            here = self.ctx.broadcasters.get(self.channel_id) is self
+            if restart and here and (self._task is None or self._task.done()):
+                self._stopping = False
+                self._task = asyncio.create_task(
+                    self._supervise(), name=f"channel-{self.channel_id}"
+                )
+            else:
+                for viewer in list(self.viewers):
+                    viewer.close(because)
+                self.viewers.clear()
 
     def _kill(self) -> None:
         proc = self._proc
@@ -440,12 +488,13 @@ class Broadcaster:
         if not chunk:
             return
         self._last_output = time.monotonic()
-        self._recent.append(chunk)
+        content = self._content
+        self._recent.append((chunk, content))
         self._recent_bytes += len(chunk)
         while self._recent_bytes > RECENT_BYTES and len(self._recent) > 1:
-            self._recent_bytes -= len(self._recent.popleft())
+            self._recent_bytes -= len(self._recent.popleft()[0])
         for viewer in list(self.viewers):
-            viewer.push(chunk)
+            viewer.push(chunk, content)
             if viewer.closed:
                 log.warning(
                     "%s: disconnecting viewer %s because %s",
@@ -661,7 +710,17 @@ class Broadcaster:
                     if channel.intro_video:
                         result = await self._play_own_bumper(channel, ts, burst)
                     if result is None:
-                        result = await self._play_intro(channel, station, ts, burst)
+                        # (Its pieces hold the program it names, and whose
+                        # sound it plays as it ends: see _content. The cold audit
+                        # of 1.39.0.)
+                        ends = self._cursor(ts) + int(
+                            float(channel.intro_seconds or DEFAULT_INTRO_S) * 1000
+                        )
+                        self._content = self._bumper_names(station, ends)
+                        try:
+                            result = await self._play_intro(channel, station, ts, burst)
+                        finally:
+                            self._content = None
                     self._ts = _advance(ts, result)
                     if result.stopped:
                         return
@@ -723,20 +782,24 @@ class Broadcaster:
             self._look_ahead(channel, station, slot)
             mark = None if bare else corner_mark(self.ctx, channel)
             up_next = None if bare else self._banner_for(channel, station, slot, mark)
-            result = await self._play_item(
-                item,
-                offset_s,
-                remaining_s,
-                ts,
-                burst,
-                stitcher,
-                channel.name,
-                channel.aspect_mode,
-                mark,
-                mark_from_s=offset_s if self._tuned_in else 0.0,
-                up_next=up_next,
-                subtitles_mode="off" if bare or not self.ctx.subtitling else channel.subtitles,
-            )
+            self._content = item  # (what's sent from now is this program: see _content)
+            try:
+                result = await self._play_item(
+                    item,
+                    offset_s,
+                    remaining_s,
+                    ts,
+                    burst,
+                    stitcher,
+                    channel.name,
+                    channel.aspect_mode,
+                    mark,
+                    mark_from_s=offset_s if self._tuned_in else 0.0,
+                    up_next=up_next,
+                    subtitles_mode="off" if bare or not self.ctx.subtitling else channel.subtitles,
+                )
+            finally:
+                self._content = None
             if self._joining:
                 # (Tuning in, but the program didn't start: said on its own.)
                 log.info("%s: %s", self._named(), self._joining)
@@ -899,7 +962,11 @@ class Broadcaster:
             clip = clip_at(kind, path)
         if clip is None:
             return False  # (gone from the folders since its lineup was made)
-        return ctx.clip_ratings.rated(kind, clip, cliprules.cap(viewing.reach(channel.id)))
+        # (No higher than the strictest level it's allowed for by hand: 1.39.0.)
+        most = viewing.clip_most(
+            channel.id, cliprules.cap(viewing.reach(channel.id)), tv=kind == COMMERCIALS
+        )
+        return ctx.clip_ratings.rated(kind, clip, most)
 
     async def _play_clip(
         self,
@@ -1181,7 +1248,12 @@ class Broadcaster:
         else:
             movie = slot.item
             # (If the movie won't play, another takes its place: it isn't named.)
-            title, year = ("", "") if self._skipped(movie.rating_key) else intro.describe(movie)
+            title, year = (
+                ("", "")
+                if self._skipped(movie.rating_key)
+                or not self.ctx.viewing.named_for_everyone(self.channel_id, movie)
+                else intro.describe(movie)
+            )
             logo = self.ctx.logos.path(channel.logo) if channel.logo else None
             card = intro.Card(
                 "Feature Presentation",
@@ -1247,11 +1319,25 @@ class Broadcaster:
         self._ident_failing = True
         return await self._play_plain_card(channel, plain, duration_s, ts, burst)
 
+    def _bumper_names(self, station: StationSchedule, at_ms: int) -> Item | None:
+        """The program an Intro Bumper ending at `at_ms` names: on as it ends,
+        or up next if that's a break (the cold audit of 1.39.0: its pieces
+        hold that program)."""
+        slot, _heading = intro.named_at(station, at_ms)
+        return slot.item if slot else None
+
     def _whats_on(self, station: StationSchedule, at_ms: int) -> tuple[str, str, str]:
         """For the Intro Bumper: what's on as it ends (nothing, if that
-        program is being skipped)."""
+        program is being skipped, or if someone it's allowed for by hand may
+        not watch it: one shared picture)."""
         lines, key = intro.whats_on(station, at_ms)
-        return ("", "", "") if key and self._skipped(key) else lines
+        if key and self._skipped(key):
+            return ("", "", "")
+        if not self.ctx.viewing.named_for_everyone(
+            self.channel_id, self._bumper_names(station, at_ms)
+        ):
+            return ("", "", "")
+        return lines
 
     async def _play_plain_card(
         self,
@@ -1289,6 +1375,10 @@ class Broadcaster:
         if following is None:
             return ["", "Stay tuned", ""]
         skipped = self._skipped(following.item.rating_key)
+        # (One shared picture: never naming what someone it's allowed for by
+        # hand may not watch. 1.39.0.)
+        if not self.ctx.viewing.named_for_everyone(self.channel_id, following.item):
+            return ["", "Stay tuned", ""]
         special = specials.starting(station, following)
         if special is not None:
             # (Not naming a program that won't play: another takes its place.)

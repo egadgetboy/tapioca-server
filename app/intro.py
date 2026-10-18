@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from .config import Settings
     from .db import Item
     from .main import AppContext
-    from .schedule import StationSchedule
+    from .schedule import Slot, StationSchedule
 
 LENGTHS = (0, 3, 5, 10, 15)  # the Intro Bumper's, in seconds; 0 is off
 ID_LENGTHS = (3, 5, 10)  # the Station ID card's, in seconds
@@ -230,13 +230,19 @@ def whats_on(station, at_ms: int) -> tuple[tuple[str, str, str], str | None]:
     """What the card says is on at `at_ms` on a station's schedule (or up
     next, if that's a break): (heading, show or movie, episode or year), and
     the program's rating key."""
-    slot = station.locate(at_ms)
-    heading = "NOW PLAYING"
-    if slot is not None and at_ms >= slot.start_ms + slot.item.program_end_ms:
-        slot, heading = station.locate(slot.end_ms), "UP NEXT"
+    slot, heading = named_at(station, at_ms)
     if slot is None:
         return ("", "", ""), None
     return (heading, *describe(slot.item)), slot.item.rating_key
+
+
+def named_at(station, at_ms: int) -> tuple[Slot | None, str]:
+    """The program a card names at `at_ms`, and how: the one on ("NOW
+    PLAYING"), or, in the break after it, the next one ("UP NEXT")."""
+    slot = station.locate(at_ms)
+    if slot is not None and at_ms >= slot.start_ms + slot.item.program_end_ms:
+        return station.locate(slot.end_ms), "UP NEXT"
+    return slot, "NOW PLAYING"
 
 
 def describe(item: Item) -> tuple[str, str]:
