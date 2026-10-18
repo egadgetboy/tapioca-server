@@ -91,6 +91,13 @@ follow them in every change.
   tier until then (the apps repo's CLAUDE.md has the details). Never limit
   Plex, Jellyfin or other clients.
 
+## Resuming work
+- **Every time work resumes, and as each release starts,** tell the owner
+  in one paragraph (the owner, October 18): what was finished last; what's
+  being built now, and about how long it should take; the next 2 or 3 after
+  it; and which effort level he should be on (Medium, High, Extra high or
+  Max). Keep it current in the plan's `next.md`, "Where we are".
+
 ## Tests
 - **Every bug gets a failing test first,** then a root-cause fix. The test
   stays.
