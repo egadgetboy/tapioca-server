@@ -1302,6 +1302,7 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `kind` | string | As in a card |
 | `title` | string | As in a card |
 | `year` | number or null | As in a card |
+| `contentRating` | string or null | As in a card |
 | `poster` | string or null | As in a card |
 | `episodes` | number or null | (A show) as in a card |
 | `unwatched` | number or null | (A show) as in a card |
@@ -1317,7 +1318,6 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `tagline` | string or null | Its tagline, the line on its poster (from 1.24.0) |
 | `genres` | list | Its genres (its first few) |
 | `genres[]` | string | One genre |
-| `contentRating` | string or null | Its rating, such as `TV-PG` |
 | `studio` | string or null | Its studio, or a show's network |
 | `released` | string or null | When it first came out, as `YYYY-MM-DD` |
 | `backdrop` | string or null | A wide picture for behind the details (an episode's is its show's) |
@@ -1861,6 +1861,7 @@ How Media's lists describe a show, movie or episode. Shows have
 | `kind` | string | `show`, `movie` or `episode` |
 | `title` | string | The show's title, or the movie's |
 | `year` | number or null | The year |
+| `contentRating` | string or null | Its rating, shown beside the year, such as `TV-PG` or `PG-13` (from 1.41.0): a show's or movie's own; an episode's, its show's or its own if that's stricter, as limits judge it. Without a country mark (`us/TV-MA` is `TV-MA`); null when it's unrated or not known. Only on cards for what this person may see |
 | `poster` | string or null | Its poster (an episode's is its show's) |
 | `episodes` | number or null | How many episodes a show has |
 | `unwatched` | number or null | How many of a show's episodes this person hasn't watched |

@@ -92,6 +92,20 @@ def age(rating: str | None) -> int | None:
     return US.get(code)
 
 
+def shown(rating: str | None) -> str | None:
+    """A rating as it's shown beside a year ("PG-13", "TV-14"): without Plex's
+    country mark ("us/TV-MA", "gb/15"); None when there's none to show
+    (unrated, or not known)."""
+    text = (rating or "").strip()
+    if text.upper() in _UNRATED:
+        return None
+    if "/" in text:
+        text = text.partition("/")[2].strip()
+    if text.upper() in _UNRATED:
+        return None
+    return text
+
+
 def stricter(a: int | None, b: int | None) -> int | None:
     """The older of two ages: an episode's own rating, if stricter than its
     show's. Unrated (None) gives way to a rating."""

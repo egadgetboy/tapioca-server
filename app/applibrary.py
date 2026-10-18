@@ -48,6 +48,7 @@ from . import (
     ondemand,
     playing,
     problems,
+    ratings,
     setup,
     subtitles,
     viewing,
@@ -217,13 +218,32 @@ def art(key: str, kind: str) -> str:
     return f"/api/internal/art/{key}?kind={kind}"
 
 
-def card(e: Entry, progress: dict[str, tuple[int, bool]], unwatched: int | None = None) -> dict:
-    """A show, movie or episode in a list (see "A card" in docs/internal-api.md)."""
+def rating_of(e: Entry, show: Entry | None = None) -> str | None:
+    """The content rating shown beside a title's year (VR10): a show's or
+    movie's own; an episode's as limits judge it, its show's or its own if
+    that's stricter (viewing.judge_entry), its own when its show isn't known."""
+    if e.kind != catalog.EPISODE or show is None:
+        return ratings.shown(e.content_rating)
+    own, theirs = ratings.age(e.content_rating), ratings.age(show.content_rating)
+    if own is not None and (theirs is None or own > theirs):
+        return ratings.shown(e.content_rating)
+    return ratings.shown(show.content_rating) or ratings.shown(e.content_rating)
+
+
+def card(
+    e: Entry,
+    progress: dict[str, tuple[int, bool]],
+    unwatched: int | None = None,
+    show: Entry | None = None,
+) -> dict:
+    """A show, movie or episode in a list (see "A card" in docs/internal-api.md):
+    `show`, an episode's, for its rating."""
     out: dict[str, Any] = {
         "key": e.key,
         "kind": e.kind,
         "title": plain(e.show_title or e.title) if e.kind == catalog.EPISODE else plain(e.title),
         "year": e.year,
+        "contentRating": rating_of(e, show),
         "poster": art(e.show_key or e.key, "poster")
         if e.kind == catalog.EPISODE and e.show_key
         else (art(e.key, "poster") if e.has_thumb else None),
@@ -255,7 +275,6 @@ def details(e: Entry) -> dict:
         "summary": plain(e.summary),
         "tagline": plain(e.tagline) or None,
         "genres": [plain(g) for g in e.genres],
-        "contentRating": plain(e.content_rating) or None,
         "studio": plain(e.studio) or None,
         "released": e.released or None,
         "backdrop": art(e.key, "backdrop") if e.has_art else None,
@@ -742,10 +761,22 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         done = ctx.db.watched_in_shows(user_id, [s.key for s in shows])
         return {s.key: max(0, (s.episodes or 0) - len(done.get(s.key, ()))) for s in shows}
 
-    def cards(user_id: int, entries: list[Entry]) -> list[dict]:
+    async def shows_known(entries: list[Entry]) -> dict[str, Entry]:
+        """The shows of the episodes among `entries`, for their ratings (kept
+        a while, and mostly just asked about by seen_only); none, if the
+        library can't say just now: each episode then shows its own."""
+        try:
+            return await shows_of(cat, entries)
+        except LibraryError:
+            return {}
+
+    async def cards(user_id: int, entries: list[Entry]) -> list[dict]:
         progress = ctx.db.progress_of(user_id, [e.key for e in entries if e.kind != catalog.SHOW])
         unwatched = unwatched_of(user_id, [e for e in entries if e.kind == catalog.SHOW])
-        return [card(e, progress, unwatched.get(e.key)) for e in entries]
+        shows = await shows_known(entries)
+        return [
+            card(e, progress, unwatched.get(e.key), shows.get(e.show_key or "")) for e in entries
+        ]
 
     # Browsing --------------------------------------------------------------
 
@@ -804,7 +835,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "kind": kind,
             "total": len(entries),
             "start": start,
-            "items": cards(user_id, entries[start : start + size]),
+            "items": await cards(user_id, entries[start : start + size]),
             "genres": [g["title"] for g in genres],
             "letters": [{"letter": m["value"], "start": m["start"]} for m in marks]
             if sort == "title"
@@ -838,10 +869,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         progress = dict(ctx.db.progress_of(user_id, [e.key for e, _ in going]))
         for e, start in going:  # (where to start, as worked out)
             progress[e.key] = (start, progress.get(e.key, (0, False))[1])
+        shows = await shows_known([e for e, _ in going])
         return {
-            "continue": [card(e, progress) for e, _ in going],
+            "continue": [card(e, progress, show=shows.get(e.show_key or "")) for e, _ in going],
             "added": [
-                {"library": lib["key"], "title": lib["title"], "items": cards(user_id, entries)}
+                {
+                    "library": lib["key"],
+                    "title": lib["title"],
+                    "items": await cards(user_id, entries),
+                }
                 for lib, entries in added
                 if entries
             ],
@@ -896,7 +932,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 found = await seen_only(cat, viewer, await cat.search(words))
             found = [e for e in found if library_seen(viewer, e.library)][: ondemand.SEARCH_MOST]
         return {
-            "items": cards(user_id, found),
+            "items": await cards(user_id, found),
             "onNow": await asyncio.to_thread(on_now, words, user),
         }
 
@@ -921,7 +957,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             nxt = None
             if upcoming is not None:
                 ep, start, _why = upcoming
-                nxt = card(ep, {ep.key: (start, ep.key in done)})
+                nxt = card(ep, {ep.key: (start, ep.key in done)}, show=e)
             return {
                 **card(e, {}, max(0, (e.episodes or len(episodes)) - len(done))),
                 **details(e),
@@ -939,7 +975,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             }
         progress = ctx.db.progress_of(user_id, [key])
         media = next(iter(ondemand.best_first(e.media)), None)
-        out = {**card(e, progress), **details(e)}
+        shows = await shows_known([e])
+        out = {**card(e, progress, show=shows.get(e.show_key or "")), **details(e)}
         if e.kind == catalog.EPISODE and e.show_key and not e.has_art:
             out["backdrop"] = art(e.show_key, "backdrop")
         out.update(
@@ -1004,7 +1041,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             if e.library and library_seen(viewer, e.library) and e.genres:
                 _, _, pool = await cat.whole(e.library, "title")
                 found = ondemand.related(e, await seen_only(cat, viewer, pool))
-        return {"items": cards(user_id, found)}
+        return {"items": await cards(user_id, found)}
 
     @app.get("/api/internal/items/{key}/shuffle")
     async def shuffled(key: str, request: Request):
@@ -1045,7 +1082,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "show": e.key,
             "unwatched": unwatched,
             "total": len(pool),
-            "items": cards(user_id, pool),
+            "items": await cards(user_id, pool),
         }
 
     @app.get("/api/internal/items/{key}/episodes")
@@ -1070,7 +1107,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "season": season,
             "total": len(chosen),
             "start": start,
-            "episodes": cards(user_id, chosen[start : start + size]),
+            "episodes": await cards(user_id, chosen[start : start + size]),
         }
 
     @app.get("/api/internal/art/{key}")

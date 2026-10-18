@@ -1,8 +1,7 @@
 {
-  "version": "1.40.0",
+  "version": "1.41.0",
   "new": [
-    "In tapiOca's apps, limits apply while a title plays",
-    "Removing someone stops what they're watching",
-    "One check in tapiOca's apps decides what plays"
+    "Media in tapiOca's apps knows each title's rating",
+    "An episode's rating is its show's, or its own if stricter"
   ]
 }
