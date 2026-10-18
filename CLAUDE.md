@@ -70,6 +70,12 @@ follow them in every change.
   sources it was built from; where one differs from the plan, the plan is
   current. New decisions change the plan's own text, never a banner or an
   addendum.
+- **Only the server owner acknowledges** (the owner, October 18; the
+  plan's Legal care): the Media & Access Responsibilities notice, once, at
+  first setup, after counsel's review. No app, viewer or other Admin is
+  ever asked to accept terms, and nothing limits the AGPL's rights.
+  Accounts, User Groups and invitations are access controls, never rights
+  to anyone's Media.
 - **Personal use, on hardware you own** (the owner, October 12): the README
   and first-run setup's Plex step say tapiOca works with your own Plex
   Media Server, and that Plex's terms license it for personal use, on
@@ -97,6 +103,12 @@ follow them in every change.
   being built now, and about how long it should take; the next 2 or 3 after
   it; and which effort level he should be on (Medium, High, Extra high or
   Max). Keep it current in the plan's `next.md`, "Where we are".
+
+## The order of work
+- **By development need, never by how recent a decision is** (the owner,
+  October 18): what's in progress, then what other work is built on, then
+  the apps' new shell before any new app screen, then features. Follow the
+  plan's release order; don't ask the owner what comes first.
 
 ## Tests
 - **Every bug gets a failing test first,** then a root-cause fix. The test

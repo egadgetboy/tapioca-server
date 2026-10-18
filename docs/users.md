@@ -417,15 +417,18 @@ once they signed in on it themselves:
 ### Viewers, locks and shared TVs (planned)
 
 The owner's decisions of October 18. None of this is built yet: it comes in
-the releases "Viewer sessions and locks" and "Viewing times, pauses and
-breaks", with the apps' side of each (the plan's Profiles has the whole
-design, its suggested defaults and its open questions).
+the releases "Viewer sessions and locks", "Viewing times, pauses and
+breaks", "User Groups and rosters", "Station creation apart from limits"
+and "Request more time", with the apps' side of each (the plan's Profiles
+has the whole design, its suggested defaults and its open questions).
 
 - **Every tapiOca app needs a signed-in person,** someone an Admin added
   here. There's no anonymous or guest viewing. Until someone signs in, an
   app shows only Sign in or Who's tuning in?, over generic, blurred tapiOca
   artwork, never anyone's own screen. Each person's layouts and preferences
-  are theirs, on this server.
+  are theirs, on this server. An account may be shared on purpose (Kids,
+  say): it's still one account, with one history, Resume, viewing times and
+  break count for everyone using it.
 - **While signing in is off** (no one added on the Access tab), the page
   and the tuner work as they always have, and Plex, Jellyfin and other apps
   keep every address they use. tapiOca's apps don't open: they say an Admin
@@ -450,9 +453,36 @@ design, its suggested defaults and its open questions).
   Both are logged in the access log.
 - **Viewing times:** each day of the week, for each person, in this
   server's time zone. Outside them, nothing plays for that person; when a
-  window opens, nothing starts by itself.
+  window opens, nothing starts by itself. Before a window ends, a short
+  notice 10 minutes before, then a small banner for the whole last five
+  minutes, counting down, that never pauses or covers the picture.
 - **Required breaks:** after so much real watching, a break the person
   can't skip, on any device; nothing plays by itself after it.
+- **Each account's own settings.** Viewing times and breaks are set for
+  each account; a level's limits never turn them on (an adult with genre
+  limits needn't have either).
+- **Request more time,** each account's own switch, off unless an Admin
+  turns it on. When on, a request and at most one reminder, only in the
+  last five minutes of a regular window, to Admins or adults the Admin
+  names. Every grant needs that adult's PIN or password, entered fresh,
+  checked here, even when they're signed in already. An unanswered request
+  never moves the end.
+- **User Groups.** An Admin's groups of accounts decide who's listed
+  together on an enrolled device: a home group on a device at home,
+  exactly one person or two on a device enrolled away. An unknown device
+  sees no names. A roster comes from the device's enrollment and the
+  group's membership, never from an address, Wi-Fi or a forwarded header.
+  Being listed never lets anyone watch as that person, and a group never
+  changes what anyone may watch.
+- **Making Stations apart from limits.** Whether an account may make
+  Stations, and how many, becomes its own setting. A limited account that
+  may make them sees and adds only what its limits allow, on every editor
+  path. Until that release, the rule in What's hidden or allowed for one
+  person stands: anyone with limits only watches.
+- **No terms in the apps.** Only the server owner acknowledges the Media &
+  Access Responsibilities notice, once, at first setup (planned, after
+  counsel's review). No app, viewer or other Admin is ever asked to accept
+  terms; signing in is security, never acceptance.
 - **One server decision.** The one program check (1.40.0) grows into the
   one viewing check: a viewer's session, a lock, a pause, viewing times, a
   break and the program's limits are all decided here, for every way of
