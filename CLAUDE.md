@@ -55,6 +55,17 @@ follow them in every change.
   to stop; an Admin decides, and the request shows Pending, Approved or
   Denied. The privacy notice and each person's first sign-in say this
   plainly, and never claim it overrides rights the law gives.
+- **1.0 is feature-complete** (the owner, October 18, 2:46 PM; the plan's
+  feature register): every retained feature ships before 1.0, on every
+  platform it applies to, with Plex and without it. A server with no Plex,
+  Plex Pass, Sonarr or Radarr is first-class.
+- **Features lead, APIs follow** (the same day): the tuner (HDHomeRun, M3U,
+  XMLTV, HLS) stays as it is; tapiOca's apps use their own signed-in routes;
+  `/api/v1`, API tokens and the companion API are retired in two releases
+  ("The apps' own routes", then "Retire the public API"). Never add to
+  `/api/v1`. The web client's playback and app features answer only at home
+  or through an authenticated VPN into home, by one server-side policy;
+  the management page stays reachable away from home.
 - **Every tapiOca app needs a signed-in person** (the owner, October 18):
   someone an Admin added, with no anonymous or guest viewing, and nothing
   kept for a made-up person. A server with signing in off keeps serving
@@ -129,7 +140,7 @@ follow them in every change.
   `pyproject.toml`. (From 1.34.0, the TrueNAS file and `docker-compose.yml`
   ask for the published image at `:latest`. The TrueNAS file is
   `tapioca-server.yaml` from 1.35.0, `stationplay.yaml` before.)
-- **Each release candidate,** by class (the plan's release gate has the table): a threat model and every-path matrix before D code; reviews by class (A and B a written self-review; C a focused independent review; D a `cold-auditor` audit before integration and of the final diff, with later rounds re-checking the fixed items unless the design changed); the area's tests while building; then, always: CI's full suite in the exact image on both architectures, `python tools/upgrade_check.py --from <previous release's commit>`, `python -m tools.attack_check`, `python tools/image_check.py` before the push to main (about 3 minutes), real FFmpeg streaming for affected playback, Playwright at 390, 768 and 1440 wide, light and dark, for page changes; then notes and a report.
+- **Each release candidate,** by class (the plan's release gate has the table): a threat model and every-path matrix before D code; reviews by class (A and B a written self-review; C a focused independent review; D a `cold-auditor` audit before integration and of the final diff, with later rounds re-checking the fixed items unless the design changed); the area's tests while building; then, always: CI's full suite in the exact image on both architectures, `python tools/upgrade_check.py --from <previous release's commit>`, `python -m tools.attack_check`, `python tools/image_check.py` and the release's own tests (`tests/test_info_station.py`, whose what's-new must be this version's, and `tests/test_release_workflow.py`) before the push to main (about 3 minutes), real FFmpeg streaming for affected playback, Playwright at 390, 768 and 1440 wide, light and dark, for page changes; then notes and a report.
 - Any database change on upgrade is preceded by an automatic backup
   (`data/backups/before-<version>-<date>.db`), and the notes give tested
   rollback steps.

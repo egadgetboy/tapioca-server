@@ -1,8 +1,8 @@
 {
-  "version": "1.39.0",
+  "version": "1.40.0",
   "new": [
-    "In tapiOca's apps, programs above limits are blocked",
-    "Each station comes back on its own afterward",
-    "Guides show blocked programs as \"Restricted program\""
+    "In tapiOca's apps, limits apply while a title plays",
+    "Removing someone stops what they're watching",
+    "One check in tapiOca's apps decides what plays"
   ]
 }
