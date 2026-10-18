@@ -462,8 +462,11 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 | 1.29.1 | A converted copy of a file the device can't play, and more detail on problems |
 | 1.30.0 | Report a problem |
 | 1.34.0 | Automatic subtitles |
+| 1.36.0 | Trusted networks: a device on a network an Admin trusts opens on **Who's tuning in?**, or is **Signed in as** one person |
+| 1.36.3 | Marking a whole show, or a whole season, watched or unwatched in one step |
 | 1.37.0 | Shuffle on a show's page (**Shuffle all**, or **Shuffle unwatched**), and jumping through a Media folder by letter, by month or year added, or by decade, as it's sorted |
 | 1.38.0 | An Admin's password on **Who's tuning in?** for Admin tasks, an Admin's PIN in Light sign-in, and invite codes for people with neither a password nor a PIN |
+| 1.39.0 | **Restricted program:** a program someone's limits don't allow is blocked for them while it's on, with "Restricted program" in their guide, and their station comes back on its own |
 
 The apps read the stations and guide through [tapiOca's API](#tapiocas-api), like any other program. They sign in, test connections and browse Media through their own addresses, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
 
