@@ -4,7 +4,7 @@ tapiOca was called StationPlay until version 1.34.0.
 
 Copyright © 2026 egadgetboy. tapiOca is free and open source, under the GNU AGPL v3: https://github.com/egadgetboy/tapioca-server/blob/main/LICENSE
 
-tapiOca runs on your own hardware, with your own Plex Media Server. Its developer runs no service for it and receives nothing from it: no accounts, analytics, ads or tracking.
+tapiOca runs on your own hardware, with your own Plex Media Server, your own folders, or both. Its developer runs no service for it and receives nothing from it: no accounts, analytics, ads or tracking.
 
 ## What tapiOca keeps
 
@@ -39,7 +39,7 @@ tapiOca clears out old viewing stats (after 400 days), problems the apps reporte
 
 Only what you set up, and the update check:
 
-- Your Plex Media Server: tapiOca reads the details of your movies and shows and, if you add it to Plex, serves Plex its guide and streams. Plex's own privacy policy covers Plex.
+- Your Plex Media Server, if you use one: tapiOca reads the details of your movies and shows and, if you add it to Plex, serves Plex its guide and streams. Plex's own privacy policy covers Plex.
 - Up to 3 web addresses for alerts, if an Admin sets them (such as Discord, Slack or ntfy). Each one receives every alert's sentence, which can name a person, a title and a station, and give your Plex server's home-network address and your away-from-home address.
 - Sonarr and Radarr, if an Admin connects them, to replace broken files.
 - Your own away-from-home address, which tapiOca checks it can reach, if watching away from home is on. Your reverse proxy or tunnel provider carries what's watched away from home.
