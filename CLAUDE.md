@@ -53,12 +53,21 @@ follow them in every change.
   the opt-in "Share what you watch with your Admin"): each person's history
   and stats, for fixing problems and choosing what to add. A person may ask
   to stop; an Admin decides, and the request shows Pending, Approved or
-  Denied. The privacy notice and each person's first sign-in say this
-  plainly, and never claim it overrides rights the law gives.
-- **The owner's later decisions** are in the apps repo's
-  `reference/owner-decisions-2026-10-17/` (D01 to D14, client-first weather
-  alerts, one watched mark) and the plan's decision log: where they differ
-  from an older handoff, they win.
+  Denied. PRIVACY.md, each person's first sign-in, and Options say this
+  plainly, and never claim it overrides rights the law gives. Plays (and
+  Trends, where part of it) start on, so this works (Q-3, October 18).
+- **The owner's later decisions** (October 17 and 18) are in
+  `reference/owner-decisions-2026-10-17/`: its source is on the tapioca-apps
+  `plan-update` branch, and the apps repo's `main` has a copy at the same
+  path. With the plan's decision log, they cover D01 to D14, client-first
+  weather alerts, one watched mark, and the answers to Q-1 to Q-7. Where they
+  differ from an older handoff, they win. **The 2:49 PM decision replaces
+  D01's whole-Station block:** Station visibility stays as before, and a
+  program someone may not watch is blocked for them as it airs (built as
+  1.39.0). Hidden episodes and required Clean audio use the same check: one
+  shared, server-side, program-level check that every playback path uses,
+  casting included (Q-2, Q-7). The web client is Admin-only; Users make
+  Stations, see their Stats and change settings in the apps (Q-4).
 - **Personal use, on hardware you own** (the owner, October 12): the README
   and first-run setup's Plex step say tapiOca works with your own Plex
   Media Server, and that Plex's terms license it for personal use, on
