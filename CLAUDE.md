@@ -55,10 +55,21 @@ follow them in every change.
   to stop; an Admin decides, and the request shows Pending, Approved or
   Denied. The privacy notice and each person's first sign-in say this
   plainly, and never claim it overrides rights the law gives.
-- **The owner's later decisions** are in the apps repo's
-  `reference/owner-decisions-2026-10-17/` (D01 to D14, client-first weather
-  alerts, one watched mark) and the plan's decision log: where they differ
-  from an older handoff, they win.
+- **Every tapiOca app needs a signed-in person** (the owner, October 18):
+  someone an Admin added, with no anonymous or guest viewing, and nothing
+  kept for a made-up person. A server with signing in off keeps serving
+  Plex, Jellyfin and other apps on the tuner exactly as before; tapiOca's
+  apps ask the Admin to turn signing in on first. **The server decides**
+  every limit, lock, pause, viewing time and break, on every way of
+  watching, and a stream already going stops when a rule says so; the apps
+  never hold those rules themselves (the plan's Profiles).
+- **The plan is the one specification** (the owner, October 18): the
+  apps repo's `plan.md` (its `plan-update` branch until it's merged), with
+  every decision of the owner's written into the section it changes, and
+  its decision log dated. The owner's handoffs in its `reference/` are the
+  sources it was built from; where one differs from the plan, the plan is
+  current. New decisions change the plan's own text, never a banner or an
+  addendum.
 - **Personal use, on hardware you own** (the owner, October 12): the README
   and first-run setup's Plex step say tapiOca works with your own Plex
   Media Server, and that Plex's terms license it for personal use, on

@@ -18,9 +18,12 @@ says); then a genre, tag, collection or studio the level or the person
 hides, or the title itself hidden by the level (Blocks). A level or person
 that hides by tags hides what's not known yet, as with ratings.
 
-A station is one stream that everyone watching shares, so it's all or
-nothing: allowed or blocked for someone by an Admin, or else seen only if
-everything it plays passes their level. What it plays is its lineup from
+A station is one stream that everyone watching shares, so it never changes
+for one person. Whether someone sees it is decided apart from what they may
+watch on it: allowed or blocked for them by an Admin, or else seen only if
+everything it plays passes their level; and, from 1.39.0, each program is
+checked as it airs (may_watch), so one they may not watch is blocked for
+them while it's on (the owner, October 17, 2:49 PM). What it plays is its lineup from
 the era airing now on, and the programs its specials draw on; what each
 needs is worked out once (a Reach) and kept until the lineup or a rating
 changes.
