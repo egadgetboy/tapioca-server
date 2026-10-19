@@ -65,6 +65,7 @@ from . import (
     marathons,
     notify,
     ondemand,
+    pictures,
     playback,
     playing,
     problems,
@@ -565,6 +566,9 @@ class AppContext:
     catalog: ondemand.Catalog = field(init=False)
     plays: ondemand.PlaySessions = field(default_factory=ondemand.PlaySessions)
     app_pictures: ondemand.PictureCache = field(default_factory=ondemand.PictureCache)
+    # Behind it, every picture made for the apps, on disk (pictures.py).
+    picture_disk: pictures.DiskCache = field(init=False)
+    picture_maker: pictures.Maker = field(default_factory=pictures.Maker)
     stats: stats.Stats = field(init=False)  # how much each station is watched
     health: health.Health = field(init=False)  # the server's health, now (see health.py)
     titles: titles.Titles = field(init=False)  # the ratings of what's on the stations
@@ -617,6 +621,9 @@ class AppContext:
         self.shared = ondemand.Shared(self.db)
         self.reach.media = lambda: self.shared.on
         self.catalog = ondemand.Catalog(self.library, self.shared)
+        self.picture_disk = pictures.DiskCache(
+            self.settings.data_dir / pictures.FOLDER, int(self.settings.picture_cache_gb * (1 << 30))
+        )
         self.stats = stats.Stats(self.db)
         self.plays.count_with = self.stats.played  # (Media played in the apps counts too)
         self.health = health.Health(self.settings.data_dir)
@@ -873,6 +880,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 problem,
             )
         ctx.gpu.start()
+        await asyncio.to_thread(ctx.picture_disk.open)
         background = [
             asyncio.create_task(jobs.look_again_forever(ctx)),
             asyncio.create_task(ctx.who_watches.run_forever()),
@@ -896,6 +904,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if ctx.stop_learning is not None:
             ctx.stop_learning()  # (asking Plex about what's playing stops: 1.40.0)
         ctx.folders.stop()  # (reading a Media folder of your own stops at once)
+        ctx.picture_disk.close()
         ctx.markers.cuts.cancel()  # (looking for cuts stops at once; saved below)
 
         stopped: list[BaseException] = []  # (the first that stops a step, raised at the end)

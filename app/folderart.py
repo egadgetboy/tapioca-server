@@ -76,6 +76,20 @@ def inside(path: str, media_dir: str) -> str | None:
     return real if os.path.isfile(real) else None
 
 
+def picture_stamp(path: str, media_dir: str) -> str:
+    """A picture beside the videos, as it is now: its modification time and
+    size ("" if it isn't one inside the media folder). A replaced poster
+    gives another (pictures.py makes it again)."""
+    real = inside(path, media_dir)
+    if real is None:
+        return ""
+    try:
+        st = os.stat(real)
+    except OSError:
+        return ""
+    return f"{st.st_mtime_ns}-{st.st_size}"
+
+
 def read_picture(path: str, media_dir: str) -> tuple[bytes, str]:
     """A picture beside the videos: (its bytes, its type). NoPicture if it
     isn't a picture inside the media folder (or can't be read)."""

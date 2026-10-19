@@ -1338,6 +1338,11 @@ class PlexClient:
         except httpx.HTTPStatusError:
             return await self._picture(path)
 
+    async def picture_source(self, key: str, which: str) -> tuple[bytes, str]:
+        """A show's, movie's or episode's picture as Plex keeps it, unresized
+        (pictures.py makes each size from it, once). As picture otherwise."""
+        return await self._picture(_checked(f"/library/metadata/{key}/{which}"))
+
     async def _picture(self, path: str, params: dict | None = None) -> tuple[bytes, str]:
         """A picture from Plex, if it is one: an image's type, not empty,
         and not too big."""
@@ -1365,6 +1370,13 @@ ENTRIES_AT_ONCE = 50
 # Pictures for the apps: what's taken as one, and how big one may be.
 PICTURE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
 PICTURE_MOST = 20 << 20
+
+
+def _picture_version(path: Any) -> str:
+    """A picture's version, from where Plex says it is: the timestamp ending
+    "/library/metadata/123/thumb/1697000000"; "" if there's none."""
+    last = str(path or "").rstrip("/").rpartition("/")[2]
+    return last if last.isdigit() else ""
 
 
 def _listed(data: dict[str, Any], field: str) -> list[dict[str, Any]]:
@@ -1435,6 +1447,10 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
         tags=tags_of(m) if kind != catalog.EPISODE else None,
         has_thumb=bool(m.get("thumb")),
         has_art=bool(m.get("art")),
+        thumb_v=_picture_version(m.get("thumb")),
+        art_v=_picture_version(m.get("art")),
+        show_thumb_v=_picture_version(m.get("grandparentThumb")) if episode else "",
+        show_art_v=_picture_version(m.get("grandparentArt")) if episode else "",
         intro=intro,
         credits=credits,
         media=media,

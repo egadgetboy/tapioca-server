@@ -62,6 +62,7 @@ SCAN_EVERY_S = 6 * 3600
 STARTUP_DELAY_S = 30.0
 WATCHING_WAIT_S = 10.0  # while anyone's watching, scanning looks again this often
 DISK_WAIT_S = 10.0  # a picture or a folder's list, waited for at most
+PICTURE_STAMP_S = 0.5  # a kept picture's source looked at, at most (then the kept one is used)
 LOOK_EVERY_S = 300.0  # how often what's due is looked for
 PROBES_AT_ONCE = 2
 # Scanning a big library never holds everything else up (playing, the page,
@@ -1522,6 +1523,38 @@ class FolderSource:
             show = self.show_of(t)
             return t.art.get("thumb", "") or (show.art.get("poster", "") if show else "")
         return t.art.get("poster", "")
+
+    async def picture_version(self, key: str, kind: str) -> str:
+        """The version of the picture an app's `kind` ("poster", "backdrop" or
+        "thumb") of `key` is made from, as it is on disk now (see
+        applibrary.picture for which picture each is): "" if there's none, or
+        its disk isn't answering (a kept picture is used then)."""
+        try:
+            t = self.thing(key)
+        except LibraryError:
+            return ""
+        if t.kind == EPISODE and kind != "thumb":
+            t = self.show_of(t) or t
+        where = self._backdrop_of(t) if kind == "backdrop" else self._poster_of(t)
+        if not where:
+            return ""
+        digest = hashlib.sha256(where.encode()).hexdigest()[:12]  # (another file, another version)
+        if where.startswith("cover:"):
+            path = where.split(":", 3)[3]
+            return f"cover-{digest}-{self._sizes({path}).get(path) or 0}"
+        try:
+            stamp = await asyncio.wait_for(
+                folderart.on_disk(folderart.picture_stamp, where, self.settings.media_dir), PICTURE_STAMP_S
+            )
+        except TimeoutError:
+            return ""
+        return f"{digest}-{stamp}" if stamp else ""
+
+    async def picture_source(self, key: str, which: str) -> tuple[bytes, str]:
+        """A show's, movie's or episode's picture as it is (see picture), to
+        be made into each size apps ask for (pictures.py). NoPicture if
+        there's none."""
+        return await self._picture(self.thing(key), which)
 
     async def picture(self, key: str, which: str, width: int, height: int) -> tuple[bytes, str]:
         """A show's, movie's or episode's picture ("thumb": its poster, or an

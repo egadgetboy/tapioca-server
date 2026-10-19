@@ -425,6 +425,20 @@ class Library:
             return await self._folder_source().picture(key, which, width, height)
         return await self.plex.picture(key, which, width, height)
 
+    async def picture_source(self, key: str, which: str) -> tuple[bytes, str]:
+        """The same picture as it is, to be made into each size (pictures.py)."""
+        if is_folder_key(key):
+            return await self._folder_source().picture_source(key, which)
+        return await self.plex.picture_source(key, which)
+
+    async def picture_version(self, key: str, kind: str) -> str | None:
+        """For a folder library's title, the version of the picture an app's
+        `kind` of it is made from, read from its disk now ("" if not known);
+        None for Plex's, whose versions come with its lists (Catalog)."""
+        if is_folder_key(key):
+            return await self._folder_source().picture_version(key, kind)
+        return None
+
     # Sonarr and Radarr -----------------------------------------------------
 
     async def ids(self, key: str) -> dict[str, str]:
