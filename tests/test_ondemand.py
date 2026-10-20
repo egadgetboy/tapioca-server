@@ -259,7 +259,11 @@ def test_what_progress_says():
 
 
 def test_pictures_are_made_a_few_sizes_and_kept_up_to_a_limit():
-    assert [ondemand.width_for(w) for w in (1, 160, 161, 700, 5000)] == [160, 160, 320, 720, 1920]
+    # (The widths by kind, from Pictures that load fast (the plan, DL203): the same rounding up, and the
+    # largest for anything wider, at the posters' widths and the wide pictures' own.)
+    assert [ondemand.width_for(w) for w in (1, 160, 161, 700, 5000)] == [160, 160, 240, 720, 1440]
+    assert [ondemand.width_for(w, "backdrop") for w in (1, 320, 321, 700, 5000)] == [320, 320, 640, 720, 1920]
+    assert ondemand.width_for(1000, "thumb") == 1280
     kept = ondemand.PictureCache(most_bytes=800)
     kept.put(("1", "poster", 160), (b"x" * 90, "image/jpeg"))
     kept.put(("2", "poster", 160), (b"x" * 90, "image/jpeg"))

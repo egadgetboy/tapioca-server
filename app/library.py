@@ -417,13 +417,14 @@ class Library:
             return await self.folders.show_episodes(show) if self.folders is not None else []
         return await self.plex.show_episodes(show)
 
-    async def picture(self, key: str, which: str, width: int, height: int) -> tuple[bytes, str]:
+    async def picture(self, key: str, which: str, width: int, height: int, fmt: str = "") -> tuple[bytes, str]:
         """A picture of a show, movie or episode: "thumb" (a poster, or an
         episode's still) or "art" (a backdrop). NoPicture (or for Plex's,
-        httpx.HTTPStatusError) if it has none."""
+        httpx.HTTPStatusError) if it has none. `fmt`: Plex's resize asked
+        for it ("webp"); what comes says which it is."""
         if is_folder_key(key):
             return await self._folder_source().picture(key, which, width, height)
-        return await self.plex.picture(key, which, width, height)
+        return await self.plex.picture(key, which, width, height, fmt)
 
     async def picture_source(self, key: str, which: str) -> tuple[bytes, str]:
         """The same picture as it is, to be made into each size (pictures.py)."""
@@ -431,12 +432,12 @@ class Library:
             return await self._folder_source().picture_source(key, which)
         return await self.plex.picture_source(key, which)
 
-    async def picture_version(self, key: str, kind: str) -> str | None:
+    def picture_version(self, key: str, kind: str) -> str | None:
         """For a folder library's title, the version of the picture an app's
-        `kind` of it is made from, read from its disk now ("" if not known);
+        `kind` of it is made from, as its last scan saw it ("" if not known);
         None for Plex's, whose versions come with its lists (Catalog)."""
         if is_folder_key(key):
-            return await self._folder_source().picture_version(key, kind)
+            return self._folder_source().picture_version(key, kind)
         return None
 
     # Sonarr and Radarr -----------------------------------------------------
