@@ -1188,18 +1188,17 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 # at full size for a small width. The cold audit, October 19.)
                 return await ctx.library.picture_source(shown.key, which), version, e.library, False
 
-    async def keep_picture(key: str, kind: str, width: int, fmt: str, here: tuple, name: str) -> tuple:
-        """A picture made and kept, in memory and on disk, by the making itself,
-        so one made for a request that stopped waiting is still kept (the cold
-        audit, October 19): what the memory keeps."""
+    async def keep_picture(key: str, kind: str, width: int, fmt: str, name: str) -> tuple:
+        """A picture made and kept on disk by the making itself, so one made for
+        a request that stopped waiting is still kept (the cold audit, October
+        19): (it, its type, its ETag, its version, its library). The memory is
+        the requests' own, so drawing ahead never pushes out a screen's."""
         (data, got), version, library, keepable = await make_picture(key, kind, width, fmt)
-        kept = ctx.app_pictures.put(here, (data, got), version, library)
+        tag = kept_pictures.etag(data)
         # (A JPEG sent for WebP isn't kept on disk: it's made as WebP once it can be.)
         if keepable and got == kept_pictures.TYPES[fmt] and ctx.picture_disk.on:
-            await ctx.picture_disk.run(
-                ctx.picture_disk.put, name, kept_pictures.Kept(data, got, kept[2], version, library)
-            )
-        return kept
+            await ctx.picture_disk.run(ctx.picture_disk.put, name, kept_pictures.Kept(data, got, tag, version, library))
+        return data, got, tag, version, library
 
     async def webp_picture(key: str, which: str, kind: str, width: int, height: int) -> bytes | None:
         """WebP: Plex's own, when its resize makes it (asked again an hour after
@@ -1245,8 +1244,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 try:
                     async with asyncio.timeout(ondemand.LIBRARY_WAIT_S + kept_pictures.MAKE_S):
                         await ctx.picture_maker.once(
-                            name, lambda key=key, kind=kind, width=width, fmt=fmt, here=here, name=name: keep_picture(
-                                key, kind, width, fmt, here, name
+                            name, lambda key=key, kind=kind, width=width, fmt=fmt, name=name: keep_picture(
+                                key, kind, width, fmt, name
                             ), ahead=True,
                         )
                 except (NoPicture, LibraryError, NotShared, httpx.HTTPError, TimeoutError):
@@ -1291,8 +1290,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             try:
                 async with asking(request), ctx.picture_maker.screen():
                     try:
-                        kept = await ctx.picture_maker.once(name, lambda: keep_picture(key, kind, width, fmt, here, name))
-                    except (httpx.HTTPStatusError, NoPicture):
+                        data, got, _, version, library = await ctx.picture_maker.once(
+                            name, lambda: keep_picture(key, kind, width, fmt, name)
+                        )
+                        kept = ctx.app_pictures.put(here, (data, got), version, library)
+                    except (httpx.HTTPStatusError, NoPicture) as ex:
+                        removed = not isinstance(ex, httpx.HTTPStatusError) or ex.response.status_code == 404
+                        if stale is not None and not removed:
+                            # (Plex unwell, restarting say: not a picture removed. The one kept is sent. The
+                            # re-check, October 19.)
+                            raise unreachable(f"a picture didn't come: {ex.response.status_code}") from None
                         # (Within the wait, so "no such picture" is never taken for "not shared".)
                         if stale is not None:  # (removed since: let go)
                             ctx.app_pictures.drop(here)
