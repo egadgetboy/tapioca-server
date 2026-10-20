@@ -331,7 +331,7 @@ class Catalog:
         self.shared = shared
         self._where: OrderedDict[str, str] = OrderedDict()  # key -> its library
         # key -> its pictures' versions, as the library last said in any list or detail (pictures.py)
-        self._pictures: OrderedDict[str, Entry] = OrderedDict()
+        self._pictures: OrderedDict[str, tuple[Entry, bool]] = OrderedDict()  # (and whether in detail)
         self._entries: OrderedDict[str, tuple[float, Entry]] = OrderedDict()  # (in detail)
         self._cards: OrderedDict[str, tuple[float, Entry]] = OrderedDict()  # (as lists have them)
         self._episodes: OrderedDict[str, Whole] = OrderedDict()  # (shows' episodes)
@@ -370,13 +370,12 @@ class Catalog:
             task.add_done_callback(done)
         return await asyncio.shield(task)
 
-    def learn(self, entries: Iterable[Entry]) -> None:
+    def learn(self, entries: Iterable[Entry], details: bool = False) -> None:
         """Remembers which library each of these is in, and the versions of
         their pictures, as the library says them now (pictures.py)."""
         for e in entries:
-            if e.thumb_v or e.art_v or e.show_thumb_v or e.show_art_v:
-                self._pictures[e.key] = replace(e, media=(), summary="", tags=None)
-                self._pictures.move_to_end(e.key)
+            self._pictures[e.key] = (replace(e, media=(), summary="", tags=None), details)
+            self._pictures.move_to_end(e.key)
             if not e.library:
                 continue
             for key in (e.key, e.show_key):
@@ -448,7 +447,7 @@ class Catalog:
                     self._entries.move_to_end(key)
                     while len(self._entries) > ENTRIES_KEPT:
                         self._entries.popitem(last=False)
-                    self.learn([found])
+                    self.learn([found], details=True)
                 return found
 
             found = await self._once(("entry", key), fetch)
@@ -465,9 +464,17 @@ class Catalog:
     def picture_version(self, key: str, kind: str) -> str | None:
         """The version of the picture an app's `kind` of `key` is made from,
         as last heard from the library (in a list or in detail), never
-        asking it; None if it isn't known here (see pictures.py)."""
+        asking it; None if it isn't known here (see pictures.py). A list's
+        missing backdrop isn't taken as none (lists may leave it out); a
+        missing poster, or anything missing in detail, is."""
         heard = self._pictures.get(key)
-        return (heard.picture_version(kind) or None) if heard is not None else None
+        if heard is None:
+            return None
+        e, details = heard
+        found = e.picture_version(kind)
+        if found == catalog.NO_PICTURE and kind == "backdrop" and not details:
+            return None
+        return found or None
 
     async def check(self, key: str, known_library: str = "") -> None:
         """NotShared unless `key` is in a shared library (asking the library
@@ -1614,11 +1621,8 @@ class PictureCache:
         return found
 
 
-def width_for(asked: int, kind: str = "poster") -> int:
-    """The width a picture of `kind` is made at: the next of its widths up
-    from what's asked for (the largest, for anything larger). The widths are
-    pictures.py's: posters', and wide pictures' (backdrops and stills)."""
-    return pictures.width_for(kind, asked)
+# The width a picture of a kind is made at (pictures.py has the widths).
+width_for = pictures.width_for
 
 
 # The Resume row and what's next -------------------------------------------------

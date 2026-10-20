@@ -579,6 +579,7 @@ class AppContext:
     picture_maker: kept_pictures.Maker = field(default_factory=kept_pictures.Maker)
     # Whether Plex's own resize makes WebP: None until it's been asked once.
     plex_webp: bool | None = None
+    plex_webp_at: float = 0.0  # (when it was last asked)
     stats: stats.Stats = field(init=False)  # how much each station is watched
     health: health.Health = field(init=False)  # the server's health, now (see health.py)
     titles: titles.Titles = field(init=False)  # the ratings of what's on the stations
@@ -897,7 +898,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 problem,
             )
         ctx.gpu.start()
-        await asyncio.to_thread(ctx.picture_disk.open)
+        await ctx.picture_disk.run(ctx.picture_disk.open)
         background = [
             asyncio.create_task(jobs.look_again_forever(ctx)),
             asyncio.create_task(ctx.who_watches.run_forever()),
@@ -922,7 +923,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if ctx.stop_learning is not None:
             ctx.stop_learning()  # (asking Plex about what's playing stops: 1.40.0)
         ctx.folders.stop()  # (reading a Media folder of your own stops at once)
-        ctx.picture_disk.close()
+        await asyncio.to_thread(ctx.picture_disk.close)  # (never the loop itself waiting on its lock)
         ctx.markers.cuts.cancel()  # (looking for cuts stops at once; saved below)
 
         stopped: list[BaseException] = []  # (the first that stops a step, raised at the end)
@@ -1821,29 +1822,41 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         name = kept_pictures.name("logos", f"{number}|{channel.logo or 'number'}|{LIBRARY_VERSION}", "logo", width, "png")
         kept = ctx.app_pictures.get(here)
         if kept is None and ctx.picture_disk.on:
-            found = await asyncio.to_thread(ctx.picture_disk.get, name)
+            found = await ctx.picture_disk.run(ctx.picture_disk.get, name)
             if found is not None:
                 kept = ctx.app_pictures.put(here, (found.data, found.content_type))
+        # (Kept a year only at the address with its current version: an old one, or none, a day.)
+        current = request.query_params.get("v") == f"{LIBRARY_VERSION}-{channel.logo or 'number'}"
+        for_a_day = "private, max-age=86400"
         if kept is None:
 
-            async def make() -> bytes | None:
+            async def make() -> tuple[bytes, bool] | None:
                 source = await asyncio.to_thread(path.read_bytes) if path is not None else None
                 if source is None:
                     source = ctx.icon_cache.get(number) or await render_icon(settings, str(number))
                     if source is None:
                         return None
                     ctx.icon_cache[number] = source
-                return await kept_pictures.logo(settings.ffmpeg_path, source, width) or source
+                sized = await kept_pictures.logo(settings.ffmpeg_path, source, width)
+                return (sized, True) if sized else (source, False)
 
             async with ctx.picture_maker.screen():
                 made = await ctx.picture_maker.once(name, make)
             if made is None:
                 raise HTTPException(404)
-            kept = ctx.app_pictures.put(here, (made, "image/png"))
+            if not made[1]:
+                # (It couldn't be sized just now: sent as it is, for a day, and never kept. The cold
+                # audit, October 19.)
+                return Response(made[0], media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+            kept = ctx.app_pictures.put(here, (made[0], "image/png"))
             if ctx.picture_disk.on:
-                await asyncio.to_thread(ctx.picture_disk.put, name, kept_pictures.Kept(kept[0], kept[1], kept[2]))
-        headers = {"Cache-Control": "private, max-age=31536000", "ETag": kept[2], "X-Content-Type-Options": "nosniff"}
-        if kept[2] in request.headers.get("if-none-match", ""):
+                await ctx.picture_disk.run(ctx.picture_disk.put, name, kept_pictures.Kept(kept[0], kept[1], kept[2]))
+        headers = {
+            "Cache-Control": "private, max-age=31536000" if current else for_a_day,
+            "ETag": kept[2],
+            "X-Content-Type-Options": "nosniff",
+        }
+        if {kept[2], "*"} & applibrary._tags(request.headers.get("if-none-match", "")):
             return Response(status_code=304, headers=headers)
         return Response(kept[0], media_type="image/png", headers=headers)
 
@@ -3499,7 +3512,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def app_pictures_put(body: AppPicturesIn, request: Request):
         most = int(body.gb * (1 << 30))
         if most != ctx.picture_disk.most_bytes:
-            await asyncio.to_thread(ctx.picture_disk.set_most, most)
+            await ctx.picture_disk.run(ctx.picture_disk.set_most, most)
             ctx.db.set_meta(kept_pictures.META_GB, repr(body.gb))
             user = access.signed_in(request)
             log.info(

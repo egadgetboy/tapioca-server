@@ -672,7 +672,8 @@ async function loadAppLimits() {
   paint();
 }
 // Pictures for tapiOca's apps, kept on disk (see pictures.py) ----------------------
-const pictureBytes = b => b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(0, Math.round(b / 1e6))} MB`;
+// (Counted as the space is, in 1,024s, so a full space never reads as more than it.)
+const pictureBytes = b => b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GB` : `${Math.max(0, Math.round(b / 2 ** 20))} MB`;
 async function loadAppPictures() {
   let got;
   try { got = await api('/api/app-pictures'); }
@@ -684,7 +685,8 @@ async function loadAppPictures() {
     oninput: () => { body.dataset.editing = '1'; } });
   const result = h('span', { class: 'hint', role: 'status' });
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
-    const value = Math.min(got.most, Math.max(0, Number(gb.value) || 0));
+    if (gb.value.trim() === '' || !Number.isFinite(Number(gb.value))) { result.textContent = 'Enter a number of GB, or 0 to keep none.'; return; }
+    const value = Math.min(got.most, Math.max(0, Number(gb.value)));
     try { await api('/api/app-pictures', { method: 'PUT', body: { gb: value } }); }
     catch (e) { result.textContent = e.message; return; }
     toast('Saved');
@@ -695,7 +697,7 @@ async function loadAppPictures() {
     h('p', { style: 'margin:0' }, 'tapiOca keeps the posters and backdrops it makes for its apps, so they show quickly, even after a restart or an update. When the space is full, the ones viewed longest ago make room.'),
     h('p', { class: 'muted small', style: 'margin:0' }, `Kept now: ${pictureBytes(got.keptBytes)}.`),
     h('div', { class: 'scan-set' }, h('label', { for: 'appPicturesGb', style: 'min-width:220px' }, 'Space for pictures, in GB'), gb),
-    h('p', { class: 'hint', style: 'margin:0' }, 'Enter 0 to keep none: each picture is made again whenever an app asks for it. Pictures are never in backups, since tapiOca can make them again.'),
+    h('p', { class: 'hint', style: 'margin:0' }, 'Enter 0 to keep none on disk: pictures are made again after each restart. Pictures are never in backups, since tapiOca can make them again.'),
     h('div', { class: 'scan-set' }, save, result));
 }
 // Media in tapiOca's apps (see ondemand.py) --------------------------------------

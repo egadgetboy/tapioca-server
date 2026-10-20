@@ -654,6 +654,7 @@ AHEAD_SIZES = 3  # the sizes the apps asked for most, drawn for each
 AHEAD_DEFAULT = (("poster", 320, "jpeg"), ("backdrop", 1280, "jpeg"))  # (before any were asked)
 AHEAD_PER_LIBRARY = 20  # the newest in each library
 AHEAD_RESUME = 10  # each person's latest
+PLEX_WEBP_AGAIN_S = 3600.0  # Plex's resize asked for WebP again this long after it didn't make it
 
 
 async def draw_ahead_forever(ctx: Any) -> None:
@@ -1158,12 +1159,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         found = ctx.library.picture_version(key, kind)
         return found if found is not None else (cat.picture_version(key, kind) or "")
 
-    async def make_picture(key: str, kind: str, width: int, fmt: str) -> tuple[tuple[bytes, str], str, str]:
+    async def make_picture(key: str, kind: str, width: int, fmt: str) -> tuple[tuple[bytes, str], str, str, bool]:
         """A picture made for an app: ((it, its type), the version it was made
-        from, its title's library). As `fmt` asks when it can be made so, JPEG
-        otherwise (its type says which). NoPicture or httpx's errors if there's
-        none, or the library can't be reached; the library's own errors as
-        they come."""
+        from, its title's library, and whether it may be kept on disk). As
+        `fmt` asks when it can be made so, JPEG otherwise (its type says
+        which). NoPicture or httpx's errors if there's none, or the library
+        can't be reached; the library's own errors as they come."""
         # (An episode's poster is its show's; a show's still, its poster.)
         which = "art" if kind == "backdrop" else "thumb"
         e = await cat.entry(key)
@@ -1177,20 +1178,40 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             if fmt == "webp" and await kept_pictures.makes_webp(ctx.settings.ffmpeg_path):
                 made = await webp_picture(shown.key, which, kind, width, height)
                 if made is not None:
-                    return (made, "image/webp"), version, e.library
-            return await ctx.library.picture(shown.key, which, width, height), version, e.library
+                    return (made, "image/webp"), version, e.library, True
+            if is_folder_key(shown.key):
+                return await ctx.library.picture(shown.key, which, width, height), version, e.library, True
+            try:
+                return await ctx.library.picture(shown.key, which, width, height, fallback=False), version, e.library, True
+            except httpx.HTTPStatusError:
+                # (Plex's resize failed: the picture as Plex keeps it, as before, but never kept on disk
+                # at full size for a small width. The cold audit, October 19.)
+                return await ctx.library.picture_source(shown.key, which), version, e.library, False
+
+    async def keep_picture(key: str, kind: str, width: int, fmt: str, here: tuple, name: str) -> tuple:
+        """A picture made and kept, in memory and on disk, by the making itself,
+        so one made for a request that stopped waiting is still kept (the cold
+        audit, October 19): what the memory keeps."""
+        (data, got), version, library, keepable = await make_picture(key, kind, width, fmt)
+        kept = ctx.app_pictures.put(here, (data, got), version, library)
+        # (A JPEG sent for WebP isn't kept on disk: it's made as WebP once it can be.)
+        if keepable and got == kept_pictures.TYPES[fmt] and ctx.picture_disk.on:
+            await ctx.picture_disk.run(
+                ctx.picture_disk.put, name, kept_pictures.Kept(data, got, kept[2], version, library)
+            )
+        return kept
 
     async def webp_picture(key: str, which: str, kind: str, width: int, height: int) -> bytes | None:
-        """WebP: Plex's own, when its resize makes it (asked once, then
-        remembered); otherwise made by FFmpeg from the picture as the
-        library keeps it, in one lossy step (never a JPEG made again as
-        WebP). None if it can't be."""
-        if not is_folder_key(key) and ctx.plex_webp is not False:
-            data, got = await ctx.library.picture(key, which, width, height, fmt="webp")
-            if got == "image/webp":
-                ctx.plex_webp = True
-                return data
-            ctx.plex_webp = False
+        """WebP: Plex's own, when its resize makes it (asked again an hour after
+        it didn't); otherwise made by FFmpeg from the picture as the library
+        keeps it, in one lossy step (never a JPEG made again as WebP). None if
+        it can't be."""
+        if not is_folder_key(key) and (ctx.plex_webp is not False or time.monotonic() - ctx.plex_webp_at > PLEX_WEBP_AGAIN_S):
+            with contextlib.suppress(httpx.HTTPStatusError):
+                data, got = await ctx.library.picture(key, which, width, height, fmt="webp", fallback=False)
+                ctx.plex_webp, ctx.plex_webp_at = got == "image/webp", time.monotonic()
+                if ctx.plex_webp:
+                    return data
         source, _ = await ctx.library.picture_source(key, which)
         return await kept_pictures.encode(ctx.settings.ffmpeg_path, source, kind, width, "webp")
 
@@ -1200,9 +1221,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         """The sizes the apps ask for most, made for each library's newest
         titles and each person's latest, behind any screen's request and
         paused while anyone watches; kept on disk only. How many were made."""
-        if not cat.shared.on or not ctx.picture_disk.on:
-            return 0
+        if not cat.shared.on or not await ctx.picture_disk.run(ctx.picture_disk.can_keep):
+            return 0  # (nothing made that couldn't be kept)
         sizes = [s for s, _ in asked_sizes.most_common(AHEAD_SIZES)] or list(AHEAD_DEFAULT)
+        if not await kept_pictures.makes_webp(ctx.settings.ffmpeg_path):
+            sizes = [s for s in sizes if s[2] != "webp"]
         keys: list[str] = []
         with contextlib.suppress(LibraryError, NotShared, TimeoutError):
             for _, entries in await asyncio.wait_for(cat.recently_added(), ondemand.LIBRARY_WAIT_S):
@@ -1216,19 +1239,19 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     await asyncio.sleep(AHEAD_WAIT_S)
                 await ctx.picture_maker.ahead_turn()
                 name = kept_pictures.name(picture_source(key), key, kind, width, fmt)
-                if await asyncio.to_thread(ctx.picture_disk.has, name):
+                if await ctx.picture_disk.run(ctx.picture_disk.has, name):
                     continue
+                here = (key, kind, width, fmt)
                 try:
                     async with asyncio.timeout(ondemand.LIBRARY_WAIT_S + kept_pictures.MAKE_S):
-                        (data, got), version, library = await ctx.picture_maker.once(
-                            name, lambda key=key, kind=kind, width=width, fmt=fmt: make_picture(key, kind, width, fmt)
+                        await ctx.picture_maker.once(
+                            name, lambda key=key, kind=kind, width=width, fmt=fmt, here=here, name=name: keep_picture(
+                                key, kind, width, fmt, here, name
+                            ), ahead=True,
                         )
                 except (NoPicture, LibraryError, NotShared, httpx.HTTPError, TimeoutError):
                     continue
-                if got == kept_pictures.TYPES[fmt]:
-                    kept = kept_pictures.Kept(data, got, kept_pictures.etag(data), version, library)
-                    if await asyncio.to_thread(ctx.picture_disk.put, name, kept):
-                        made += 1
+                made += 1
         return made
 
     ctx.draw_ahead = draw_ahead
@@ -1242,7 +1265,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         fmt = request.query_params.get("format", "jpeg")
         if fmt not in kept_pictures.FORMATS:
             raise HTTPException(400, "format must be jpeg or webp")
-        width = kept_pictures.width_for(kind, _whole(request.query_params.get("w"), 320, "w", 1, 10_000))
+        width = kept_pictures.width_for(_whole(request.query_params.get("w"), 320, "w", 1, 10_000), kind)
         viewer = viewer_of(request)
         asked_sizes[(kind, width, fmt)] += 1
         here = (key, kind, width, fmt)
@@ -1250,7 +1273,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         kept = ctx.app_pictures.get(here)
         if kept is None and ctx.picture_disk.on:
             # (Behind the memory: on disk, so a restart or an update never makes it again.)
-            found = await asyncio.to_thread(ctx.picture_disk.get, name)
+            found = await ctx.picture_disk.run(ctx.picture_disk.get, name)
             if found is not None:
                 kept = ctx.app_pictures.put(here, (found.data, found.content_type), found.version, found.library)
         async with asking(request):
@@ -1259,28 +1282,28 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             await cat.check(key, kept[4] if kept else "")
             if not viewer.unchecked:
                 await must_see(cat, viewer, await cat.entry(key))
-        if kept is not None and kept[3] != (now := picture_version(key, kind)) and now:
-            # (Changed since it was made, as its source said in a list or a scan: made again.)
-            ctx.app_pictures.drop(here)
-            await asyncio.to_thread(ctx.picture_disk.drop, name)
-            kept = None
+        stale = None
+        if kept is not None and (now := picture_version(key, kind)) and kept[3] != now:
+            # (Changed since it was made, as its source said in a list or a scan: made again; the one
+            # kept is still sent if the new one can't be made just now.)
+            stale, kept = kept, None
         if kept is None:
-            async with asking(request), ctx.picture_maker.screen():
-                try:
-                    made, version, library = await ctx.picture_maker.once(
-                        name, lambda: make_picture(key, kind, width, fmt)
-                    )
-                except (httpx.HTTPStatusError, NoPicture):
-                    # (Within the wait, so "no such picture" is never taken for "not shared".)
-                    raise HTTPException(404, NO_PICTURE) from None
-                except httpx.HTTPError as ex:
-                    raise unreachable(f"a picture didn't come: {type(ex).__name__}") from None
-            kept = ctx.app_pictures.put(here, made, version, library)
-            if made[1] == kept_pictures.TYPES[fmt] and ctx.picture_disk.on:
-                # (A JPEG sent for WebP isn't kept on disk: it's made as WebP once it can be.)
-                await asyncio.to_thread(
-                    ctx.picture_disk.put, name, kept_pictures.Kept(kept[0], kept[1], kept[2], version, library)
-                )
+            try:
+                async with asking(request), ctx.picture_maker.screen():
+                    try:
+                        kept = await ctx.picture_maker.once(name, lambda: keep_picture(key, kind, width, fmt, here, name))
+                    except (httpx.HTTPStatusError, NoPicture):
+                        # (Within the wait, so "no such picture" is never taken for "not shared".)
+                        if stale is not None:  # (removed since: let go)
+                            ctx.app_pictures.drop(here)
+                            await ctx.picture_disk.run(ctx.picture_disk.drop, name)
+                        raise HTTPException(404, NO_PICTURE) from None
+                    except httpx.HTTPError as ex:
+                        raise unreachable(f"a picture didn't come: {type(ex).__name__}") from None
+            except HTTPException as ex:
+                if stale is None or ex.status_code != 503:
+                    raise
+                kept = stale
         data, content_type, tag = kept[:3]
         headers = {
             "Cache-Control": "private, max-age=86400",

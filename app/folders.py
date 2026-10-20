@@ -45,7 +45,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from . import access, catalog, folderart, folderscan, languages, naming, nfo, setup
-from .catalog import Entry, Media, Track
+from .catalog import NO_PICTURE, Entry, Media, Track
 from .db import Item
 from .library import FOLDER_PREFIX, LibraryError, NoPicture, is_folder_key
 from .plex import collection_key, episode_order, filter_tags
@@ -485,6 +485,10 @@ class FolderSource:
             videos = {p: (s, m) for w in walked for p, s, m in w.videos}
             for w in walked:
                 if w.reachable:
+                    # (What the walk saw under its folder replaces what was known there.)
+                    under = w.root.rstrip("/") + "/"
+                    for gone in [p for p in self._picture_stamps if p.startswith(under)]:
+                        del self._picture_stamps[gone]
                     self._picture_stamps.update(w.pictures)
             probes = await self._read_files(videos)
             nfos = await self._read_nfos(walked)
@@ -1543,7 +1547,7 @@ class FolderSource:
             t = self.show_of(t) or t
         where = self._backdrop_of(t) if kind == "backdrop" else self._poster_of(t)
         if not where:
-            return ""
+            return NO_PICTURE  # (none now: a kept one is let go)
         digest = hashlib.sha256(where.encode()).hexdigest()[:12]  # (another file, another version)
         if where.startswith("cover:"):
             path = where.split(":", 3)[3]
