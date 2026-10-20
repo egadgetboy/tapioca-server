@@ -24,6 +24,8 @@ from .test_admin_sign_in import PAT, SAM, browser, light
 from .test_admin_sign_in import app as app  # (the fixture)
 from .test_admin_sign_in import pat as pat  # (the fixture)
 from .test_picker import TV, bearer, device
+from .test_trusted import device_at
+from .test_trusted import home as home  # (the fixture)
 
 HOWS = ("password", "invite", "code", "picker", "pin", "admin_pin", "trusted", "old")
 # (Those that may make credentials: a password, typed for it; an invite code,
@@ -360,7 +362,6 @@ def test_more_paths_note_how(pat, app):
     """The rest of the paths: a trusted network's; a new password, on the
     page and in an app; the picker with a password; an app linked by code
     with a picker; the picker's one box; an Admin's PIN in Full."""
-    ctx = app.state.ctx
     # The picker with Pat's password (an Admin), and its one box.
     tv, key = tv_with_sam(pat, app)
     chose = tv.post(
@@ -380,17 +381,13 @@ def test_more_paths_note_how(pat, app):
     assert hows(app)["Pat"] == "pin"
     # An app with a picker, linked by code on the page.
     started = TestClient(app).post(
-        "/api/internal/link", json={"app": "tapiOca for Roku", "deviceName": "Den Roku"}
+        "/api/internal/link",
+        json={"app": "tapiOca for Roku", "deviceName": "Den Roku", "picker": True},
     )
     started = started.json()
     pat_pc = browser(app, PAT)
     assert pat_pc.post("/api/access/link", json={"code": started["code"]}).status_code == 200
     assert hows(app)["Pat"] == "code"
-    # A trusted network's (as trustedapi makes them).
-    entry = {"id": "home"}
-    user = ctx.db.user(pat.ids["Sam"])
-    ctx.access.start_session(user, unlocked=True, trusted=entry["id"], how=access.HOW_TRUSTED)
-    assert hows(app)["Sam"] == "trusted"
     # A new password on the page, and in an app.
     sam_pc = browser(app, SAM)
     new = {"current": SAM["password"], "password": "sam's new long password"}
@@ -407,3 +404,37 @@ def test_more_paths_note_how(pat, app):
     )
     assert changed.status_code == 200, changed.text
     assert hows(app)["Sam"] == "password"
+    # A new password an Admin sets for themselves on the Access tab.
+    lee_pc = browser(app, {"name": "Lee", "password": "harbor violet quill"})
+    own = lee_pc.put(
+        f"/api/access/users/{pat.ids['Lee']}", json={"password": "lee's new long password"}
+    )
+    assert own.status_code == 200, own.text
+    assert hows(app)["Lee"] == "password"
+
+
+def test_a_trusted_networks_sign_ins_note_how_and_change_nothing(home):
+    """Both of a trusted network's sign-ins (the page's and an app's), as
+    trustedapi makes them, are "trusted"; the app's /me offers no PIN or
+    password change, and a PIN change is refused."""
+    laptop = device_at(home, "192.168.1.44")
+    assert laptop.post("/api/access/trusted-sign-in", json={}).status_code == 200
+    assert hows(home)["Pat"] == "trusted"
+    signed = laptop.post("/api/internal/trusted", json={"app": "Phone"}).json()
+    assert hows(home)["Pat"] == "trusted"
+    phone = device_at(home, "192.168.1.44", authorization=f"Bearer {signed['token']}")
+    me = phone.get("/api/internal/me").json()["user"]
+    assert (me["canChangePin"], me["canChangePassword"]) == (False, False)
+    assert phone.post("/api/internal/pin", json={"pin": "4321"}).status_code == 403
+
+
+def test_a_pin_set_with_the_password_ends_the_old_pins_sign_ins(pat, app):
+    """Sam sets a new PIN in an app he signed in on with his password: the
+    sign-in his old PIN made on the TV ends there too."""
+    tv, key = tv_with_sam(pat, app)
+    sams = picked(tv, key, pat.ids["Sam"], "5555")
+    phone = TestClient(app)
+    mine = bearer(phone.post("/api/internal/sign-in", json={**SAM, **TV}).json()["token"])
+    assert phone.post("/api/internal/pin", json={"pin": "2468"}, headers=mine).status_code == 200
+    assert tv.get("/api/v1/stations", headers=sams).status_code == 401
+    assert phone.get("/api/v1/stations", headers=mine).status_code == 200

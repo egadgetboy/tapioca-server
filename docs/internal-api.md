@@ -652,7 +652,7 @@ sign-in has ended.
 | `user.role` | string | `admin` or `user` |
 | `user.pin` | boolean | Whether they have a PIN (from 1.28.0) |
 | `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for; from 1.42.1, false too on a sign-in made with their PIN, by a trusted network or before 1.42.1. Offer Change password only when it's true |
-| `user.canChangePin` | boolean | Whether they may change their own PIN in the app (from 1.36.2): false for someone an Admin turned that off for (never an Admin); from 1.42.1, false too on a sign-in made with their PIN, by a trusted network or before 1.42.1. Offer changing the PIN only when it's true |
+| `user.canChangePin` | boolean | Whether they may change their own PIN in the app (from 1.36.2): false for someone an Admin turned that off for (never an Admin); from 1.42.1, false too on a sign-in made with their PIN, by a trusted network, for watching (an Admin's) or before 1.42.1. Offer changing the PIN only when it's true |
 | `user.canReport` | boolean | Whether they may report a problem (from 1.30.0: see Reporting a problem): false for someone an Admin turned that off for. Offer Report a problem only when it's true (and while signing in is off, always) |
 | `user.byNetwork` | boolean | (From 1.36.0; only when true) A trusted network signed them in: the sign-in is for watching. An Admin is a User then (`user.role` says `user`), with no Admin alerts; for Admin tasks they sign in with their password. (From 1.38.0, an Admin's other sign-ins for watching also say `user`, without `byNetwork`) |
 | `user.watching` | boolean | (From 1.38.0; only when true) An Admin's sign-in for watching, however it was made (a trusted network's, their PIN without Light sign-in's Admin tools, or away from home): `user.role` says `user`, and Admin tasks need their password |
@@ -739,10 +739,10 @@ off. Answers 403, with the sentence to show:
 - **A sign-in made with their PIN, or by a trusted network** (from
   1.42.1): "This sign-in was made without your password, so it can't
   change passwords, PINs or sign-ins. Sign in with your password to do
-  that." For someone with no password: "You don't have a password, so
-  only an Admin can change your PIN or sign-ins." For a sign-in made
-  before 1.42.1: "This sign-in is from before tapiOca's last update, so
-  it can't change passwords, PINs or sign-ins. Sign in again with your
+  that." For someone with no password: "You don't have a
+  password. Ask an Admin to change your PIN." For a sign-in made
+  before 1.42.1: "This sign-in is from an earlier version of tapiOca,
+  so it can't change passwords, PINs or sign-ins. Sign in again with your
   password to do that."
 - **A browser's sign-in,** since this is for the apps.
 

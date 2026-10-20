@@ -603,8 +603,11 @@ class Devices:
         self._may_set_own_pin(user, pin, unlocked)  # (and as things are now)
         self.db.set_pin(user.id, hashed, no_pin=pin is None)
         # (The sign-ins an Admin's old PIN made for Admin tasks end with it,
-        # but the one it's changed from: see access.end_sessions.)
+        # but the one it's changed from: see access.end_sessions. From 1.42.1,
+        # every sign-in the old PIN made, which is never the one it's changed
+        # from: those can't change a PIN. The re-check of 1.42.1's cold audit.)
         self.db.end_admin_pin_sessions(user.id, but=current)
+        self.db.end_pin_sessions(user.id)
         return pin is not None
 
     def _may_set_own_pin(self, user: User, pin: str | None, unlocked: bool) -> None:

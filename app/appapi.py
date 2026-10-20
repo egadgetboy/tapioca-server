@@ -464,7 +464,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "role": user.role,
             "pin": user.has_pin,
             "canChangePassword": ctx.access.own_password_refusal(user) is None and secret,
+            # (As own_pin decides: never a network's, an Admin's PIN or one for
+            # watching; a picker's only to be told why, by own_pin.)
             "canChangePin": ctx.access.may_change_own_pin(user)
+            and not (made and (made.trusted or made.admin_pin or made.watching))
             and (secret or bool(made and made.unlocked)),
             "canReport": ctx.access.may_report(user),
         }

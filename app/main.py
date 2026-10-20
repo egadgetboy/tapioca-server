@@ -636,11 +636,14 @@ class AppContext:
         self.catalog = ondemand.Catalog(self.library, self.shared)
         # (An Admin's cap, from the page, wins over PICTURE_CACHE_GB's start.)
         try:
-            gb = float(self.db.get_meta(kept_pictures.META_GB, "") or self.settings.picture_cache_gb)
+            gb = float(
+                self.db.get_meta(kept_pictures.META_GB, "") or self.settings.picture_cache_gb
+            )
         except ValueError:
             gb = self.settings.picture_cache_gb
         self.picture_disk = kept_pictures.DiskCache(
-            self.settings.data_dir / kept_pictures.FOLDER, int(min(max(gb, 0), kept_pictures.MOST_GB) * (1 << 30))
+            self.settings.data_dir / kept_pictures.FOLDER,
+            int(min(max(gb, 0), kept_pictures.MOST_GB) * (1 << 30)),
         )
         self.stats = stats.Stats(self.db)
         self.plays.count_with = self.stats.played  # (Media played in the apps counts too)
@@ -923,7 +926,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if ctx.stop_learning is not None:
             ctx.stop_learning()  # (asking Plex about what's playing stops: 1.40.0)
         ctx.folders.stop()  # (reading a Media folder of your own stops at once)
-        await asyncio.to_thread(ctx.picture_disk.close)  # (never the loop itself waiting on its lock)
+        await asyncio.to_thread(
+            ctx.picture_disk.close
+        )  # (never the loop itself waiting on its lock)
         ctx.markers.cuts.cancel()  # (looking for cuts stops at once; saved below)
 
         stopped: list[BaseException] = []  # (the first that stops a step, raised at the end)
@@ -1809,7 +1814,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             ctx.icon_cache[number] = png
         return Response(png, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
 
-    async def logo_sized(number: int, channel: Channel, path: Path | None, request: Request) -> Response:
+    async def logo_sized(
+        number: int, channel: Channel, path: Path | None, request: Request
+    ) -> Response:
         """A station's logo for an app, at the width it draws it (pictures.py)."""
         try:
             asked = int(request.query_params["w"])
@@ -1819,7 +1826,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(400, "w must be a width in pixels")
         width = kept_pictures.logo_width(asked)
         here = ("logo", number, channel.logo or "", width)
-        name = kept_pictures.name("logos", f"{number}|{channel.logo or 'number'}|{LIBRARY_VERSION}", "logo", width, "png")
+        name = kept_pictures.name(
+            "logos", f"{number}|{channel.logo or 'number'}|{LIBRARY_VERSION}", "logo", width, "png"
+        )
         kept = ctx.app_pictures.get(here)
         if kept is None and ctx.picture_disk.on:
             found = await ctx.picture_disk.run(ctx.picture_disk.get, name)
@@ -1847,10 +1856,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             if not made[1]:
                 # (It couldn't be sized just now: sent as it is, for a day, and never kept. The cold
                 # audit, October 19.)
-                return Response(made[0], media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+                return Response(
+                    made[0], media_type="image/png", headers={"Cache-Control": "max-age=86400"}
+                )
             kept = ctx.app_pictures.put(here, (made[0], "image/png"))
             if ctx.picture_disk.on:
-                await ctx.picture_disk.run(ctx.picture_disk.put, name, kept_pictures.Kept(kept[0], kept[1], kept[2]))
+                await ctx.picture_disk.run(
+                    ctx.picture_disk.put, name, kept_pictures.Kept(kept[0], kept[1], kept[2])
+                )
         headers = {
             "Cache-Control": "private, max-age=31536000" if current else for_a_day,
             "ETag": kept[2],
@@ -3502,7 +3515,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     def app_pictures_json() -> dict:
         disk = ctx.picture_disk
-        return {"gb": round(disk.most_bytes / (1 << 30), 2), "keptBytes": disk.bytes_kept, "most": kept_pictures.MOST_GB}
+        return {
+            "gb": round(disk.most_bytes / (1 << 30), 2),
+            "keptBytes": disk.bytes_kept,
+            "most": kept_pictures.MOST_GB,
+        }
 
     @app.get("/api/app-pictures")
     async def app_pictures_get():
@@ -3731,7 +3748,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             # (A saved key goes only to its saved address: the page never
             # shows it, so it's never sent elsewhere to be read there. The
             # cold audit of 1.42.1.)
-            raise HTTPException(400, f"Enter {ARR_NAMES[body.app]}'s API key")
+            raise HTTPException(
+                400,
+                f"Enter {ARR_NAMES[body.app]}'s API key"
+                + (" again for the new address" if saved["key"] and url != saved["url"] else ""),
+            )
         try:
             got = await Arr(body.app, url, key, transport=ctx.arr_transport).status()
         except ArrError as e:

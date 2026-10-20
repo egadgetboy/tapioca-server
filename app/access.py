@@ -258,11 +258,11 @@ LINK_BOUND = "To link an app, sign in with your name and password first."
 # made with a password, and to someone with no password: the cold audit of
 # 1.42.1. See step_up_said.)
 OLD_STEP_UP = (
-    "This sign-in is from before tapiOca's last update, so it can't change passwords, PINs or "
+    "This sign-in is from an earlier version of tapiOca, so it can't change passwords, PINs or "
     "sign-ins. Sign in again with your password to do that."
 )
 OLD_LINK_BOUND = "To link an app, sign in again with your name and password first."
-NO_PASSWORD_STEP_UP = "You don't have a password, so only an Admin can change your PIN or sign-ins."
+NO_PASSWORD_STEP_UP = "You don't have a password. Ask an Admin to change your PIN."
 # Signing in off, and asked for by a name that isn't home's (see
 # name_not_home): only the page, saying this, the tuner and the outside check.
 NAME_NOT_HOME = (
