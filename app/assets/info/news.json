@@ -1,7 +1,7 @@
 {
   "version": "1.42.1",
   "new": [
-    "Linking an app takes a password, invite or link",
+    "Linking an app needs your password",
     "A PIN on a shared TV changes no PIN or password"
   ]
 }
