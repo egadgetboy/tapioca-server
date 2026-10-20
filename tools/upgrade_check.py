@@ -397,6 +397,8 @@ def admin_again(checks: Checks, url: str, made: dict, before: str, where: str) -
     watching (1.37.1 never noted which a PIN made, and every Admin starts on
     Full: the cold audit of 1.38.0), until their password signs in again: so
     it does, on the page and in the app. `made`, with those sign-ins."""
+    if version_of(before) < (1, 42, 1) <= version_of(__version__):
+        return old_sign_ins(checks, url, made, where)
     if version_of(before) >= (1, 38, 0) or version_of(__version__) < (1, 38, 0):
         return made
     page = httpx.Client(headers=PAGE, base_url=url, timeout=30, cookies=made["cookies"])
@@ -408,6 +410,28 @@ def admin_again(checks: Checks, url: str, made: dict, before: str, where: str) -
     checks.ok((me.get("name"), me.get("watching"), me.get("adminTools"), app_watching)
               == (ADMIN["name"], True, False, True),
               f"{where}: the Admin's sign-ins from before are for watching", (me, app_me))  # fmt: skip
+    fresh = httpx.Client(headers=PAGE, base_url=url, timeout=30)
+    signed = fresh.post("/api/access/sign-in", json=ADMIN)
+    app = httpx.post(f"{url}/api/internal/sign-in", json={**ADMIN, **APP}, timeout=30)
+    checks.ok(signed.status_code == 200 and app.status_code == 200,
+              f"{where}: the Admin's password signs in again", signed.text[:200])  # fmt: skip
+    return {**made, "cookies": dict(fresh.cookies),
+            "bearer": {"Authorization": f"Bearer {app.json().get('token')}"}}  # fmt: skip
+
+
+def old_sign_ins(checks: Checks, url: str, made: dict, where: str) -> dict:
+    """From 1.42.1 every sign-in says how it was made, and those from before
+    are "old": kept (nobody is signed out), with the Admin tools they had,
+    but making no credential (the owner's handoff of October 20, part 4):
+    so the page's makes no API token, until the Admin's password signs in
+    again, on the page and in the app. `made`, with those sign-ins."""
+    page = httpx.Client(headers=PAGE, base_url=url, timeout=30, cookies=made["cookies"])
+    me = page.get("/api/access/me").json().get("user") or {}
+    token = page.post("/api/api-tokens", json={"name": "After the update", "scope": "admin"})
+    checks.ok((me.get("name"), me.get("adminTools"), token.status_code)
+              == (ADMIN["name"], True, 403),
+              f"{where}: the Admin's sign-ins from before keep their Admin tools and make no "
+              "credential", (me, token.text[:200]))  # fmt: skip
     fresh = httpx.Client(headers=PAGE, base_url=url, timeout=30)
     signed = fresh.post("/api/access/sign-in", json=ADMIN)
     app = httpx.post(f"{url}/api/internal/sign-in", json={**ADMIN, **APP}, timeout=30)

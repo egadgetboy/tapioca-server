@@ -217,6 +217,28 @@ NOT_SET_UP = "This tapiOca client can't reach the server. Please check back late
 # only an Admin may do asks for their password (Gate._decide). An address
 # isn't a password, nor is a 4-digit PIN typed on a shared screen (the cold
 # audit of 1.36.0).
+# How each sign-in was made (sessions.how, 1.42.1; the owner's handoff of
+# October 20, part 4): with a password typed for it; an invite code (made by
+# an Admin with theirs); a code an app showed, linked by a password's
+# sign-in; picking someone with no PIN; a PIN; an Admin's PIN in Light; a
+# trusted network; or before 1.42.1 (old). Only the first three make
+# credentials (without_secret): a 4-digit PIN typed on a shared screen, a
+# picker, a network or a sign-in whose making isn't known never do.
+HOW_PASSWORD, HOW_INVITE, HOW_CODE = "password", "invite", "code"
+HOW_PICKER, HOW_PIN, HOW_ADMIN_PIN, HOW_TRUSTED, HOW_OLD = (
+    "picker", "pin", "admin_pin", "trusted", "old"
+)  # fmt: skip
+HOWS = (
+    HOW_PASSWORD,
+    HOW_INVITE,
+    HOW_CODE,
+    HOW_PICKER,
+    HOW_PIN,
+    HOW_ADMIN_PIN,
+    HOW_TRUSTED,
+    HOW_OLD,
+)
+MAKES_CREDENTIALS = (HOW_PASSWORD, HOW_INVITE, HOW_CODE)
 STEP_UP = (
     "This sign-in was made without your password, so it can't change passwords, PINs or "
     "sign-ins. Sign in with your password to do that."
@@ -939,6 +961,8 @@ class Access:
         trusted: str = "",
         admin_pin: bool = False,
         watching: bool = False,
+        *,
+        how: str,
     ) -> str:
         """A new token for a browser (or `app`, one of tapiOca's: which,
         on what device; `device_id`: a linked device, from its picker, and
@@ -948,14 +972,17 @@ class Access:
         `trusted`: the trusted network it was made through, the only one it
         works on (see trusted.py). For an Admin, `admin_pin`: made with
         their PIN in Light sign-in; `watching`: for watching only (see
-        for_watching)."""
+        for_watching). `how`: how it was made, one of HOWS, always said (see
+        without_secret)."""
+        if how not in HOWS:
+            raise ValueError(f"No such way to make a sign-in: {how!r}")
         prefix = (
             TRUSTED_TOKEN_PREFIX if trusted else PIN_TOKEN_PREFIX if admin_pin or watching else ""
         )
         token = prefix + secrets.token_urlsafe(32)
         self.db.add_session(
             session_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id, unlocked,
-            asked_from.get() if at is None else at, trusted, admin_pin, watching,
+            asked_from.get() if at is None else at, trusted, admin_pin, watching, how,
         )  # fmt: skip
         return token
 
@@ -1387,12 +1414,18 @@ def light_pin(user: User) -> bool:
 
 
 def without_secret(made: SignedIn | None) -> bool:
-    """Whether a sign-in was made without a password or an invite code (by a
-    trusted network, picking someone with no PIN, or with a PIN for an
-    Admin): it can't make a credential that works elsewhere, change
-    passwords or PINs, or link an app (see STEP_UP)."""
+    """Whether a sign-in was made without a password, an invite code or a
+    code a password linked (by a trusted network, picking someone, a PIN,
+    or before 1.42.1, when how wasn't noted: HOWS): it can't make a
+    credential that works elsewhere, change passwords or PINs, or link an
+    app (see STEP_UP). The flags 1.38.0 checks are checked still, for one
+    made before them or carried back from 1.42.0."""
     return made is not None and (
-        by_network(made) or made.unlocked or made.watching or made.admin_pin
+        by_network(made)
+        or made.unlocked
+        or made.watching
+        or made.admin_pin
+        or made.how not in MAKES_CREDENTIALS
     )
 
 
@@ -2037,7 +2070,7 @@ def routes(app: FastAPI, access: Access) -> None:
                 f"Failed sign-in as {body.name[:40]!r} from {where(request.scope)}",
             )
             raise HTTPException(401, "That name or password isn't right")
-        _set_cookie(response, request, access.start_session(user))
+        _set_cookie(response, request, access.start_session(user, how=HOW_PASSWORD))
         # (Their password, here: this browser is theirs, and their PIN may
         # sign them in here again.)
         if token := access.enroll_browser(request.cookies.get(DEVICE_COOKIE), user, renew=True):
@@ -2100,7 +2133,9 @@ def routes(app: FastAPI, access: Access) -> None:
                     "browser. Sign in with your password now.",
                 ) from None
             raise HTTPException(e.status, str(e)) from None
-        _set_cookie(response, request, access.start_session(user, admin_pin=True))
+        _set_cookie(
+            response, request, access.start_session(user, admin_pin=True, how=HOW_ADMIN_PIN)
+        )
         access.record(
             logging.INFO,
             f"{user.name} ({role_name(user.role)}) signed in with their PIN from "
@@ -2146,13 +2181,15 @@ def routes(app: FastAPI, access: Access) -> None:
             raise HTTPException(400, "Sign-in is off, so there's no password to change")
         if refusal := access.own_password_refusal(user):
             raise HTTPException(403, refusal)
+        # (A new password is a credential: never from a PIN's sign-in, 1.42.1.)
+        access.refuse_without_secret(request)
         if await password_or_refuse(user.name, body.current, request, known=True) is None:
             raise HTTPException(400, "Your current password isn't right")
         with _refusing():
             await access.change_user(user, user, password=body.password, role=None)
         # (Every other browser is signed out; this one carries on, and is
         # one they signed in on with their password, for their PIN.)
-        _set_cookie(response, request, access.start_session(user))
+        _set_cookie(response, request, access.start_session(user, how=HOW_PASSWORD))
         if token := access.enroll_browser(request.cookies.get(DEVICE_COOKIE), user, renew=True):
             _set_cookie(response, request, token, DEVICE_COOKIE, DEVICE_DAYS)
         access.record(logging.INFO, f"{user.name} changed their password")
@@ -2211,7 +2248,7 @@ def routes(app: FastAPI, access: Access) -> None:
         if by is None:
             # The first user (signing in was off): whoever turned signing in
             # on is signed in as its first Admin.
-            _set_cookie(response, request, access.start_session(user))
+            _set_cookie(response, request, access.start_session(user, how=HOW_PASSWORD))
             access.record(
                 logging.WARNING,
                 f"Sign-in was turned on, with {user.name} as the first Admin "
@@ -2257,7 +2294,7 @@ def routes(app: FastAPI, access: Access) -> None:
                 access.set_can_report(user, by, body.canReport)
         if by is not None and by.id == user.id and body.password is not None:
             # A new password signs them out everywhere: but not here.
-            _set_cookie(response, request, access.start_session(user))
+            _set_cookie(response, request, access.start_session(user, how=HOW_PASSWORD))
         what = []
         named = user_or_404(user_id).name  # (as they're named now)
         if named != user.name:

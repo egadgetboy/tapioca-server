@@ -263,7 +263,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(404, NOT_LISTED)
         user = person_of(entry)
         # (One that works only here, and only for watching: access.STEP_UP.)
-        token = ctx.access.start_session(user, unlocked=True, trusted=entry["id"])
+        token = ctx.access.start_session(
+            user, unlocked=True, trusted=entry["id"], how=access.HOW_TRUSTED
+        )
         access.set_sign_in_cookie(response, request, token)
         ctx.access.record(
             logging.INFO,
@@ -281,7 +283,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         label = app_label(body.app, body.deviceName)
         if entry["gives"] == "person":
             user = person_of(entry)
-            token = ctx.access.start_session(user, label, unlocked=True, trusted=entry["id"])
+            token = ctx.access.start_session(
+                user, label, unlocked=True, trusted=entry["id"], how=access.HOW_TRUSTED
+            )
             ctx.access.record(
                 logging.INFO,
                 f"{label} was signed in as {user.name} by the trusted network "

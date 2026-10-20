@@ -625,6 +625,8 @@ class SignedIn:
     # tools only at home; or for watching only. See access.STEP_UP.)
     admin_pin: bool = False
     watching: bool = False
+    # (1.42.1: how it was made, one of access.HOWS; 'old' for those from before.)
+    how: str = "old"
 
 
 @dataclass
@@ -882,6 +884,12 @@ _ADDED_COLUMNS = (
     # password (not only an invite code, or an Admin's link): Light's PIN
     # gives an Admin their Admin tools only there.
     ("device_people", "by_password", "INTEGER NOT NULL DEFAULT 0"),
+    # Added in 1.42.1 (the owner's handoff of October 20, part 4): how each
+    # sign-in was made (access.HOWS), so only one made with a password, an
+    # invite code or a code linked by a password makes credentials. Those
+    # made before are 'old': they keep watching, and make none. (The flags
+    # above stay, for going back to 1.42.0.)
+    ("sessions", "how", "TEXT NOT NULL DEFAULT 'old'"),
 )
 
 
@@ -2087,21 +2095,22 @@ class Database:
         trusted: str = "",
         admin_pin: bool = False,
         watching: bool = False,
+        how: str = "old",
     ) -> None:
         """Signs a browser (or `app`, one of tapiOca's; on a linked
         device, from its picker: `device_id`, and `unlocked` when picked
         without a PIN) in as a user, from `where` (an address), keeping only their `keep` newest sign-ins
         (the rest are signed out). On a linked device, whoever was signed in
-        there before is signed out. `admin_pin`, `watching`: see SignedIn."""
+        there before is signed out. `admin_pin`, `watching`, `how`: see SignedIn."""
         with self._lock, self._conn:
             if device_id is not None:
                 self._conn.execute("DELETE FROM sessions WHERE device_id = ?", (device_id,))
             self._conn.execute(
                 "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms, app, device_id, "
-                "active_ms, unlocked, trusted, admin_pin, watching) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "active_ms, unlocked, trusted, admin_pin, watching, how) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (token_hash, user_id, now, now, app, device_id, now, int(unlocked), trusted,
-                 int(admin_pin), int(watching)),
+                 int(admin_pin), int(watching), how),
             )  # fmt: skip
             # (Kept apart by where they work: a trusted network's sign-ins
             # never push out someone's others, 1.36.0.)
@@ -2123,7 +2132,7 @@ class Database:
             row = self._conn.execute(
                 "SELECT users.*, sessions.seen_ms, sessions.device_id, sessions.app, "
                 "sessions.active_ms, sessions.unlocked, sessions.trusted, sessions.admin_pin, "
-                "sessions.watching FROM sessions JOIN users "
+                "sessions.watching, sessions.how FROM sessions JOIN users "
                 "ON users.id = sessions.user_id WHERE token_hash = ? AND seen_ms >= ?",
                 (token_hash, since_ms),
             ).fetchone()
@@ -2139,6 +2148,7 @@ class Database:
             row["trusted"],
             bool(row["admin_pin"]),
             bool(row["watching"]),
+            row["how"],
         )
 
     def session_app(self, token_hash: str) -> str | None:

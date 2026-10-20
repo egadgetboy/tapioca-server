@@ -410,6 +410,19 @@ class Devices:
             trusted="" if by_password or admin_pin else device.trusted,
             admin_pin=admin_pin,
             watching=user.role == ADMIN and not (by_password or admin_pin),
+            # (How it was made, 1.42.1: only a password's makes credentials.
+            # A User's PIN carried none of the flags above, so a 4-digit PIN
+            # typed on a shared screen could link an app or set their PIN:
+            # the owner's handoff of October 20, part 4.)
+            how=(
+                access.HOW_PASSWORD
+                if by_password
+                else access.HOW_ADMIN_PIN
+                if admin_pin
+                else access.HOW_PIN
+                if user.has_pin
+                else access.HOW_PICKER
+            ),
         )
 
     def _shared(self, device: Device, user: User, here: dict[int, str]) -> bool:
@@ -547,7 +560,8 @@ class Devices:
             # linked: an ordinary linked device now, as appapi's sign-in
             # makes it. The cold audit of 1.36.0.)
             self.db.unbind_device(device.id)
-        return user, self.access.start_session(user, device.name, device.id)
+        how = access.HOW_INVITE if code else access.HOW_PASSWORD
+        return user, self.access.start_session(user, device.name, device.id, how=how)
 
     # Someone's own PIN, in an app ------------------------------------------------------------
 

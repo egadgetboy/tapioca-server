@@ -709,12 +709,14 @@ app's token. Send `{"pin": "1234"}` (exactly 4 digits, each 0 to 9), or
 `{"pin": null}` for none. None removes any PIN they have, and they
 aren't asked again, on any device.
 
-A sign-in made with their password, an invite code or their PIN
-proves it's them. So a new PIN needs nothing more, even to replace one
-they have. A sign-in made by picking them on Who's tuning in? without a
-PIN doesn't prove it, since anyone at that device could have done it.
-From 1.28.1, such a sign-in can't set or remove a PIN, so sign in with
-a password or an invite code first.
+A sign-in made with their password, an invite code, or a code an app
+showed that their password linked, proves it's them. So a new PIN needs
+nothing more, even to replace one they have. From 1.42.1, a sign-in made
+any other way can't set or remove a PIN: picking them on Who's tuning in?,
+with their PIN or without one (a 4-digit PIN typed on a shared screen
+isn't proof), a trusted network, or a sign-in made before 1.42.1. They
+sign in with their password first. (From 1.28.1 to 1.42.0, a sign-in
+made with their PIN could set one.)
 
 The access log shows "Tia set a PIN in tapiOca for Android on
 Tia's phone" or "Tia chose no PIN in ...".
@@ -731,7 +733,10 @@ off. Answers 403, with the sentence to show:
 - **Someone without a password removing theirs.** It's how they sign in.
 - **Someone with neither** a password nor a PIN, such as "Kids." Only
   an Admin gives them one.
-- **A sign-in made by picking someone** without a PIN (from 1.28.1).
+- **A sign-in made by picking someone** without a PIN (from 1.28.1), or
+  with their PIN, by a trusted network, or before 1.42.1 (from 1.42.1):
+  "This sign-in was made without your password, so it can't change
+  passwords, PINs or sign-ins. Sign in with your password to do that."
 - **A browser's sign-in,** since this is for the apps.
 
 Wrong PINs tried recently still count after a new one is chosen: 5
@@ -756,6 +761,11 @@ with `token`, which it keeps in place of the old one. The access log shows
 | Field | Type | What it is |
 |---|---|---|
 | `token` | string | The app's new token: send it from now on |
+
+From 1.42.1, only a sign-in made with their password, an invite code or a
+code their password linked may change it: one made with their PIN, by
+picking them, by a trusted network or before 1.42.1 answers 403 with the
+sentence above, even with the right current password.
 
 Answers 400, with the sentence to show, when the current password is wrong
 or the new one isn't allowed. Answers 429 after 5 wrong ones from one

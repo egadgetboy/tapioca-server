@@ -373,9 +373,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         device = ctx.access.enroll_browser(body.device, user)
         if body.picker:
             linked, new_key = linked_device(body.deviceKey, label, user)
-            token = ctx.access.start_session(user, linked.name, linked.id)
+            token = ctx.access.start_session(user, linked.name, linked.id, how=access.HOW_PASSWORD)
         else:
-            new_key, token = None, ctx.access.start_session(user, label)
+            new_key, token = None, ctx.access.start_session(user, label, how=access.HOW_PASSWORD)
         ctx.access.record(
             logging.INFO,
             f"{user.name} ({access.role_name(user.role)}) signed in to {in_sentence(label)} "
@@ -538,6 +538,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             # a PIN, which for an Admin in Light is their Admin tools. See
             # access.STEP_UP; the cold audit of 1.38.0.)
             raise HTTPException(403, access.STEP_UP)
+        if not signed.unlocked and access.without_secret(signed):
+            # (1.42.1: nor a User's PIN, or a sign-in from before 1.42.1. They
+            # change it with their password: the owner's handoff of October
+            # 20, part 4. One made by picking them with no PIN is refused by
+            # set_own_pin, saying why.)
+            raise HTTPException(403, access.STEP_UP)
         try:
             has = await ctx.devices.set_own_pin(
                 user, body.pin, unlocked=signed.unlocked, current=access.sign_in_of(request)
@@ -558,6 +564,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user, signed = own_app(request)
         if refusal := ctx.access.own_password_refusal(user):
             raise HTTPException(403, refusal)
+        if access.without_secret(signed):
+            # (A new password is a credential: never from a PIN's sign-in,
+            # 1.42.1, though the current one is asked for too.)
+            raise HTTPException(403, access.STEP_UP)
         try:
             right = await ctx.access.check_password(
                 user.name,
@@ -576,7 +586,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(400, str(e)) from None
         except access.NotAllowed:
             raise HTTPException(403, access.ADMINS_ONLY) from None
-        token = ctx.access.start_session(user, signed.app, signed.device_id)
+        token = ctx.access.start_session(
+            user, signed.app, signed.device_id, how=access.HOW_PASSWORD
+        )
         ctx.access.record(
             logging.INFO, f"{user.name} changed their password in {in_sentence(signed.app)}"
         )
@@ -736,11 +748,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # (Signed in where the device is, not where its code was entered.)
         if pending.picker:
             linked, new_key = linked_device(pending.device_key, pending.app, user)
-            token = ctx.access.start_session(user, linked.name, linked.id, at=pending.where)
+            token = ctx.access.start_session(
+                user, linked.name, linked.id, at=pending.where, how=access.HOW_CODE
+            )
             ctx.links.link(pending, user, token, new_key)
         else:
             ctx.links.link(
-                pending, user, ctx.access.start_session(user, pending.app, at=pending.where)
+                pending,
+                user,
+                ctx.access.start_session(user, pending.app, at=pending.where, how=access.HOW_CODE),
             )
         ctx.access.record(
             logging.INFO,

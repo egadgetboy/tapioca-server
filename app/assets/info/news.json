@@ -1,7 +1,7 @@
 {
-  "version": "1.42.0",
+  "version": "1.42.1",
   "new": [
-    "Posters and backdrops come quickly, even after a restart",
-    "Each picture is made once, and kept on disk"
+    "Only a password signs in an app that works anywhere",
+    "A PIN on a shared TV is for watching, and sets nothing"
   ]
 }

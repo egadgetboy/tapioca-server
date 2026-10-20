@@ -672,7 +672,7 @@ def test_a_password_on_a_device_a_network_linked_makes_it_ordinary(home):
     tv_device = ctx.devices.device(key2)
     token = ctx.access.start_session(
         ctx.db.user(home.state.kid), tv_device.name, tv_device.id, unlocked=True,
-        trusted=tv_device.trusted,
+        trusted=tv_device.trusted, how="picker",
     )  # fmt: skip
     pat = admin_at_home(home)
     kept = [e for e in pat.get("/api/access/trusted").json()["entries"]
@@ -724,7 +724,7 @@ def test_a_networks_sign_in_streams_only_there(home):
     ctx = home.state.ctx
     entry = ctx.trusted.entry_for(ipaddress.ip_address("192.168.1.60"))
     kid = ctx.db.user(home.state.kid)
-    token = ctx.access.start_session(kid, "TV", unlocked=True, trusted=entry["id"])
+    token = ctx.access.start_session(kid, "TV", unlocked=True, trusted=entry["id"], how="trusted")
     key = ctx.away.key_for(access.session_hash(token), kid, home=True)
     assert ctx.away.user_of(key, recheck=True, outside=False, where=entry["id"]) is not None
     assert ctx.away.user_of(key, recheck=True, outside=False, where="") is None
@@ -742,7 +742,7 @@ def test_a_networks_sign_in_plays_media_only_there(home):
     ctx = home.state.ctx
     entry = ctx.trusted.entry_for(ipaddress.ip_address("192.168.1.60"))
     kid = ctx.db.user(home.state.kid)
-    token = ctx.access.start_session(kid, "TV", unlocked=True, trusted=entry["id"])
+    token = ctx.access.start_session(kid, "TV", unlocked=True, trusted=entry["id"], how="trusted")
     play = ctx.plays.start(
         user_id=kid.id, user=kid.name, sign_in=access.session_hash(token),
         entry=SimpleNamespace(key="300", show_key=None), media=None, path=None, plex=None,
@@ -825,7 +825,9 @@ def test_an_admin_by_network_is_a_user_and_their_own_devices_are_as_before(home)
         json={"name": "Jo", "password": "a plenty long password", "role": "admin"},
     )
     ctx = home.state.ctx
-    picked = ctx.access.start_session(ctx.db.user(jo.json()["id"]), "Phone", unlocked=True)
+    picked = ctx.access.start_session(
+        ctx.db.user(jo.json()["id"]), "Phone", unlocked=True, how="picker"
+    )
     mine = device_at(home, "192.168.20.7", authorization=f"Bearer {picked}")
     assert mine.get("/api/internal/alerts").status_code == 200
     assert "byNetwork" not in mine.get("/api/internal/me").json()["user"]

@@ -719,7 +719,18 @@ def test_a_passcode_right_after_the_first_sign_in(app):
         ).json()
         assert phone["askPin"] is False
 
-        # No PIN: removed, and not asked again, on any device.
+        # No PIN: removed, and not asked again, on any device. (From 1.42.1,
+        # with her password: a sign-in her PIN made changes no PIN, the
+        # owner's handoff of October 20, part 4.)
+        from_pin = tv.post("/api/internal/pin", json={"pin": None}, headers=hers)
+        assert from_pin.status_code == 403 and from_pin.json()["detail"] == access.STEP_UP
+        hers = bearer(
+            tv.post(
+                "/api/internal/picker/sign-in",
+                json={"name": "Tia", "password": "teen password"},
+                headers=device(key),
+            ).json()["token"]
+        )
         none = tv.post("/api/internal/pin", json={"pin": None}, headers=hers)
         assert none.status_code == 200 and none.json() == {"pin": False}
         again = tv.post(
