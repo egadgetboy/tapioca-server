@@ -71,15 +71,20 @@ FORMATS = ("jpeg", "webp")
 TYPES = {"jpeg": "image/jpeg", "webp": "image/webp"}
 
 # The encoder's settings: the smallest that keep every color plane at
-# QUALITY_FLOOR at every width (measured on posters and backdrops with film
-# grain, gradients and sharp edges: tests/test_pictures.py). libwebp below 85
-# let some sizes' planes fall well under it (0.92 at 240 wide, 80). ENCODER
-# names them: changing any of these changes it, so pictures are made again.
+# QUALITY_FLOOR at every width, on every machine (measured on posters and
+# backdrops with film grain, gradients and sharp edges, each also resized with
+# exact rounding, as arm64's and AVX-512's FFmpeg make it, and with a level of
+# grain here and there: tests/test_pictures.py). libwebp's choices jump on a
+# small change: at 85 to 87, a 240-wide poster fell to 0.94 on some; 88 held on
+# every one of 170 tried. ENCODER names them: changing any of these changes it,
+# so pictures are made again (still "1": no release has kept any before 1.42.0).
 QUALITY_FLOOR = 0.97
-JPEG_Q = 3  # (FFmpeg's -q:v: lower is better; 2 to 31)
+JPEG_Q = 3  # (FFmpeg's -q:v: lower is better; 1 to 31)
 JPEG_Q_SMALL = 2  # (at 320 wide and under: on arm64's FFmpeg, 5 let a 160-wide poster fall to 0.956)
 SMALL = 320
-WEBP_Q = 85  # (libwebp's -quality: higher is better; 0 to 100)
+JPEG_Q_TINY = 1  # (at 160 wide and under: 2 held a 160-wide poster's color at 0.9696 on arm64)
+TINY = 160
+WEBP_Q = 88  # (libwebp's -quality: higher is better; 0 to 100)
 WEBP_EFFORT = 4  # (libwebp's -compression_level: 0 fastest, 6 smallest)
 ENCODER = "1"
 
@@ -132,12 +137,18 @@ def encoder_args(kind: str, width: int, fmt: str) -> list[str]:
     if fmt == "webp":
         return ["-c:v", "libwebp", "-quality", str(WEBP_Q), "-compression_level", str(WEBP_EFFORT),
                 "-f", "webp"]  # fmt: skip
-    return ["-q:v", str(jpeg_q(width)), "-c:v", "mjpeg", "-f", "image2"]
+    return [*jpeg_args(width), "-c:v", "mjpeg", "-f", "image2"]
 
 
 def jpeg_q(width: int) -> int:
     """JPEG's quality at `width` (also a Media folder's own pictures', folderart.sized)."""
-    return JPEG_Q_SMALL if width <= SMALL else JPEG_Q
+    return JPEG_Q_TINY if width <= TINY else JPEG_Q_SMALL if width <= SMALL else JPEG_Q
+
+
+def jpeg_args(width: int) -> list[str]:
+    """FFmpeg's JPEG quality at `width` (its encoder goes no better than 2 unless told it may)."""
+    q = jpeg_q(width)
+    return ["-qmin", str(q), "-q:v", str(q)] if q < 2 else ["-q:v", str(q)]
 
 
 async def encode(ffmpeg: str, data: bytes, kind: str, width: int, fmt: str) -> bytes | None:
