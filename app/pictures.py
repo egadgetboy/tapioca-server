@@ -59,17 +59,20 @@ T = TypeVar("T")
 POSTER_WIDTHS = (160, 240, 320, 480, 720, 960, 1440)
 WIDE_WIDTHS = (320, 640, 720, 1280, 1920)
 KINDS = ("poster", "backdrop", "thumb")
+# Station logos, when an app asks for a width: PNG always (they need their
+# transparency), never made larger. Their addresses carry a version.
+LOGO_WIDTHS = (80, 120, 160, 240, 320, 480)
 FORMATS = ("jpeg", "webp")
 TYPES = {"jpeg": "image/jpeg", "webp": "image/webp"}
 
-# The encoder's settings, by width: the smallest that keeps every color
-# plane at QUALITY_FLOOR (measured on posters and backdrops with grain and
-# gradients, tests/test_pictures.py), with a little room. ENCODER names them:
-# changing any of these changes it, so pictures are made again.
+# The encoder's settings: the smallest that keep every color plane at
+# QUALITY_FLOOR at every width (measured on posters and backdrops with film
+# grain, gradients and sharp edges: tests/test_pictures.py). libwebp below 85
+# let some sizes' planes fall well under it (0.92 at 240 wide, 80). ENCODER
+# names them: changing any of these changes it, so pictures are made again.
 QUALITY_FLOOR = 0.97
 JPEG_Q = 5  # (FFmpeg's -q:v: lower is better; 2 to 31)
-WEBP_Q = 75  # (libwebp's -quality: higher is better; 0 to 100)
-WEBP_Q_AT = {("poster", 160): 80, ("wide", 320): 85}  # (the smallest sizes need a little more)
+WEBP_Q = 85  # (libwebp's -quality: higher is better; 0 to 100)
 WEBP_EFFORT = 4  # (libwebp's -compression_level: 0 fastest, 6 smallest)
 ENCODER = "1"
 
@@ -96,6 +99,10 @@ def width_for(kind: str, asked: int) -> int:
     return next((w for w in sizes if w >= asked), sizes[-1])
 
 
+def logo_width(asked: int) -> int:
+    return next((w for w in LOGO_WIDTHS if w >= asked), LOGO_WIDTHS[-1])
+
+
 def height_for(kind: str, width: int) -> int:
     return width * 3 // 2 if kind == "poster" else width * 9 // 16
 
@@ -116,8 +123,7 @@ def etag(data: bytes) -> str:
 def encoder_args(kind: str, width: int, fmt: str) -> list[str]:
     """FFmpeg's output settings for one picture."""
     if fmt == "webp":
-        quality = WEBP_Q_AT.get(("wide" if wide(kind) else "poster", width), WEBP_Q)
-        return ["-c:v", "libwebp", "-quality", str(quality), "-compression_level", str(WEBP_EFFORT),
+        return ["-c:v", "libwebp", "-quality", str(WEBP_Q), "-compression_level", str(WEBP_EFFORT),
                 "-f", "webp"]  # fmt: skip
     return ["-q:v", str(JPEG_Q), "-c:v", "mjpeg", "-f", "image2"]
 
@@ -133,6 +139,32 @@ async def encode(ffmpeg: str, data: bytes, kind: str, width: int, fmt: str) -> b
             "-loglevel", "error", *ff.UPLOADED_PICTURE, "-i", "pipe:0", "-frames:v", "1",
             "-vf", f"scale='min({width},iw)':'min({height},ih)':force_original_aspect_ratio=decrease",
             *encoder_args(kind, width, fmt), "pipe:1",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )  # fmt: skip
+    except OSError:
+        return None
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(data), MAKE_S)
+    except TimeoutError:
+        return None
+    finally:
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            await proc.wait()
+    return out if proc.returncode == 0 and out else None
+
+
+async def logo(ffmpeg: str, data: bytes, width: int) -> bytes | None:
+    """A Station's logo (PNG) made `width` wide at most, keeping its shape
+    and its transparency; None if FFmpeg can't."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *ff.low_priority(nice=10, idle_io=False), ffmpeg, "-hide_banner", "-nostdin",
+            "-loglevel", "error", *ff.UPLOADED_PICTURE, "-i", "pipe:0", "-frames:v", "1",
+            "-vf", f"scale='min({width},iw)':-2:flags=lanczos,format=rgba", "-c:v", "png", "-f", "image2",
+            "pipe:1",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )  # fmt: skip

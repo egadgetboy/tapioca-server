@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -235,3 +237,111 @@ def test_a_changed_plex_picture_shows_after_the_next_browse_with_no_ask_just_to_
     assert home.get("/api/internal/art/300?w=320").content == first.content  # (not heard of yet: kept)
     assert home.get("/api/internal/libraries/2").status_code == 200  # (the next browse hears of it)
     assert home.get("/api/internal/art/300?w=320").content == b"new poster 300"
+
+
+def test_a_replaced_poster_file_shows_after_the_next_rescan_never_reading_the_disk_just_to_check(tmp_path):
+    from .folderlib import Clips, radarr_movies
+    from .test_folder_media import add_library, keys_by_title
+
+    clips = Clips(tmp_path / "clips")
+    root = tmp_path / "media"
+    radarr_movies(root / "Movies", clips)
+    poster = root / "Movies" / "The Glass Garden (1999)" / "poster.jpg"
+    settings = Settings(data_dir=tmp_path / "data", media_dir=str(root))
+    with TestClient(create_app(settings, PlexClient("", ""))) as home:
+        lib = add_library(home, "Movies", "movie", str(root / "Movies"))
+        key = keys_by_title(home, lib)["The Glass Garden"]
+        first = home.get(f"/api/internal/art/{key}?w=320")
+        assert first.status_code == 200
+        poster.write_bytes(clips.wide.read_bytes())  # (replaced, beside the movie)
+        assert home.get(f"/api/internal/art/{key}?w=320").content == first.content  # (no scan yet: kept)
+        scanned = home.get("/api/folder-libraries").json()["libraries"][0]["scannedMs"]
+        assert home.post(f"/api/folder-libraries/{lib}/scan").status_code == 202
+        for _ in range(300):
+            if home.get("/api/folder-libraries").json()["libraries"][0]["scannedMs"] != scanned:
+                break
+            time.sleep(0.05)
+        again = home.get(f"/api/internal/art/{key}?w=320")
+        assert again.status_code == 200 and again.content != first.content
+
+
+# Station logos -------------------------------------------------------------------------------------
+
+
+def test_a_logo_an_app_asks_a_width_of_is_made_that_wide_kept_a_year_and_stays_png(home):
+    made = home.post("/api/channels", json={"number": 42, "logo": "halloween",
+                                            "sources": [{"type": "show", "ratingKey": "100"}]})  # fmt: skip
+    assert made.status_code == 201, made.text
+    plain = home.get("/channel-icon/42.png")  # (as Plex and the tuner have always had it)
+    assert plain.status_code == 200 and plain.headers["cache-control"] == "max-age=86400"
+    sized = home.get("/channel-icon/42.png?v=1-halloween&w=100")
+    assert sized.status_code == 200 and sized.headers["content-type"] == "image/png"
+    assert sized.headers["cache-control"] == "private, max-age=31536000"
+    seen = probe(sized.content)
+    assert seen["codec_name"] == "png" and seen["width"] == 120, seen  # (rounded up)
+    assert len(sized.content) < len(plain.content)
+    again = home.get("/channel-icon/42.png?v=1-halloween&w=110", headers={"If-None-Match": sized.headers["etag"]})
+    assert again.status_code == 304
+    for wrong in ("w=0", "w=wide", "w=10001"):
+        refused(home.get(f"/channel-icon/42.png?{wrong}"), 400)
+    badge = home.get("/channel-icon/99.png?w=160")  # (INFO's: its number, drawn)
+    assert badge.status_code in (200, 404)
+
+
+# Quality, at a measured floor -----------------------------------------------------------------------
+
+
+def film_like(width: int, height: int, busy: bool) -> bytes:
+    """A poster or backdrop as Plex keeps one: a high-quality JPEG with film grain (soft, in the
+    brightness), smooth gradients where banding would show, and sharp edges; or a busy one."""
+    base = f"testsrc2=s={width}x{height}" if busy else (
+        f"gradients=s={width}x{height}:c0=0x203060:c1=0xd08040:c2=0x40a070:n=3:seed=7")
+    look = ("format=yuv444p,noise=c0s=12:c0f=u,gblur=sigma=0.8:planes=1,"
+            "drawbox=x=iw/4:y=ih/3:w=iw/2:h=ih/6:color=white@0.8:t=fill,format=yuvj420p")
+    return subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", base, "-vf", look,
+         "-frames:v", "1", "-q:v", "2", "-f", "image2", "-c:v", "mjpeg", "pipe:1"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+
+
+def planes_ssim(made: bytes, lossless: bytes, pix: str) -> tuple[float, ...]:
+    import re
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as folder:
+        a, b = f"{folder}/made", f"{folder}/lossless.y4m"
+        Path(a).write_bytes(made)
+        Path(b).write_bytes(lossless)
+        said = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", a, "-i", b, "-lavfi",
+             f"[0:v]format={pix}[x];[1:v]format={pix}[y];[x][y]ssim", "-f", "null", "-"],
+            capture_output=True, check=True,
+        ).stderr.decode()  # fmt: skip
+    return tuple(float(x) for x in re.search(r"SSIM Y:([\d.]+).*U:([\d.]+).*V:([\d.]+)", said).groups())
+
+
+def test_every_width_and_format_keeps_every_color_plane_at_the_floor():
+    # (Against a lossless resize at the same width: the encoder's own loss, on brightness and both
+    # colors, so banding in a gradient shows. The settings are the smallest that keep it.)
+    worst = {}
+    for kind, size in (("poster", (2000, 3000)), ("backdrop", (3840, 2160))):
+        sources = [film_like(*size, busy=False), film_like(*size, busy=True)]
+        for width in pictures.widths(kind):
+            height = pictures.height_for(kind, width)
+            for fmt, pix in (("jpeg", "yuvj420p"), ("webp", "yuv420p")):
+                for n, source in enumerate(sources):
+                    lossless = subprocess.run(
+                        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-frames:v", "1", "-vf",
+                         f"scale='min({width},iw)':'min({height},ih)':force_original_aspect_ratio=decrease,format={pix}",
+                         "-f", "yuv4mpegpipe", "-strict", "-1", "pipe:1"],
+                        input=source, capture_output=True, check=True,
+                    ).stdout  # fmt: skip
+                    made = subprocess.run(
+                        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "yuv4mpegpipe", "-i", "pipe:0",
+                         "-frames:v", "1", *pictures.encoder_args(kind, width, fmt), "pipe:1"],
+                        input=lossless, capture_output=True, check=True,
+                    ).stdout  # fmt: skip
+                    worst[(kind, width, fmt, n)] = min(planes_ssim(made, lossless, pix))
+    under = {k: round(v, 4) for k, v in worst.items() if v < pictures.QUALITY_FLOOR}
+    assert not under, under

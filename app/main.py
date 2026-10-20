@@ -120,6 +120,7 @@ from .intro import LENGTHS as INTRO_LENGTHS
 from .library import Library, LibraryError, is_folder_key, is_key
 from .logos import (
     COLLECTION_LOGO,
+    LIBRARY_VERSION,
     MAX_UPLOAD_BYTES,
     UPLOAD_PREFIX,
     LogoError,
@@ -1429,7 +1430,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         """The station's logo, for the app's guide (a picture can't sign in
         either)."""
         away_user(key, number, request)
-        return await channel_icon(number)
+        return await channel_icon(number, request)
 
     @app.get("/hls/k/{key}/{number}/{piece}")
     async def hls_piece_away(key: str, number: int, piece: str, request: Request):
@@ -1769,12 +1770,17 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return Response(status_code=204)
 
     @app.get("/channel-icon/{number}.png")
-    async def channel_icon(number: int):
-        """The station's logo, or a badge with its number."""
+    async def channel_icon(number: int, request: Request):
+        """The station's logo, or a badge with its number. With `w` (tapiOca's
+        apps, from 1.42.0), made that wide, rounded up to one of a few widths,
+        and kept a year: its address carries its version (hdhr.icon_url).
+        Without it, as Plex and the tuner have always had it."""
         channel = ctx.db.get_channel_by_number(number)
         if channel is None:
             raise HTTPException(404)
         path = ctx.logos.path(channel.logo) if channel.logo else None
+        if "w" in request.query_params:
+            return await logo_sized(number, channel, path, request)
         if path is not None:
             return FileResponse(
                 path, media_type="image/png", headers={"Cache-Control": "max-age=86400"}
@@ -1786,6 +1792,45 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 raise HTTPException(404)
             ctx.icon_cache[number] = png
         return Response(png, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+    async def logo_sized(number: int, channel: Channel, path: Path | None, request: Request) -> Response:
+        """A station's logo for an app, at the width it draws it (pictures.py)."""
+        try:
+            asked = int(request.query_params["w"])
+        except ValueError:
+            raise HTTPException(400, "w must be a width in pixels") from None
+        if not 1 <= asked <= 10_000:
+            raise HTTPException(400, "w must be a width in pixels")
+        width = kept_pictures.logo_width(asked)
+        here = ("logo", number, channel.logo or "", width)
+        name = kept_pictures.name("logos", f"{number}|{channel.logo or 'number'}|{LIBRARY_VERSION}", "logo", width, "png")
+        kept = ctx.app_pictures.get(here)
+        if kept is None and ctx.picture_disk.on:
+            found = await asyncio.to_thread(ctx.picture_disk.get, name)
+            if found is not None:
+                kept = ctx.app_pictures.put(here, (found.data, found.content_type))
+        if kept is None:
+
+            async def make() -> bytes | None:
+                source = await asyncio.to_thread(path.read_bytes) if path is not None else None
+                if source is None:
+                    source = ctx.icon_cache.get(number) or await render_icon(settings, str(number))
+                    if source is None:
+                        return None
+                    ctx.icon_cache[number] = source
+                return await kept_pictures.logo(settings.ffmpeg_path, source, width) or source
+
+            async with ctx.picture_maker.screen():
+                made = await ctx.picture_maker.once(name, make)
+            if made is None:
+                raise HTTPException(404)
+            kept = ctx.app_pictures.put(here, (made, "image/png"))
+            if ctx.picture_disk.on:
+                await asyncio.to_thread(ctx.picture_disk.put, name, kept_pictures.Kept(kept[0], kept[1], kept[2]))
+        headers = {"Cache-Control": "private, max-age=31536000", "ETag": kept[2], "X-Content-Type-Options": "nosniff"}
+        if kept[2] in request.headers.get("if-none-match", ""):
+            return Response(status_code=304, headers=headers)
+        return Response(kept[0], media_type="image/png", headers=headers)
 
     # Web page + JSON API -------------------------------------------------
 
