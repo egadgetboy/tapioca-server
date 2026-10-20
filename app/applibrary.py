@@ -18,6 +18,7 @@ The deciding is in ondemand.py; this is the asking and answering.
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import contextvars
 import hashlib
@@ -643,6 +644,31 @@ async def watch_limits_forever(ctx: Any) -> None:
             log.exception("Checking what's playing in the apps against limits failed")
 
 
+# Drawing ahead (Pictures that load fast): the common sizes of what's likely
+# on screen next, made at idle priority while no one watches, so the first
+# screen after a restart or a scan is quick.
+AHEAD_FIRST_S = 60.0  # after a start
+AHEAD_EVERY_S = 1800.0  # then again, for what's new
+AHEAD_WAIT_S = 10.0  # while anyone watches, it looks again this often
+AHEAD_SIZES = 3  # the sizes the apps asked for most, drawn for each
+AHEAD_DEFAULT = (("poster", 320, "jpeg"), ("backdrop", 1280, "jpeg"))  # (before any were asked)
+AHEAD_PER_LIBRARY = 20  # the newest in each library
+AHEAD_RESUME = 10  # each person's latest
+
+
+async def draw_ahead_forever(ctx: Any) -> None:
+    await asyncio.sleep(AHEAD_FIRST_S)
+    while True:
+        try:
+            if ctx.draw_ahead is not None:
+                made = await ctx.draw_ahead()
+                if made:
+                    log.debug("Drew %s pictures ahead for the apps", made)
+        except Exception:
+            log.exception("Drawing the apps' pictures ahead failed")
+        await asyncio.sleep(AHEAD_EVERY_S)
+
+
 async def must_see(cat: ondemand.Catalog, viewer: viewing.Viewer, entry: Entry) -> None:
     """NotShared (the same answer as for what isn't shared, or doesn't
     exist) unless `viewer` can see `entry`."""
@@ -787,7 +813,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         viewer = viewer_of(request)
         async with asking(request):
             found = await cat.libraries()
-        return {"libraries": [lib for lib in found if library_seen(viewer, lib["key"])]}
+        return {
+            "libraries": [lib for lib in found if library_seen(viewer, lib["key"])],
+            # (From 1.42.0: the widths pictures are made at, so an app asks for one of them.)
+            "pictures": {
+                "poster": list(kept_pictures.POSTER_WIDTHS),
+                "wide": list(kept_pictures.WIDE_WIDTHS),
+                "logo": list(kept_pictures.LOGO_WIDTHS),
+                "formats": list(kept_pictures.FORMATS),
+            },
+        }
 
     def unwatched_only(user_id: int, entries: list[Entry]) -> list[Entry]:
         """Those of `entries` this person hasn't finished: movies not watched,
@@ -1159,6 +1194,45 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         source, _ = await ctx.library.picture_source(key, which)
         return await kept_pictures.encode(ctx.settings.ffmpeg_path, source, kind, width, "webp")
 
+    asked_sizes: collections.Counter[tuple[str, int, str]] = collections.Counter()  # (by screens, since the start)
+
+    async def draw_ahead() -> int:
+        """The sizes the apps ask for most, made for each library's newest
+        titles and each person's latest, behind any screen's request and
+        paused while anyone watches; kept on disk only. How many were made."""
+        if not cat.shared.on or not ctx.picture_disk.on:
+            return 0
+        sizes = [s for s, _ in asked_sizes.most_common(AHEAD_SIZES)] or list(AHEAD_DEFAULT)
+        keys: list[str] = []
+        with contextlib.suppress(LibraryError, NotShared, TimeoutError):
+            for _, entries in await asyncio.wait_for(cat.recently_added(), ondemand.LIBRARY_WAIT_S):
+                keys += [e.key for e in entries[:AHEAD_PER_LIBRARY]]
+        for user_id in [0, *(u.id for u in ctx.db.users())]:
+            keys += [row["rating_key"] for row in ctx.db.recent_progress(user_id, AHEAD_RESUME)]
+        made = 0
+        for key in dict.fromkeys(keys):
+            for kind, width, fmt in sizes:
+                while ctx.folders.watching():
+                    await asyncio.sleep(AHEAD_WAIT_S)
+                await ctx.picture_maker.ahead_turn()
+                name = kept_pictures.name(picture_source(key), key, kind, width, fmt)
+                if await asyncio.to_thread(ctx.picture_disk.has, name):
+                    continue
+                try:
+                    async with asyncio.timeout(ondemand.LIBRARY_WAIT_S + kept_pictures.MAKE_S):
+                        (data, got), version, library = await ctx.picture_maker.once(
+                            name, lambda key=key, kind=kind, width=width, fmt=fmt: make_picture(key, kind, width, fmt)
+                        )
+                except (NoPicture, LibraryError, NotShared, httpx.HTTPError, TimeoutError):
+                    continue
+                if got == kept_pictures.TYPES[fmt]:
+                    kept = kept_pictures.Kept(data, got, kept_pictures.etag(data), version, library)
+                    if await asyncio.to_thread(ctx.picture_disk.put, name, kept):
+                        made += 1
+        return made
+
+    ctx.draw_ahead = draw_ahead
+
     @app.get("/api/internal/art/{key}")
     async def picture(key: str, request: Request):
         shared_here(request)
@@ -1170,6 +1244,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(400, "format must be jpeg or webp")
         width = kept_pictures.width_for(kind, _whole(request.query_params.get("w"), 320, "w", 1, 10_000))
         viewer = viewer_of(request)
+        asked_sizes[(kind, width, fmt)] += 1
         here = (key, kind, width, fmt)
         name = kept_pictures.name(picture_source(key), key, kind, width, fmt)
         kept = ctx.app_pictures.get(here)

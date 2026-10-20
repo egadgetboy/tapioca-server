@@ -151,7 +151,7 @@ function showTab(name) {
   if (name === 'logs') { loadLogs(true); loadProblems(); loadNotify(); }
   if (name === 'setup') { loadBackups(); renderPlaybackPanel(); loadUpdates(); loadInfoStation(); loadFolderLibraries(); }
   if (name === 'stats') { loadStats(); loadNow(); }
-  if (name === 'access') { loadAccess(); loadApps(); loadTuner(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); loadTrusted(); }
+  if (name === 'access') { loadAccess(); loadApps(); loadTuner(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadAppPictures(); loadApiTokens(); loadTrusted(); }
   history.replaceState(null, '', '#' + name);
 }
 

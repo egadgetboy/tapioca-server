@@ -78,6 +78,8 @@ ENCODER = "1"
 
 STAMP = "tapioca-pictures 1"  # the cache's own format
 FOLDER = Path("cache") / "pictures"  # in the data folder
+META_GB = "picture_cache_gb"  # an Admin's cap, in GB, set on the page (no new table: a value in meta)
+MOST_GB = 1_000
 FREE_LEAST = 2 << 30  # nothing written with less free than this
 USED_EVERY_S = 600.0  # a kept picture's last use is written at most this often
 MAKE_S = 30.0  # the longest one picture takes to make
@@ -338,6 +340,15 @@ class DiskCache:
                 self._trouble("keep a picture", e)
                 return False
 
+    def has(self, name: str) -> bool:
+        with self._lock:
+            if self._db is None:
+                return False
+            try:
+                return self._db.execute("SELECT 1 FROM kept WHERE name = ?", (name,)).fetchone() is not None
+            except sqlite3.Error:
+                return False
+
     def drop(self, name: str) -> None:
         """No longer kept (its source's picture changed)."""
         with self._lock:
@@ -370,6 +381,27 @@ class DiskCache:
     @property
     def bytes_kept(self) -> int:
         return self._bytes
+
+    def set_most(self, most_bytes: int) -> None:
+        """A new cap (an Admin's): kept ones dropped down to it at once; at 0,
+        every one, and none kept from then on."""
+        with self._lock:
+            self.most_bytes = most_bytes
+            if self._db is None:
+                pass
+            elif most_bytes <= 0:
+                try:
+                    for (gone,) in self._db.execute("SELECT name FROM kept").fetchall():
+                        self._forget(gone)
+                except (OSError, sqlite3.Error) as e:
+                    self._trouble("let go of its pictures", e)
+            else:
+                try:
+                    self._evict()
+                except (OSError, sqlite3.Error) as e:
+                    self._trouble("let go of its pictures", e)
+        if most_bytes > 0 and self._db is None:
+            self.open()
 
 
 # Making once, what's on screen first -----------------------------------------------------
