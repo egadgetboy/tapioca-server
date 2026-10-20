@@ -157,6 +157,10 @@ def save(db, app: str, url: str, key: str | None, on: bool) -> None:
         raise ValueError("That's neither Sonarr nor Radarr")
     current = settings(db)
     url = clean_url(url) if url.strip() else ""
+    if key is None and url != current[app]["url"]:
+        # (A saved key goes only to its saved address: the page never shows
+        # it, so a new address needs it given again. The cold audit of 1.42.1.)
+        key = ""
     key = current[app]["key"] if key is None else key.strip()
     if key and not key.isalnum():
         raise ValueError(

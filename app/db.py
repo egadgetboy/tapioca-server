@@ -2336,6 +2336,14 @@ class Database:
                 (user_id, but),
             ).rowcount
 
+    def end_pin_sessions(self, user_id: int) -> int:
+        """Ends the sign-ins someone's PIN made on a device's list (1.42.1:
+        sessions.how 'pin'), as a new PIN an Admin sets ends: how many."""
+        with self._lock, self._conn:
+            return self._conn.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND how = 'pin'", (user_id,)
+            ).rowcount
+
     def set_admin_sign_in(self, user_id: int, how: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("UPDATE users SET admin_sign_in = ? WHERE id = ?", (how, user_id))

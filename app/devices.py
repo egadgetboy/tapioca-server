@@ -633,8 +633,10 @@ class Devices:
             hashed = ""
         self.db.set_pin(user.id, hashed)
         self._wrong.pop(user.id, None)
-        # (The sign-ins an Admin's old PIN made for Admin tasks end with it.)
+        # (The sign-ins an Admin's old PIN made for Admin tasks end with it;
+        # from 1.42.1, every sign-in the old PIN made: the cold audit of 1.42.1.)
         self.db.end_admin_pin_sessions(user.id)
+        self.db.end_pin_sessions(user.id)
         if not hashed and not self.db.password_hash(user.id):
             # (Without a password, they're on a device's list only at home now:
             # where they picked themselves with it, they pick themselves again.)

@@ -236,3 +236,174 @@ def test_sign_ins_from_before_are_old_and_keep_watching(tmp_path):
             assert access.without_secret(made)
     finally:
         upgraded.close()
+
+
+# The cold audit of 1.42.1 ---------------------------------------------------------------
+
+
+def test_a_pin_only_accounts_pin_makes_nothing_and_is_told_why(pat, app):
+    """Lu has only a PIN: joined the TV with an invite, then picked with her
+    PIN, she links no app and sets no PIN, and is told an Admin changes it
+    (she has no password to sign in with)."""
+    lu = pat.post("/api/access/users", json={"name": "Lu", "role": "user", "pin": "1111"})
+    assert lu.status_code == 201, lu.text
+    tv, key = tv_with_sam(pat, app)
+    code = pat.post(f"/api/access/users/{lu.json()['id']}/invite").json()["code"]
+    joined = tv.post(
+        "/api/internal/picker/sign-in", json={"name": "Lu", "code": code}, headers=device(key)
+    )
+    assert joined.status_code == 200, joined.text
+    hers = picked(tv, key, lu.json()["id"], "1111")
+    link = a_code(app)
+    for said in (
+        tv.get(f"/api/access/link/{link}", headers=hers),
+        tv.post("/api/access/link", json={"code": link}, headers=hers),
+    ):
+        assert said.status_code == 403 and said.json()["detail"] == access.LINK_BOUND
+    said = tv.post("/api/internal/pin", json={"pin": "2222"}, headers=hers)
+    assert said.status_code == 403 and said.json()["detail"] == access.NO_PASSWORD_STEP_UP
+    me = tv.get("/api/internal/me", headers=hers).json()["user"]
+    assert (me["canChangePin"], me["canChangePassword"]) == (False, False)
+
+
+def test_the_pages_own_password_needs_a_passwords_sign_in(pat, app):
+    """POST /api/access/me/password: refused for an Admin's Light PIN on the
+    page, a User's PIN token from an app and an old sign-in, even with the
+    right current password; a password's changes it."""
+    pc = browser(app, PAT)
+    light(pc)
+    pc.cookies.delete(access.COOKIE)
+    assert pc.post("/api/access/pin-sign-in", json={"id": pat.ids["Pat"], "pin": "1234"}).is_success
+    change = {"current": PAT["password"], "password": "a brand new long one"}
+    said = pc.post("/api/access/me/password", json=change)
+    assert said.status_code == 403 and said.json()["detail"] == access.STEP_UP, said.text
+    tv, key = tv_with_sam(pat, app)
+    sams = picked(tv, key, pat.ids["Sam"], "5555")
+    said = tv.post(
+        "/api/access/me/password",
+        json={"current": SAM["password"], "password": "a brand new long one"},
+        headers=sams,
+    )
+    assert said.status_code == 403, said.text
+    by_password = browser(app, PAT)
+    assert by_password.post("/api/access/me/password", json=change).status_code == 200
+    with TestClient(app) as c:
+        old = bearer(made(app, pat.ids["Sam"], "old"))
+        said = c.post(
+            "/api/access/me/password",
+            json={"current": SAM["password"], "password": "a brand new long one"},
+            headers=old,
+        )
+        assert said.status_code == 403 and said.json()["detail"] == access.OLD_STEP_UP
+
+
+def test_an_old_sign_in_keeps_watching_and_is_told_why(pat, app):
+    """A User's old sign-in still watches; what it can't do says it's from
+    before the update, not that no password made it; /me says so too."""
+    with TestClient(app) as c:
+        old = bearer(made(app, pat.ids["Sam"], "old"))
+        assert c.get("/api/v1/stations", headers=old).status_code == 200
+        said = c.post("/api/internal/pin", json={"pin": "8642"}, headers=old)
+        assert said.status_code == 403 and said.json()["detail"] == access.OLD_STEP_UP
+        link = c.post("/api/access/link", json={"code": a_code(app)}, headers=old)
+        assert link.status_code == 403 and link.json()["detail"] == access.OLD_LINK_BOUND
+        me = c.get("/api/internal/me", headers=old).json()["user"]
+        assert (me["canChangePin"], me["canChangePassword"]) == (False, False)
+        fresh = bearer(made(app, pat.ids["Sam"], "password"))
+        me = c.get("/api/internal/me", headers=fresh).json()["user"]
+        assert (me["canChangePin"], me["canChangePassword"]) == (True, True)
+
+
+def test_a_sign_in_without_how_is_old(tmp_path):
+    """A sign-in 1.42.0 makes after going back, on a database that has the
+    column: it's old (SQL's default), and makes no credential."""
+    db = Database(tmp_path / "back.db")
+    try:
+        sam = db.add_user("Sam", access.hash_password(SAM["password"]), "user", 1, None, "x")
+        with db._lock, db._conn:
+            db._conn.execute(
+                "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms) "
+                "VALUES ('back', ?, 1, 1)",
+                (sam.id,),
+            )
+        made_then = db.session_user("back", 0)
+        assert made_then is not None and made_then.how == "old"
+        assert access.without_secret(made_then)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("how", ("pin", "picker", "trusted"))
+def test_an_admins_pin_picker_or_network_sign_in_is_for_watching_whatever_its_flags(pat, app, how):
+    """Defense in depth: an Admin's sign-in made by a PIN outside Light, a
+    picker or a trusted network is for watching even without the 1.38.0
+    flags that say so."""
+    with TestClient(app) as c:
+        h = bearer(made(app, pat.ids["Pat"], how))
+        said = c.get("/api/internal/alerts", headers=h)
+        assert said.status_code == 403 and said.json()["detail"] == access.WATCHING_ONLY
+
+
+def test_a_new_pin_from_an_admin_ends_the_old_pins_sign_ins(pat, app):
+    """An Admin sets Sam a new PIN: the sign-in his old one made on the TV
+    ends; his password's don't."""
+    tv, key = tv_with_sam(pat, app)
+    sams = picked(tv, key, pat.ids["Sam"], "5555")
+    pc = browser(app, SAM)
+    assert tv.get("/api/v1/stations", headers=sams).status_code == 200
+    assert pat.put(f"/api/access/users/{pat.ids['Sam']}/picker", json={"pin": "7777"}).is_success
+    assert tv.get("/api/v1/stations", headers=sams).status_code == 401
+    assert pc.get("/api/access/me").json()["user"]["name"] == "Sam"
+
+
+def test_more_paths_note_how(pat, app):
+    """The rest of the paths: a trusted network's; a new password, on the
+    page and in an app; the picker with a password; an app linked by code
+    with a picker; the picker's one box; an Admin's PIN in Full."""
+    ctx = app.state.ctx
+    # The picker with Pat's password (an Admin), and its one box.
+    tv, key = tv_with_sam(pat, app)
+    chose = tv.post(
+        "/api/internal/picker/choose",
+        json={"id": pat.ids["Pat"], "password": PAT["password"]},
+        headers=device(key),
+    )
+    assert chose.status_code == 200 and hows(app)["Pat"] == "password"
+    boxed = tv.post(
+        "/api/internal/picker/sign-in",
+        json={"name": "Pat", "secret": PAT["password"]},
+        headers=device(key),
+    )
+    assert boxed.status_code == 200 and hows(app)["Pat"] == "password"
+    # Pat's PIN in Full (his PIN for watching): a PIN's.
+    picked(tv, key, pat.ids["Pat"], "1234")
+    assert hows(app)["Pat"] == "pin"
+    # An app with a picker, linked by code on the page.
+    started = TestClient(app).post(
+        "/api/internal/link", json={"app": "tapiOca for Roku", "deviceName": "Den Roku"}
+    )
+    started = started.json()
+    pat_pc = browser(app, PAT)
+    assert pat_pc.post("/api/access/link", json={"code": started["code"]}).status_code == 200
+    assert hows(app)["Pat"] == "code"
+    # A trusted network's (as trustedapi makes them).
+    entry = {"id": "home"}
+    user = ctx.db.user(pat.ids["Sam"])
+    ctx.access.start_session(user, unlocked=True, trusted=entry["id"], how=access.HOW_TRUSTED)
+    assert hows(app)["Sam"] == "trusted"
+    # A new password on the page, and in an app.
+    sam_pc = browser(app, SAM)
+    new = {"current": SAM["password"], "password": "sam's new long password"}
+    assert sam_pc.post("/api/access/me/password", json=new).status_code == 200
+    assert hows(app)["Sam"] == "password"
+    phone = TestClient(app)
+    signed = phone.post(
+        "/api/internal/sign-in", json={"name": "Sam", "password": new["password"], **TV}
+    ).json()
+    changed = phone.post(
+        "/api/internal/password",
+        json={"current": new["password"], "new": "sam's third long password"},
+        headers=bearer(signed["token"]),
+    )
+    assert changed.status_code == 200, changed.text
+    assert hows(app)["Sam"] == "password"

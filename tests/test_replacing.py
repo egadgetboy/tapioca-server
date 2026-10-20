@@ -156,6 +156,36 @@ def test_the_settings_never_show_the_key_and_are_checked(world):
     assert mixed.status_code == 400 and "doesn't point to Sonarr" in mixed.json()["detail"]
 
 
+def test_a_saved_key_goes_only_to_its_saved_address(world):
+    """(The cold audit of 1.42.1.) The page never shows the keys, so a saved
+    key is never sent to another address: testing or saving a new address
+    asks for the key again. Before, a sign-in that may not see the key (an
+    Admin's PIN, say) could test it against any address and read it there."""
+    c = world.client
+    sent: list[str] = []
+    inner = world.client.app.state.ctx.arr_transport
+
+    async def watched(request):
+        sent.append(f"{request.url.host} {request.headers.get('X-Api-Key', '')}")
+        return await inner.handle_async_request(request)
+
+    import httpx
+
+    world.client.app.state.ctx.arr_transport = httpx.MockTransport(watched)
+    tested = c.post("/api/arr/test", json={"app": "sonarr", "url": "http://203.0.113.9:8989"})
+    assert tested.status_code == 400 and "API key" in tested.json()["detail"], tested.text
+    moved = c.put("/api/arr", json={"app": "sonarr", "url": "http://203.0.113.9:8989", "on": True})
+    assert moved.status_code == 400 and "API key" in moved.json()["detail"], moved.text
+    assert not any(world.sonarr.key in s for s in sent), sent
+    assert c.get("/api/arr").json()["apps"]["sonarr"]["url"] == "http://sonarr.test:8989"
+    # With the key given again, the new address is tested and saved.
+    given = c.post(
+        "/api/arr/test",
+        json={"app": "sonarr", "url": "http://sonarr.test:8989/", "key": world.sonarr.key},
+    )
+    assert given.status_code == 200, given.text
+
+
 def test_a_broken_file_is_blocklisted_before_it_is_removed(world):
     s = world.sonarr
     name = world.file("201").rsplit("/", 1)[1]

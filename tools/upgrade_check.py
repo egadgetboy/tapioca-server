@@ -397,8 +397,10 @@ def admin_again(checks: Checks, url: str, made: dict, before: str, where: str) -
     watching (1.37.1 never noted which a PIN made, and every Admin starts on
     Full: the cold audit of 1.38.0), until their password signs in again: so
     it does, on the page and in the app. `made`, with those sign-ins."""
-    if version_of(before) < (1, 42, 1) <= version_of(__version__):
+    if (1, 38, 0) <= version_of(before) < (1, 42, 1) <= version_of(__version__):
         return old_sign_ins(checks, url, made, where)
+    # (From before 1.38.0, the Admin's sign-ins are for watching, then their
+    # password signs in again, which makes credentials from 1.42.1 too.)
     if version_of(before) >= (1, 38, 0) or version_of(__version__) < (1, 38, 0):
         return made
     page = httpx.Client(headers=PAGE, base_url=url, timeout=30, cookies=made["cookies"])

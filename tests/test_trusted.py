@@ -819,14 +819,15 @@ def test_an_admin_by_network_is_a_user_and_their_own_devices_are_as_before(home)
     assert (me["role"], me["byNetwork"]) == ("user", True)
     # Jo, an Admin with no PIN, picked with nothing on her own linked phone
     # (1.35.0's way, where only she is on it: an unlocked sign-in, not a
-    # network's): an Admin as before.
+    # network's): an Admin as before. (Such a sign-in, carried through an
+    # update, is "old" from 1.42.1.)
     jo = pc.post(
         "/api/access/users",
         json={"name": "Jo", "password": "a plenty long password", "role": "admin"},
     )
     ctx = home.state.ctx
     picked = ctx.access.start_session(
-        ctx.db.user(jo.json()["id"]), "Phone", unlocked=True, how="picker"
+        ctx.db.user(jo.json()["id"]), "Phone", unlocked=True, how="old"
     )
     mine = device_at(home, "192.168.20.7", authorization=f"Bearer {picked}")
     assert mine.get("/api/internal/alerts").status_code == 200

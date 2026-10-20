@@ -651,8 +651,8 @@ sign-in has ended.
 | `user.name` | string | Their name, now |
 | `user.role` | string | `admin` or `user` |
 | `user.pin` | boolean | Whether they have a PIN (from 1.28.0) |
-| `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for. Offer Change password only when it's true |
-| `user.canChangePin` | boolean | Whether they may change their own PIN in the app (from 1.36.2): false for someone an Admin turned that off for (never an Admin). Offer changing the PIN only when it's true |
+| `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for; from 1.42.1, false too on a sign-in made with their PIN, by a trusted network or before 1.42.1. Offer Change password only when it's true |
+| `user.canChangePin` | boolean | Whether they may change their own PIN in the app (from 1.36.2): false for someone an Admin turned that off for (never an Admin); from 1.42.1, false too on a sign-in made with their PIN, by a trusted network or before 1.42.1. Offer changing the PIN only when it's true |
 | `user.canReport` | boolean | Whether they may report a problem (from 1.30.0: see Reporting a problem): false for someone an Admin turned that off for. Offer Report a problem only when it's true (and while signing in is off, always) |
 | `user.byNetwork` | boolean | (From 1.36.0; only when true) A trusted network signed them in: the sign-in is for watching. An Admin is a User then (`user.role` says `user`), with no Admin alerts; for Admin tasks they sign in with their password. (From 1.38.0, an Admin's other sign-ins for watching also say `user`, without `byNetwork`) |
 | `user.watching` | boolean | (From 1.38.0; only when true) An Admin's sign-in for watching, however it was made (a trusted network's, their PIN without Light sign-in's Admin tools, or away from home): `user.role` says `user`, and Admin tasks need their password |
@@ -710,7 +710,7 @@ app's token. Send `{"pin": "1234"}` (exactly 4 digits, each 0 to 9), or
 aren't asked again, on any device.
 
 A sign-in made with their password, an invite code, or a code an app
-showed that their password linked, proves it's them. So a new PIN needs
+showed that one of those linked, proves it's them. So a new PIN needs
 nothing more, even to replace one they have. From 1.42.1, a sign-in made
 any other way can't set or remove a PIN: picking them on Who's tuning in?,
 with their PIN or without one (a 4-digit PIN typed on a shared screen
@@ -733,10 +733,17 @@ off. Answers 403, with the sentence to show:
 - **Someone without a password removing theirs.** It's how they sign in.
 - **Someone with neither** a password nor a PIN, such as "Kids." Only
   an Admin gives them one.
-- **A sign-in made by picking someone** without a PIN (from 1.28.1), or
-  with their PIN, by a trusted network, or before 1.42.1 (from 1.42.1):
-  "This sign-in was made without your password, so it can't change
-  passwords, PINs or sign-ins. Sign in with your password to do that."
+- **A sign-in made by picking someone** without a PIN (from 1.28.1): "To
+  set a PIN, sign in on this device with your password or an invite code
+  first."
+- **A sign-in made with their PIN, or by a trusted network** (from
+  1.42.1): "This sign-in was made without your password, so it can't
+  change passwords, PINs or sign-ins. Sign in with your password to do
+  that." For someone with no password: "You don't have a password, so
+  only an Admin can change your PIN or sign-ins." For a sign-in made
+  before 1.42.1: "This sign-in is from before tapiOca's last update, so
+  it can't change passwords, PINs or sign-ins. Sign in again with your
+  password to do that."
 - **A browser's sign-in,** since this is for the apps.
 
 Wrong PINs tried recently still count after a new one is chosen: 5

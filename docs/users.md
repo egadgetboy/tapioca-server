@@ -683,13 +683,15 @@ From 1.38.0 (the owner, October 17), `app/access.py`.
   (`access.STEP_UP`). It can't link an app either (`access.LINK_BOUND`).
 - **How each sign-in was made** (from 1.42.1, `sessions.how`):
   `password`, `invite` (an invite code), `code` (an app linked by a code,
-  from a password's sign-in), `picker` (picked with no PIN), `pin` (a
+  from a sign-in that may make credentials), `picker` (picked with no PIN), `pin` (a
   User's PIN), `admin_pin` (an Admin's PIN in Light), `trusted` (a trusted
   network), or `old` (made before 1.42.1). Only `password`, `invite` and
   `code` make credentials (`access.without_secret`): before 1.42.1, a User
   picked with their PIN could link an app, a 30-day sign-in that worked
   anywhere, and set their PIN. Sign-ins from before the update keep
-  watching; they make none until a password signs in again.
+  watching and their Admin tools; they make none until a password signs
+  in again. A new PIN an Admin sets ends every sign-in the old one made.
+  A saved Sonarr or Radarr key goes only to its saved address.
 - **Who's signing in?** The page's sign-in screen, at home, lists only the
   Admins who signed in on that browser with their password, latest first.
   Each shows PIN (Light, and their PIN works there) or Password. Never a

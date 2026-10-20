@@ -254,6 +254,15 @@ WATCHING_ONLY = (
     "This sign-in is for watching. For Admin tasks, sign out, then sign in with your password."
 )
 LINK_BOUND = "To link an app, sign in with your name and password first."
+# (1.42.1: the same, said to a sign-in from before the update, most of them
+# made with a password, and to someone with no password: the cold audit of
+# 1.42.1. See step_up_said.)
+OLD_STEP_UP = (
+    "This sign-in is from before tapiOca's last update, so it can't change passwords, PINs or "
+    "sign-ins. Sign in again with your password to do that."
+)
+OLD_LINK_BOUND = "To link an app, sign in again with your name and password first."
+NO_PASSWORD_STEP_UP = "You don't have a password, so only an Admin can change your PIN or sign-ins."
 # Signing in off, and asked for by a name that isn't home's (see
 # name_not_home): only the page, saying this, the tuner and the outside check.
 NAME_NOT_HOME = (
@@ -1079,8 +1088,9 @@ class Access:
         """HTTPException 403 (STEP_UP) for a sign-in made without a password
         (see without_secret): it can't make a credential that works
         elsewhere."""
-        if without_secret(self.sign_in_made(request)):
-            raise HTTPException(403, STEP_UP)
+        made = self.sign_in_made(request)
+        if without_secret(made):
+            raise HTTPException(403, step_up_said(made))
 
     def known_device(self, token: str | None, name: str) -> bool:
         """Whether a browser is one the user called `name` has signed in on."""
@@ -1404,6 +1414,10 @@ def for_watching(made: SignedIn | None, outside_: bool) -> bool:
         by_network(made)
         or made.watching
         or (made.admin_pin and (outside_ or not light_pin(made.user)))
+        # (1.42.1, as well as the flags: an Admin's made by a PIN that isn't
+        # Light's, a picker or a trusted network is for watching, whatever
+        # its flags say. The cold audit of 1.42.1.)
+        or (made.user.role == ADMIN and made.how in (HOW_PIN, HOW_PICKER, HOW_TRUSTED))
     )
 
 
@@ -1427,6 +1441,20 @@ def without_secret(made: SignedIn | None) -> bool:
         or made.admin_pin
         or made.how not in MAKES_CREDENTIALS
     )
+
+
+def step_up_said(made: SignedIn | None, link: bool = False) -> str:
+    """What a sign-in without_secret refuses is told (STEP_UP, or LINK_BOUND
+    for linking an app): said for one from before 1.42.1 (OLD_STEP_UP), and
+    for someone with no password (NO_PASSWORD_STEP_UP), so neither is told
+    something untrue."""
+    old = made is not None and made.how == HOW_OLD
+    old = old and not (by_network(made) or made.unlocked or made.watching or made.admin_pin)
+    if link:
+        return OLD_LINK_BOUND if old else LINK_BOUND
+    if made is not None and not made.user.has_password:
+        return NO_PASSWORD_STEP_UP
+    return OLD_STEP_UP if old else STEP_UP
 
 
 def signed_in(request: Request) -> User | None:

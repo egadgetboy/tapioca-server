@@ -455,12 +455,17 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         mine = own_languages(user.id if user else 0)
         if user is None:
             return {"user": None, "languages": mine}
+        # (1.42.1: what this sign-in may change, too: one made with a PIN,
+        # or from before the update, changes neither. The cold audit of 1.42.1.)
+        made = ctx.access.sign_in_made(request)
+        secret = not access.without_secret(made)
         said: dict[str, Any] = {
             "name": user.name,
             "role": user.role,
             "pin": user.has_pin,
-            "canChangePassword": ctx.access.own_password_refusal(user) is None,
-            "canChangePin": ctx.access.may_change_own_pin(user),
+            "canChangePassword": ctx.access.own_password_refusal(user) is None and secret,
+            "canChangePin": ctx.access.may_change_own_pin(user)
+            and (secret or bool(made and made.unlocked)),
             "canReport": ctx.access.may_report(user),
         }
         state = request.scope.get("state", {})
@@ -537,13 +542,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             # Admin's made with their PIN, or for watching: never for changing
             # a PIN, which for an Admin in Light is their Admin tools. See
             # access.STEP_UP; the cold audit of 1.38.0.)
-            raise HTTPException(403, access.STEP_UP)
+            raise HTTPException(403, access.step_up_said(signed))
         if not signed.unlocked and access.without_secret(signed):
             # (1.42.1: nor a User's PIN, or a sign-in from before 1.42.1. They
             # change it with their password: the owner's handoff of October
             # 20, part 4. One made by picking them with no PIN is refused by
             # set_own_pin, saying why.)
-            raise HTTPException(403, access.STEP_UP)
+            raise HTTPException(403, access.step_up_said(signed))
         try:
             has = await ctx.devices.set_own_pin(
                 user, body.pin, unlocked=signed.unlocked, current=access.sign_in_of(request)
@@ -567,7 +572,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if access.without_secret(signed):
             # (A new password is a credential: never from a PIN's sign-in,
             # 1.42.1, though the current one is asked for too.)
-            raise HTTPException(403, access.STEP_UP)
+            raise HTTPException(403, access.step_up_said(signed))
         try:
             right = await ctx.access.check_password(
                 user.name,
@@ -730,8 +735,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     def never_from_a_network(request: Request) -> None:
         """No sign-in a trusted network gave (or made with no password or
         PIN) links an app: the app's would work anywhere (access.LINK_BOUND)."""
-        if access.without_secret(ctx.access.sign_in_made(request)):
-            raise HTTPException(403, access.LINK_BOUND)
+        made = ctx.access.sign_in_made(request)
+        if access.without_secret(made):
+            raise HTTPException(403, access.step_up_said(made, link=True))
 
     @app.get("/api/access/link/{code}")
     async def link_preview(code: str, request: Request):

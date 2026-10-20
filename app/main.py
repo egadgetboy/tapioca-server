@@ -3724,8 +3724,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             url = clean_url(body.url or saved["url"])
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
-        key = (body.key or "").strip() or saved["key"]
+        key = (body.key or "").strip()
+        if not key and url == saved["url"]:
+            key = saved["key"]
         if not key:
+            # (A saved key goes only to its saved address: the page never
+            # shows it, so it's never sent elsewhere to be read there. The
+            # cold audit of 1.42.1.)
             raise HTTPException(400, f"Enter {ARR_NAMES[body.app]}'s API key")
         try:
             got = await Arr(body.app, url, key, transport=ctx.arr_transport).status()

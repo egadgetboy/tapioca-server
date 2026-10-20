@@ -1,7 +1,7 @@
 {
   "version": "1.42.1",
   "new": [
-    "Only a password signs in an app that works anywhere",
-    "A PIN on a shared TV is for watching, and sets nothing"
+    "Linking an app takes a password, invite or link",
+    "A PIN on a shared TV changes no PIN or password"
   ]
 }
