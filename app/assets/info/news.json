@@ -1,7 +1,7 @@
 {
-  "version": "1.41.0",
+  "version": "1.42.0",
   "new": [
-    "Media in tapiOca's apps knows each title's rating",
-    "An episode's rating is its show's, or its own if stricter"
+    "Posters and backdrops come quickly, even after a restart",
+    "Each picture is made once, and kept on disk"
   ]
 }
