@@ -31,5 +31,11 @@ jobs:
         run: docker build --target test --tag stationplay:test .
       - name: Table
         run: |
-          docker run --rm stationplay:test sh -c 'ffmpeg -version | head -1; dpkg -l | grep -E "libwebp|libswscale|libavcodec6|libavfilter|libavformat" | cut -c1-90; nproc; grep -m1 -o -E "avx512[a-z]*|avx2|asimd" /proc/cpuinfo | sort -u'
-          docker run --rm -e PYTHONPATH=/opt/stationplay -v "$PWD/.github/diag:/diag:ro" stationplay:test python /diag/pictures_table.py
+          # (As notes on the run's page, 30 lines to a note: the logs aren't read from there.)
+          { docker run --rm stationplay:test sh -c 'ffmpeg -version | head -1; dpkg -l | grep -E "libwebp|libswscale|libavcodec6|libavfilter|libavformat" | cut -c1-90; nproc; grep -o -E "avx512[a-z]*|avx2|asimd" /proc/cpuinfo | sort -u | tr "\n" " "; echo'
+            docker run --rm -e PYTHONPATH=/opt/stationplay -v "$PWD/.github/diag:/diag:ro" stationplay:test python /diag/pictures_table.py 2>&1
+          } > "$RUNNER_TEMP/table.txt" || true
+          split -l 30 "$RUNNER_TEMP/table.txt" "$RUNNER_TEMP/part."
+          for f in "$RUNNER_TEMP"/part.*; do
+            echo "::notice title=${{ matrix.arch }} ${f##*.}::$(cut -c1-400 "$f" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+          done
