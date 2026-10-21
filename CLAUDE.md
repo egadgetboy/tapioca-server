@@ -135,16 +135,19 @@ follow them in every change.
 - Don't edit `tests/fakeplex.py`.
 - **No release may make browsing slower** (the restore-fast-pictures
   handoff's part 8d, after the owner's report of October 20; the plan's
-  release gate and DL282). Hard gates, with no margin: a folder page under
-  picture load never answers 503; the counts never go up (Plex details
-  lookups per picture, FFmpeg starts per Plex picture, picture requests in
-  the roll for pictures already kept). Timings: p95 at most 20% worse than
-  the recorded baseline, and never past the budget. Any change to pictures,
-  browsing, the apps' grids or caching runs `tests/test_picture_speed.py`
-  (here) before its candidate; `tools/picture_load.py` on the plan's
-  low-end server and the apps' timed roll on a real TV are the owner's to
-  run (that hardware is outside the repos), and their numbers go in the
-  readiness record. A new baseline is recorded only with the owner's OK.
+  release gate and DL282).
+  - Hard gates, with no margin: a folder page under picture load never
+    answers 503; the counts never go up (Plex details lookups per picture,
+    FFmpeg starts per Plex picture, picture requests in the roll for
+    pictures already kept).
+  - Timings: p95 may be at most 20% worse than the recorded baseline, and
+    never past the budget.
+  - Any change to pictures, browsing, the shell's grids or caching runs the
+    handoff's 8a to 8c before its candidate: the server's
+    `tests/test_picture_speed.py` (8a); `tools/picture_load.py` on the
+    plan's low-end server (8b, the owner's to run: that hardware is outside
+    the repos); the apps' shared cases, picture tests and timed roll (8c).
+  - A new baseline is recorded only with the owner's OK.
 - The wording scan passes (from 1.33.0).
 
 ## Releases
