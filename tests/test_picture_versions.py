@@ -215,12 +215,17 @@ def test_a_changed_picture_that_doesnt_come_keeps_the_one_kept(home, monkeypatch
         assert got.status_code == 200 and got.content == first, type(trouble).__name__
 
 
-def test_with_nothing_kept_trouble_answers_as_1_41_did(home, monkeypatch):
+def test_with_nothing_kept_plex_trouble_is_a_503_never_gone(home, monkeypatch):
+    # (The owner, October 21, DL283: a Plex hiccup isn't a missing picture. A 404
+    # made the apps forget their saved copy and ask for the bigger wide art.
+    # Plex's 5xx, 401 and 429 with nothing kept answer 503; only its 404, 410 or
+    # a non-picture answer 404.)
     ctx = home.app.state.ctx
     assert home.get("/api/internal/items/300").status_code == 200
-    home.plex.odd["/photo/:/transcode"] = httpx.Response(502)
-    home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(502)
-    refused(home.get("/api/internal/art/300?w=320"), 404)
+    for trouble in (500, 502, 503, 401, 429):
+        home.plex.odd["/photo/:/transcode"] = httpx.Response(trouble)
+        home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(trouble)
+        refused(home.get("/api/internal/art/300?w=320"), 503)
     home.plex.odd = {}
 
     async def failing(*a, **kw):
@@ -276,3 +281,21 @@ def test_a_changed_show_poster_reaches_its_episodes_after_the_shows_are_browsed(
     )
     assert home.get("/api/internal/libraries/1").status_code == 200  # (the shows, browsed)
     assert home.get("/api/internal/art/201?kind=poster&w=320").content == b"new show poster"
+
+
+def test_plex_refusing_tapiocas_sign_in_for_a_picture_tells_the_admin_once(home):
+    # (The owner, October 21, DL283: a 401 from Plex usually means tapiOca's
+    # sign-in to Plex has stopped working: one Admin alert, not only retries.)
+    alerts = home.app.state.ctx.alerts
+    assert home.get("/api/internal/items/300").status_code == 200
+    home.plex.odd["/photo/:/transcode"] = httpx.Response(401)
+    home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(401)
+    for width in (160, 320, 480):
+        refused(home.get(f"/api/internal/art/300?w={width}"), 503)
+    said = [a for a in alerts.now() if a.kind == "plex" and a.about == "pictures"]
+    assert len(said) == 1 and "sign-in to Plex needs attention" in said[0].sentence, [
+        a.sentence for a in alerts.now()
+    ]
+    home.plex.odd = {}
+    assert home.get("/api/internal/art/300?w=720").status_code == 200
+    assert [a for a in alerts.now() if a.kind == "plex" and a.about == "pictures"] == [], "fixed"

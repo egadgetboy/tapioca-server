@@ -9,6 +9,8 @@ only once things have been right a while too, so none comes and goes:
 
   plex        Plex can't be reached (or won't take tapiOca's token): 5
               checks in a row, a minute apart. Fixed after 2 that reach it.
+              And (1.43.0, the owner) Plex answering 401 for a picture
+              for the apps, at once: fixed by the next picture it makes.
   data-full   The data folder's disk has less than 2 GB free: 3 checks in
               a row. Fixed once it has 3 GB free, twice. (A size, never a
               share: 2% of a large pool is still hundreds of GB.)
@@ -463,6 +465,21 @@ class Alerts:
                 "work. The Logs tab says why; check that the data folder has room and can be "
                 "written to.",
             )
+
+    def plex_refused_pictures(self) -> None:
+        """Plex answered 401 for a picture: tapiOca's sign-in to Plex has
+        likely stopped working (the owner, October 21, DL283). Said once,
+        while it lasts; fixed by the next picture Plex makes."""
+        self.start(
+            PLEX,
+            "Plex won't make pictures for tapiOca: its sign-in to Plex needs attention. Check "
+            "PLEX_TOKEN in tapiOca's settings. Until then, the apps show placeholders.",
+            about="pictures",
+        )
+
+    def plex_made_a_picture(self) -> None:
+        if (PLEX, "pictures") in self._now:
+            self.fix(PLEX, "Plex makes tapiOca's pictures again.", about="pictures")
 
     def backup_made(self) -> None:
         self._backup_fails = 0

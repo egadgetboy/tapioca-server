@@ -806,10 +806,15 @@ def test_a_missing_or_broken_picture_is_404_at_once(app, plex, monkeypatch):
         refused(home.get("/api/internal/art/301"), 404, "There's no such picture")
         # Plex answering with something that isn't a picture, or nothing: none.
         for said in (httpx.Response(200, content=b"<html>", headers={"content-type": "text/html"}),
-                     httpx.Response(200, content=b"", headers={"content-type": "image/jpeg"}),
-                     httpx.Response(500)):  # fmt: skip
+                     httpx.Response(200, content=b"", headers={"content-type": "image/jpeg"})):  # fmt: skip
             plex.odd = {"/photo/:/transcode": said, "/library/metadata/201/thumb": said}
             refused(home.get("/api/internal/art/201?kind=thumb&w=160"), 404)
+        # Plex unwell (a 500): 503, never "no such picture". (Changed by the owner's
+        # decision, October 21, DL283, a deliberate change of behavior: this case
+        # expected 404 from 1.32.0. The apps took the 404 as missing for good.)
+        said = httpx.Response(500)
+        plex.odd = {"/photo/:/transcode": said, "/library/metadata/201/thumb": said}
+        refused(home.get("/api/internal/art/201?kind=thumb&w=160"), 503)
         plex.odd = {}
         # Plex not answering for it: never a hang.
         plex.slow_at = {"/photo/:/transcode"}

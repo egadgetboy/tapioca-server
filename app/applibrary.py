@@ -60,7 +60,7 @@ from .broadcaster import now_ms
 from .broken import version_key
 from .catalog import Entry, Media, Track
 from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
-from .library import LibraryError, NoPicture
+from .library import LibraryError, NoPicture, is_folder_key
 from .ondemand import NotShared
 from .plex import NOT_ANSWERING
 from .sources import find_file, learn_mapping, part_starts
@@ -1187,8 +1187,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 ):  # (removed, or not a picture: the kept copy goes too)
                     ctx.app_pictures.drop(here)
                     raise HTTPException(404, NO_SUCH_PICTURE) from None
+                if code == 401:
+                    ctx.alerts.plex_refused_pictures()  # (its sign-in to Plex: the Admin's to fix)
                 if stale is None:
-                    raise HTTPException(404, NO_SUCH_PICTURE) from None  # (as 1.41.0 answered)
+                    # (Plex unwell or refusing for now: never "gone", which the apps take as missing
+                    # for good, forgetting their copy and asking for bigger art. The owner, DL283.)
+                    raise unreachable(f"Plex answered {code} for a picture") from None
                 kept = stale  # (changed, but can't be made now: the one kept)
             except httpx.HTTPError as ex:
                 if stale is None:
@@ -1199,6 +1203,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     raise
                 kept = stale
             else:
+                if not is_folder_key(target):
+                    ctx.alerts.plex_made_a_picture()
                 kept = ctx.app_pictures.put(here, got, version or "")
         data, content_type, tag = kept[0], kept[1], kept[2]
         headers = {
