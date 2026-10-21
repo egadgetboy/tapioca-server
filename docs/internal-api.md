@@ -436,6 +436,74 @@ Nothing new is required: pictures come faster, and an app may ask for more.
 A server before 1.42.0 ignores `format` and `w` on a logo, and has no
 `pictures` in `GET /api/internal/libraries`: an app uses its own widths then.
 
+## What 1.43.0 asks of the apps
+
+**The server proves who it is.** Apps of this release confirm an address
+only when the server there proves it holds its own key, the one the app
+remembered when it was set up, by signing a fresh challenge
+(`POST /api/internal/proof`). The server's ID alone no longer confirms
+anything. They send nothing (a sign-in, a password, a PIN, a device key)
+to an address until it has proved itself. The apps repo's
+`docs/threat-models/server-proof.md` has the whole design.
+
+1. **Ask the proof, never `/api/v1/server`,** wherever an app asks what a
+   server is. Send nothing with it: no `Authorization`, no
+   `StationPlay-Device`, no cookie.
+2. **Check it** as `POST /api/internal/proof` says: the key's one shape,
+   your entry among the statement's 64, its `server`, then the signature
+   with the key you remembered.
+3. **Learn the key** at set-up, from the first address that proves. After
+   updating from an older app: from the away address over HTTPS, when
+   every answer agrees; otherwise with the Reconnect apps code, once.
+4. **Every answer at the route carries `Tapioca-Proof: 1`.** A 401, 403,
+   404 or 405 there with `StationPlay-API` and without `Tapioca-Proof` is a
+   server older than 1.43.0: "tapiOca needs an update".
+
+A server before 1.43.0 has no proof route, so apps of this release don't
+connect to it; it says it needs an update. Older apps work with 1.43.0 as
+before: `/api/v1/server` doesn't change.
+
+## POST /api/internal/proof
+
+Open to anyone, on both ports. From the internet, over HTTPS only. It
+carries nothing secret. Send:
+
+```json
+{"nonce": "<64 lowercase hex digits: 32 fresh random bytes>",
+ "address": "http://192.168.1.20:3310", "reconnect": false}
+```
+
+`address` is the address you're asking, exactly as you use it: printable
+ASCII, 200 characters at most. Set `reconnect` to true only on the code
+screen. The answer:
+
+| Field | Type | What it is |
+|---|---|---|
+| `statement` | string | JSON text, ASCII only: `{"time", "server", "proofs"}`. `server` is what `GET /api/v1/server` answers in this request's lane (home, or outside). `proofs` is exactly 64 entries of 64 lowercase hex digits, sorted: yours is `SHA-256("tapioca/1 proof-entry\n" + nonce + "\n" + address)`, and the rest are other requests' or random |
+| `signature` | string | Base64 of 384 bytes: RSA PKCS#1 v1.5 with SHA-256, over `"tapioca/1 server-proof\n"` and the statement's exact bytes |
+| `key` | string | Base64 of the 422-byte SubjectPublicKeyInfo: RSA-3072, exponent 65537 |
+| `reconnectSalt` | string | Only when `reconnect` was true: base64 of 32 fresh random bytes |
+| `reconnect` | string | Only when `reconnect` was true: base64 of HMAC-SHA256 with the Reconnect apps code (12 capitals and digits, no dashes) as the key, over `"tapioca/1 reconnect\n" + reconnectSalt + "\n" + nonce + "\n" + key`, while a code is active; otherwise 32 random bytes |
+
+Refused, each with a sentence (never shown on screen: the app's own
+words): 400 for a nonce or address of the wrong form; 403 for a request
+with an `Origin` (a web page), a name tapiOca doesn't know at home (add it
+under Names for tapiOca at home), an `https://` address that isn't one of
+the server's own, or an `http://` address from outside; 429 when busy; and
+503 while there's no key, or a signature didn't check.
+
+## POST /api/access/reconnect
+
+For Admins, from tapiOca's page (Access → Reconnect apps). It makes a code
+for 10 minutes and ends any other. At most 5 can be made in 10 minutes
+(429). `DELETE` ends it. `GET` says whether one is active, and for how many
+more seconds; it gives the code only to the Admin who made it.
+
+| Field | Type | What it is |
+|---|---|---|
+| `code` | string | The code, as `ABCD-EFGH-JKMN` |
+| `seconds` | integer | How long it works |
+
 ## POST /api/internal/trusted
 
 What an app gets on a trusted network (1.36.0). Open to anyone; refused

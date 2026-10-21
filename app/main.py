@@ -68,11 +68,14 @@ from . import (
     playback,
     playing,
     problems,
+    proofs,
     reach,
+    reconnect,
     relays,
     releases,
     replacing,
     reports,
+    serverkey,
     setup,
     smart,
     specials,
@@ -609,6 +612,18 @@ class AppContext:
     # Draws the apps' common pictures ahead, while no one watches (applibrary; set there).
     draw_ahead: Callable[[], Awaitable[int]] | None = None
     stop_learning: Callable[[], None] | None = field(init=False, default=None)
+    # The server's own key, its proofs and Reconnect apps' code (1.43.0:
+    # serverkey.py, proofs.py, reconnect.py).
+    server_key: serverkey.ServerKey = field(init=False)
+    proofs: proofs.Proofs = field(init=False)
+    reconnect: reconnect.Reconnect = field(default_factory=reconnect.Reconnect)
+    proof_host_refused: str = ""  # (the latest name an app at home used that isn't known)
+
+    def _key_alert(self, sentence: str | None) -> None:
+        if sentence is None:
+            self.alerts.fix(alerts.PROOF, "tapiOca's apps can check it again.")
+        else:
+            self.alerts.start(alerts.PROOF, sentence)
 
     def restart(self) -> None:
         """Stops tapiOca; Docker starts it again."""
@@ -658,6 +673,12 @@ class AppContext:
             self.db, self.settings.install, set_up=lambda: not setup.pending(self.db)
         )
         self.alerts = alerts.Alerts(self.notify, self.db)
+        self.server_key = serverkey.ServerKey(self.settings.data_dir, self._key_alert)
+        self.proofs = proofs.Proofs(
+            self.server_key,
+            lambda outside: appapi.server_info(self, outside),
+            lambda: self.alerts.start(alerts.PROOF, proofs.TOO_LONG, about="name"),
+        )
         self.devices.on_admin_locked = self.alerts.admin_pin_locked
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
@@ -902,7 +923,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             )
         ctx.gpu.start()
         await ctx.picture_disk.run(ctx.picture_disk.open)
+        if not ctx.proofs.fits():
+            ctx.alerts.start(alerts.PROOF, proofs.TOO_LONG, about="name")
+        stored = ctx.away.address or ""
+        if stored.lower().startswith("https://") and not away.checkable(stored):
+            ctx.alerts.start(alerts.PROOF, away.UNCHECKABLE_STORED, about="away")
         background = [
+            asyncio.create_task(ctx.server_key.start()),
             asyncio.create_task(jobs.look_again_forever(ctx)),
             asyncio.create_task(ctx.who_watches.run_forever()),
             asyncio.create_task(ctx.updater.run_forever()),
@@ -1038,6 +1065,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     cliprules.routes(app, ctx)  # (and commercials and trailers' ratings)
     devices.routes(app, ctx)  # (linked devices, and their pickers)
     appapi.routes(app, ctx)  # (for tapiOca's apps)
+    proofs.routes(app, ctx)  # (the server's proof, and Reconnect apps: 1.43.0)
     trustedapi.routes(app, ctx)  # (signing in on a trusted network: 1.36.0)
     applibrary.routes(app, ctx)  # (your library in them)
     folders.routes(app, ctx)  # (folder libraries: on the Setup tab)

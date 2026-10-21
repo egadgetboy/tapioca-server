@@ -286,6 +286,40 @@ def slot_program(
     return program(slot.item, slot.start_ms, slot.end_ms, special)
 
 
+def server_info(ctx: AppContext, outside: bool) -> dict:
+    """What this server is, for a request from home or from outside: what
+    /api/v1/server answers, and from 1.43.0 the `server` of each signed
+    statement (proofs.py), built for its lane."""
+    not_set_up = access.NOT_SET_UP if outside and not ctx.access.required else None
+    away = ctx.away.address if ctx.away.on else None
+    # (Your library: at home, or through a VPN; and through the public
+    # port while watching away from home is on.)
+    media = ctx.media_here(outside)
+    return {
+        "name": ctx.settings.friendly_name,
+        "id": ctx.device_id,
+        "version": __version__,
+        "api": VERSION,
+        "signIn": ctx.access.required or not_set_up is not None,
+        "notSetUp": not_set_up,
+        "outside": outside,
+        "awayAddress": away,
+        "features": [
+            *FEATURES,
+            *(["away"] if away else []),
+            *(["library"] if media else []),
+            # (Copies of what a device can't play as it is: see converting.py.
+            # And from 1.29.1, a converted copy when an app asks for one.)
+            *(["convert", "convert-asked"] if media else []),
+            # (From 1.37.0: Shuffle on a show's page, and a Media folder's
+            # marks for the apps' dial: see applibrary.py.)
+            *(["shuffle", "marks"] if media else []),
+            # (Even sound for a show's episodes, while it's on: see applibrary.py.)
+            *(["even-sound"] if media and ctx.shared.even_sound else []),
+        ],
+    }
+
+
 def routes(app: FastAPI, ctx: AppContext) -> None:
     """The API's addresses for the server, its stations and guide, and the
     apps' own for signing in and connection tests."""
@@ -315,36 +349,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         "what it offers here. Needs no token.",
     )
     async def server(request: Request):
-        not_set_up = (
-            access.NOT_SET_UP if access.outside(request.scope) and not ctx.access.required else None
-        )
-        away = ctx.away.address if ctx.away.on else None
-        # (Your library: at home, or through a VPN; and through the public
-        # port while watching away from home is on.)
-        media = ctx.media_here(access.outside(request.scope))
-        return {
-            "name": settings.friendly_name,
-            "id": ctx.device_id,
-            "version": __version__,
-            "api": VERSION,
-            "signIn": ctx.access.required or not_set_up is not None,
-            "notSetUp": not_set_up,
-            "outside": access.outside(request.scope),
-            "awayAddress": away,
-            "features": [
-                *FEATURES,
-                *(["away"] if away else []),
-                *(["library"] if media else []),
-                # (Copies of what a device can't play as it is: see converting.py.
-                # And from 1.29.1, a converted copy when an app asks for one.)
-                *(["convert", "convert-asked"] if media else []),
-                # (From 1.37.0: Shuffle on a show's page, and a Media folder's
-                # marks for the apps' dial: see applibrary.py.)
-                *(["shuffle", "marks"] if media else []),
-                # (Even sound for a show's episodes, while it's on: see applibrary.py.)
-                *(["even-sound"] if media and ctx.shared.even_sound else []),
-            ],
-        }
+        return server_info(ctx, access.outside(request.scope))
 
     @app.post("/api/internal/sign-in")
     async def sign_in(body: AppSignIn, request: Request):

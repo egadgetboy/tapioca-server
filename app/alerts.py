@@ -101,7 +101,8 @@ log = logging.getLogger(__name__)
 PLEX, DATA_FULL, DATA_WRITE = "plex", "data-full", "data-write"
 STATION, BACKUPS, CLOCK, OUTSIDE = "station", "backups", "clock", "outside"
 FILES, CLIPS, ACCESS = "files", "clips", "access"
-KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE, FILES, CLIPS, ACCESS)
+PROOF = "proof"  # (the server's key and its proofs: 1.43.0, serverkey.py)
+KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE, FILES, CLIPS, ACCESS, PROOF)
 PIN_LOCKED = (
     "An Admin's PIN was entered wrong 5 times, so it's locked for 15 minutes. If that wasn't "
     "them, change it on the Access tab."

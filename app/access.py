@@ -342,6 +342,9 @@ OPEN = (
     # which browser. 1.38.0.)
     | {"/api/access/browser/forget"}
     | {"/api/internal/sign-in", "/api/internal/link", "/api/internal/link/check"}
+    # (The server's proof: asked before an app trusts the server, so it
+    # carries nothing. 1.43.0, proofs.py.)
+    | {"/api/internal/proof"}
     # (A linked device's picker: its key, not a sign-in, says who may ask.)
     | {"/api/internal/picker", "/api/internal/picker/choose", "/api/internal/picker/sign-in"}
     # (A trusted network's: where the request comes from says who may: see

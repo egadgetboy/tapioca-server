@@ -106,7 +106,28 @@ def normalize_address(text: str) -> str:
     ):
         raise ValueError(problem)
     host = parts.hostname if ":" not in parts.hostname else f"[{parts.hostname}]"
-    return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
+    made = f"{parts.scheme}://{host}" + (f":{port}" if port else "")
+    if parts.scheme == "https" and not checkable(made):
+        raise ValueError(UNCHECKABLE)
+    return made
+
+
+# (1.43.0) An https:// away address must fit the one grammar the apps check
+# the server's proof by (proofs.canonical): no international names, no
+# underscores.
+UNCHECKABLE = (
+    "tapiOca's apps can't check this address. Use a name of plain letters, digits and hyphens."
+)
+UNCHECKABLE_STORED = (
+    "The Away from home address can't be checked by tapiOca's apps. Enter it again under Access."
+)
+
+
+def checkable(address: str) -> bool:
+    """Whether an https:// away address fits the proof's grammar."""
+    from .proofs import canonical  # (proofs.py imports what away does)
+
+    return canonical(address) is not None
 
 
 def _a_cap(mbps: int) -> bool:
