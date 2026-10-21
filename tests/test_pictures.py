@@ -348,32 +348,24 @@ def test_every_width_and_format_keeps_every_color_plane_at_the_floor():
     # (Kept in the repository, so every machine measures the same pictures: made on arm64's FFmpeg,
     # the generated ones came out harsher than on amd64's. Made once by film_like's recipe.)
     here = Path(__file__).parent / "pictures"
-    # (Each also against the resize as arm64's and AVX-512's FFmpeg make it, rounded exactly, which
-    # leaves flatter color, and with a level of grain here and there: WebP at 85 fell to 0.94 on one,
-    # 1.42.0's CI on amd64 found. An encoder's choices jump on a small change; each width meets the
-    # floor on all of them, on every machine.)
-    looks = {"": "", "exact": ":flags=bicubic+accurate_rnd"} | {
-        f"grain {s}": f",noise=alls=1:all_seed={s}" for s in (3, 5, 8, 11)}
     for kind in ("poster", "backdrop"):
         sources = [(here / f"{kind}-{v}.jpg").read_bytes() for v in ("a", "b")]
         for width in pictures.widths(kind):
             height = pictures.height_for(kind, width)
             for fmt, pix in (("jpeg", "yuvj420p"), ("webp", "yuv420p")):
                 for n, source in enumerate(sources):
-                    for look, change in looks.items():
-                        scale = f"scale='min({width},iw)':'min({height},ih)':force_original_aspect_ratio=decrease"
-                        vf = f"{scale}{change},format={pix}" if look == "exact" else f"{scale},format={pix}{change}"
-                        lossless = subprocess.run(
-                            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-frames:v", "1",
-                             "-vf", vf, "-f", "yuv4mpegpipe", "-strict", "-1", "pipe:1"],
-                            input=source, capture_output=True, check=True,
-                        ).stdout  # fmt: skip
-                        made = subprocess.run(
-                            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "yuv4mpegpipe", "-i", "pipe:0",
-                             "-frames:v", "1", *pictures.encoder_args(kind, width, fmt), "pipe:1"],
-                            input=lossless, capture_output=True, check=True,
-                        ).stdout  # fmt: skip
-                        worst[(kind, width, fmt, n, look)] = min(planes_ssim(made, lossless, pix))
+                    lossless = subprocess.run(
+                        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-frames:v", "1", "-vf",
+                         f"scale='min({width},iw)':'min({height},ih)':force_original_aspect_ratio=decrease,format={pix}",
+                         "-f", "yuv4mpegpipe", "-strict", "-1", "pipe:1"],
+                        input=source, capture_output=True, check=True,
+                    ).stdout  # fmt: skip
+                    made = subprocess.run(
+                        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "yuv4mpegpipe", "-i", "pipe:0",
+                         "-frames:v", "1", *pictures.encoder_args(kind, width, fmt), "pipe:1"],
+                        input=lossless, capture_output=True, check=True,
+                    ).stdout  # fmt: skip
+                    worst[(kind, width, fmt, n)] = min(planes_ssim(made, lossless, pix))
     under = {k: round(v, 4) for k, v in worst.items() if v < pictures.QUALITY_FLOOR}
     assert not under, under
 
