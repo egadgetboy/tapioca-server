@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import catalog, infostation
 from .catalog import Entry, Media, Track
-from .library import LibraryError, is_key
+from .library import LibraryError, is_folder_key, is_key
 from .text import and_list, plain
 
 if TYPE_CHECKING:
@@ -67,6 +67,10 @@ LIBRARY_AT_ONCE = 6
 LIBRARY_WAIT_S = 8.0
 # What's remembered of the library, and for how long.
 WHERE_KEPT = 5000  # which library each show, movie and episode is in
+# What a picture needs of each title (1.43.0): kept from every list and
+# detail heard, so a picture of a listed title asks the library nothing but
+# the picture (Catalog.facts).
+FACTS_KEPT = 40_000
 ENTRIES_KEPT = 500  # shows', movies' and episodes' details
 ENTRY_S = 600.0
 LIBRARIES_S = 60.0  # the libraries themselves
@@ -331,6 +335,8 @@ class Catalog:
         self._where: OrderedDict[str, str] = OrderedDict()  # key -> its library
         self._entries: OrderedDict[str, tuple[float, Entry]] = OrderedDict()  # (in detail)
         self._cards: OrderedDict[str, tuple[float, Entry]] = OrderedDict()  # (as lists have them)
+        # key -> what its pictures need (kind, show, which it has, their versions), as last heard
+        self._facts: OrderedDict[str, Facts] = OrderedDict()
         self._episodes: OrderedDict[str, Whole] = OrderedDict()  # (shows' episodes)
         self._wholes: OrderedDict[tuple[str, str], Whole] = OrderedDict()
         self._genres: dict[str, tuple[float, list[dict[str, str]]]] = {}
@@ -345,7 +351,7 @@ class Catalog:
     def forget(self) -> None:
         """Everything kept, forgotten (a folder library changed: see
         folders.py), so what's asked next is asked afresh."""
-        for kept in (self._where, self._entries, self._cards, self._episodes, self._wholes,
+        for kept in (self._where, self._facts, self._entries, self._cards, self._episodes, self._wholes,
                      self._genres, self._added):  # fmt: skip
             kept.clear()
         self._libraries = self._fingerprint = None
@@ -368,8 +374,14 @@ class Catalog:
         return await asyncio.shield(task)
 
     def learn(self, entries: Iterable[Entry]) -> None:
-        """Remembers which library each of these is in."""
+        """Remembers which library each of these is in, and what its pictures
+        need (the four versions, never a copy of the whole entry)."""
         for e in entries:
+            self._facts[e.key] = Facts(
+                e.kind, e.show_key, e.has_thumb, e.has_art, e.thumb_v, e.art_v, e.show_thumb_v,
+                e.show_art_v,
+            )  # fmt: skip
+            self._facts.move_to_end(e.key)
             if not e.library:
                 continue
             for key in (e.key, e.show_key):
@@ -378,6 +390,33 @@ class Catalog:
                     self._where.move_to_end(key)
         while len(self._where) > WHERE_KEPT:
             self._where.popitem(last=False)
+        while len(self._facts) > FACTS_KEPT:
+            self._facts.popitem(last=False)
+
+    def facts(self, key: str) -> Facts | None:
+        """What a picture of `key` needs, as last heard in a list or detail,
+        never asking the library (None if nothing's known)."""
+        return self._facts.get(key)
+
+    def picture_version(self, key: str, kind: str) -> str | None:
+        """The version of the picture an app's `kind` of `key` is made from,
+        as last heard, never asking: NO_PICTURE when it has none now; None
+        when it isn't known here (a kept picture is used then)."""
+        if is_folder_key(key):
+            return self.library.picture_version(key, kind) or None
+        f = self._facts.get(key)
+        if f is None:
+            return None
+        shown = f
+        if f.kind == catalog.EPISODE and kind != "thumb" and f.show_key:
+            shown = self._facts.get(f.show_key)
+            version = f.show_art_v if kind == "backdrop" else f.show_thumb_v
+            if shown is not None and not (shown.has_art if kind == "backdrop" else shown.has_thumb):
+                return catalog.NO_PICTURE
+            return version or None
+        if not (shown.has_art if kind == "backdrop" else shown.has_thumb):
+            return catalog.NO_PICTURE
+        return (shown.art_v if kind == "backdrop" else shown.thumb_v) or None
 
     def shared_library(self, entry: Entry) -> bool:
         return bool(entry.library) and entry.library in self.shared.keys
@@ -1548,6 +1587,20 @@ class PlaySessions:
         return len(self._sessions)
 
 
+@dataclass(frozen=True)
+class Facts:
+    """What a picture of a title needs (Catalog.facts)."""
+
+    kind: str
+    show_key: str
+    has_thumb: bool
+    has_art: bool
+    thumb_v: str
+    art_v: str
+    show_thumb_v: str
+    show_art_v: str
+
+
 class PictureCache:
     """Pictures for the apps, the most recently used kept up to a size, each
     with its ETag (from what's in it), so an app asking again for one it has
@@ -1555,35 +1608,49 @@ class PictureCache:
 
     def __init__(self, most_bytes: int = PICTURE_BYTES_KEPT) -> None:
         self.most_bytes = most_bytes
-        self._kept: OrderedDict[tuple[str, str, int], tuple[bytes, str, str]] = OrderedDict()
+        self._kept: OrderedDict[tuple[str, str, int], tuple[bytes, str, str, str, str]] = (
+            OrderedDict()
+        )
         self._bytes = 0
 
     def clear(self) -> None:
         self._kept.clear()
         self._bytes = 0
 
-    def get(self, key: tuple[str, str, int]) -> tuple[bytes, str, str] | None:
-        """(the picture, its type, its ETag), if it's kept."""
+    def get(self, key: tuple[str, str, int]) -> tuple[bytes, str, str, str, str] | None:
+        """(the picture, its type, its ETag, the version it was made from, its
+        title's library), if it's kept."""
         found = self._kept.get(key)
         if found is not None:
             self._kept.move_to_end(key)
         return found
 
-    def put(self, key: tuple[str, str, int], picture: tuple[bytes, str]) -> tuple[bytes, str, str]:
-        """Keeps a picture (unless it's too big to): (it, its type, its ETag)."""
+    def put(
+        self,
+        key: tuple[str, str, int],
+        picture: tuple[bytes, str],
+        version: str = "",
+        library: str = "",
+    ) -> tuple[bytes, str, str, str, str]:
+        """Keeps a picture (unless it's too big to): (it, its type, its ETag,
+        its version, its library)."""
         data, kind = picture
-        found = (data, kind, f'"{hashlib.sha1(data).hexdigest()[:24]}"')
+        found = (data, kind, f'"{hashlib.sha1(data).hexdigest()[:24]}"', version, library)
         if len(data) > self.most_bytes // 8:
             return found  # (one huge picture doesn't push out everything else)
-        old = self._kept.pop(key, None)
-        if old is not None:
-            self._bytes -= len(old[0])
+        self.drop(key)
         self._kept[key] = found
         self._bytes += len(data)
         while self._bytes > self.most_bytes:
             _, gone = self._kept.popitem(last=False)
             self._bytes -= len(gone[0])
         return found
+
+    def drop(self, key: tuple[str, str, int]) -> None:
+        """Lets one go (removed since, or changed)."""
+        old = self._kept.pop(key, None)
+        if old is not None:
+            self._bytes -= len(old[0])
 
 
 def width_for(asked: int) -> int:

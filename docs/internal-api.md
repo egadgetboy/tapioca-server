@@ -1509,14 +1509,20 @@ again. Answers as `PUT` does, with `item` null.
 
 ## GET /api/internal/art/{key}
 
-A picture, as JPEG or PNG (or WebP or GIF, as Plex has it, or as it's
-kept beside a file in a Media folder of tapiOca's own):
+A picture, as Plex resizes it (JPEG), or as it's kept beside a file in a
+Media folder of tapiOca's own (JPEG or PNG). Read the answer's
+`Content-Type`. Any `format` is ignored (1.42.0 and 1.42.1 made WebP when
+asked; from 1.43.0 the answer is JPEG):
 
 - **Kind.** `?kind=poster` (the default; 2:3, and an episode's is its
   show's), `backdrop` (16:9) or `thumb` (an episode's still, 16:9).
 - **Width.** `?w=` is the width in pixels (1 to 10000; 320 if it isn't given). It's
   rounded up to 160, 320, 480, 720, 1280 or 1920, with the largest for
   anything wider.
+
+A changed poster or backdrop shows after the next time its folder is
+browsed (Plex), or after the next scan (a Media folder). Art removed since
+answers 404.
 
 It answers 404 if there's no such picture, or what Plex has isn't one, and
 answers at once when Plex says there's none. It answers 503 when

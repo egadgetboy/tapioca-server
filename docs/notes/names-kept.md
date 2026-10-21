@@ -14,7 +14,7 @@ Don't rename them.
 ## Stored names
 - Cookies `stationplay_session`, `stationplay_device` and `stationplay_theme`: browsers already hold them, and a new name would sign everyone out.
 - The page's localStorage and sessionStorage keys from before 1.34.0 (`stationplay.*`): each browser's saved choices are under them.
-- The database file `stationplay.db`, its tables and its META keys: every install's data is in them.
+- The database file `stationplay.db`, its tables and its META keys: every install's data is in them. Among them, `picture_cache_gb` (1.42's Admin cap for pictures kept on disk) stays in databases 1.42 touched, ignored from 1.43.0, so going back to 1.42.1 keeps the cap; a later cache uses a key of its own.
 - The data folder's other file and folder names (`stationplay-backup.json`, `stationplay-copy-*` and the like), and backup file names: backups and restores made before 1.34.0 must still be found.
 - A backup's manifest says `"app": "StationPlay"`: restoring checks it, and backups from before 1.34.0 carry it.
 

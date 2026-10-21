@@ -1,7 +1,7 @@
 {
-  "version": "1.42.1",
+  "version": "1.43.0",
   "new": [
-    "Linking an app needs your password",
-    "A PIN on a shared TV changes no PIN or password"
+    "Browsing Media is quick again",
+    "Folders open the first time"
   ]
 }

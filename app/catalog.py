@@ -63,6 +63,11 @@ def subtitle_codec(name: str | None) -> str:
     return _SUBTITLES.get(n, n)
 
 
+# A picture's version when the source says it has none now: a kept one is
+# let go, and none is served (applibrary.picture).
+NO_PICTURE = "none"
+
+
 @dataclass(frozen=True)
 class Track:
     """One of a file's audio or subtitle tracks."""
@@ -222,6 +227,13 @@ class Entry:
     tags: Tags | None = None
     has_thumb: bool = True
     has_art: bool = False
+    # The versions of its pictures, as the source says (Plex's thumb and art
+    # timestamps; an episode's show's too), "" if it doesn't: a picture kept
+    # in memory from another version is made again (applibrary.picture).
+    thumb_v: str = ""
+    art_v: str = ""
+    show_thumb_v: str = ""
+    show_art_v: str = ""
     intro: tuple[int, int] | None = None  # [start, end) in ms, when asked for
     credits: tuple[int, int] | None = None
     media: tuple[Media, ...] = field(default=())  # (episodes and movies, when asked for)
@@ -234,6 +246,14 @@ class Entry:
     cast: tuple[tuple[str, str], ...] = ()  # (name, role) as billed
     directors: tuple[str, ...] = ()
     writers: tuple[str, ...] = ()
+
+    def picture_version(self, kind: str) -> str:
+        """The version of the picture an app's `kind` ("poster", "backdrop"
+        or "thumb") of it is made from: an episode's poster and backdrop are
+        its show's (see applibrary.picture); "" if not known."""
+        if self.kind == EPISODE and kind != "thumb":
+            return self.show_art_v if kind == "backdrop" else self.show_thumb_v
+        return self.art_v if kind == "backdrop" else self.thumb_v
 
     def version(self, version_id: str) -> Media | None:
         """One version of its file, as a file key names it (see

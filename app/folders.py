@@ -45,7 +45,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from . import access, catalog, folderart, folderscan, languages, naming, nfo, setup
-from .catalog import Entry, Media, Track
+from .catalog import NO_PICTURE, Entry, Media, Track
 from .db import Item
 from .library import FOLDER_PREFIX, LibraryError, NoPicture, is_folder_key
 from .plex import collection_key, episode_order, filter_tags
@@ -177,6 +177,12 @@ class FolderSource:
         self._tasks: set[asyncio.Task] = set()
         self._waiting: set[int] = set()  # libraries with a scan waiting its turn
         self._said_missing: set[str] = set()
+        # Each picture file's version ("mtime-size"), and each video's (for a
+        # cover inside it), from the last scan's walk: a picture kept in
+        # memory made from another is made again (1.43.0, applibrary.picture).
+        # In memory only: until the first scan after a start, kept pictures
+        # are used.
+        self._picture_stamps: dict[str, str] = {}
         self.scanning: dict[str, Any] | None = None  # what's being scanned now, for the page
         # Set by the app: whether anyone's watching (scanning waits), and
         # what to tell when a library's programs change.
@@ -479,6 +485,14 @@ class FolderSource:
                     await folderart.on_disk(folderscan.walk, root, self.settings.media_dir)
                 )
             videos = {p: (s, m) for w in walked for p, s, m in w.videos}
+            for w in walked:
+                if w.reachable:
+                    # (What the walk saw under its folder replaces what was known there.)
+                    under = w.root.rstrip("/") + "/"
+                    for gone in [p for p in self._picture_stamps if p.startswith(under)]:
+                        del self._picture_stamps[gone]
+                    self._picture_stamps.update(w.pictures)
+                    self._picture_stamps.update({p: f"{m}-{sz}" for p, sz, m in w.videos})
             probes = await self._read_files(videos)
             nfos = await self._read_nfos(walked)
 
@@ -1523,6 +1537,36 @@ class FolderSource:
             return t.art.get("thumb", "") or (show.art.get("poster", "") if show else "")
         return t.art.get("poster", "")
 
+    def picture_version(self, key: str, kind: str) -> str:
+        """The version of the picture an app's `kind` ("poster", "backdrop" or
+        "thumb") of `key` is made from, as the last scan saw it (see
+        applibrary.picture for which picture each is), never reading the disk
+        or the database: NO_PICTURE if there's none, "" if it isn't known yet
+        (a kept picture is used then)."""
+        try:
+            t = self.thing(key)
+        except LibraryError:
+            return ""
+        if t.kind == EPISODE and kind != "thumb":
+            t = self.show_of(t) or t
+        where = self._backdrop_of(t) if kind == "backdrop" else self._poster_of(t)
+        if not where:
+            return NO_PICTURE  # (none now: a kept one is let go)
+        digest = hashlib.sha256(where.encode()).hexdigest()[:12]  # (another file, another version)
+        path = where.split(":", 3)[3] if where.startswith("cover:") else where
+        stamp = self._picture_stamps.get(path, "")
+        return f"{digest}-{stamp}" if stamp else ""
+
+    def _file_size(self, path: str) -> int:
+        """A video's size, for its cover's kept copy: from the last scan's
+        walk; read from the database only before the first scan after a start."""
+        stamp = self._picture_stamps.get(path, "")
+        if stamp:
+            return int(stamp.rpartition("-")[2] or 0)
+        size = self._sizes({path}).get(path) or 0
+        self._picture_stamps.setdefault(path, f"0-{size}")
+        return size
+
     async def picture(self, key: str, which: str, width: int, height: int) -> tuple[bytes, str]:
         """A show's, movie's or episode's picture ("thumb": its poster, or an
         episode's still; "art": its backdrop), no bigger than asked.
@@ -1550,7 +1594,7 @@ class FolderSource:
                 )
                 if real is None or not stream.isdigit():
                     raise NoPicture(where)
-                size = self._sizes({path}).get(path) or 0
+                size = self._file_size(path)
                 return await folderart.cover(
                     self.settings.ffmpeg_path,
                     self.settings.data_dir,

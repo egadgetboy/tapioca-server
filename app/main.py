@@ -48,6 +48,7 @@ from . import (
     away,
     backups,
     capacity,
+    cleanup,
     cliprules,
     devices,
     doors,
@@ -889,6 +890,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             asyncio.create_task(ctx.notify.run_forever()),
             asyncio.create_task(ctx.releases.run_forever()),
             asyncio.create_task(ctx.alerts.run_forever(ctx)),
+            # (1.42's picture cache, removed once: 1.43.0.)
+            asyncio.create_task(cleanup.later(settings.data_dir)),
         ]
         yield
         for task in background:

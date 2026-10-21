@@ -1110,8 +1110,31 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "episodes": await cards(user_id, chosen[start : start + size]),
         }
 
+    async def shown_of(key: str, kind: str, viewer: viewing.Viewer) -> tuple[str, bool]:
+        """Whose picture an app's `kind` of `key` is (an episode's poster and
+        backdrop are its show's), and whether it has one: from the list it
+        came from, for a viewer with no limits (1.43.0: no details asked of
+        the library just for a picture), otherwise from its details."""
+        which = "art" if kind == "backdrop" else "thumb"
+        f = cat.facts(key) if viewer.unchecked else None
+        if f is not None:
+            target = (
+                f.show_key if f.kind == catalog.EPISODE and kind != "thumb" and f.show_key else key
+            )
+            known = f if target == key else cat.facts(target)
+            if known is not None:
+                return target, known.has_art if which == "art" else known.has_thumb
+        e = await cat.entry(key)
+        target = e.show_key if e.kind == catalog.EPISODE and kind != "thumb" else e.key
+        shown = e if not target or target == e.key else await cat.entry(target)
+        return shown.key, shown.has_art if which == "art" else shown.has_thumb
+
     @app.get("/api/internal/art/{key}")
     async def picture(key: str, request: Request):
+        """A title's picture, as Plex (or a Media folder) makes it at one of
+        six widths, kept in memory with its version (1.43.0: as 1.41.0, with
+        changed art made again and art removed since no longer served). Any
+        `format` is ignored: the answer is JPEG, or the picture as it is."""
         shared_here(request)
         kind = request.query_params.get("kind", "poster")
         if kind not in ondemand.PICTURE_KINDS:
@@ -1122,26 +1145,47 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             await cat.check(key)  # (shared now, even if its picture was kept from before)
             if not viewer.unchecked:
                 await must_see(cat, viewer, await cat.entry(key))
-        kept = ctx.app_pictures.get((key, kind, width))
+        here = (key, kind, width)
+        kept = ctx.app_pictures.get(here)
+        version = cat.picture_version(key, kind)
+        if version == catalog.NO_PICTURE:
+            ctx.app_pictures.drop(here)  # (removed since: no longer served)
+            raise HTTPException(404, NO_PICTURE)
+        stale = kept if kept is not None and version is not None and kept[3] != version else None
+        if stale is not None:
+            kept = None  # (made from another version: made again)
         if kept is None:
-            # (An episode's poster is its show's; a show's still, its poster.)
             which = "art" if kind == "backdrop" else "thumb"
-            async with asking(request):
-                e = await cat.entry(key)
-                target = e.show_key if e.kind == catalog.EPISODE and kind != "thumb" else e.key
-                shown = e if not target or target == e.key else await cat.entry(target)
-            if not (shown.has_art if which == "art" else shown.has_thumb):
-                raise HTTPException(404, NO_PICTURE)  # (the library has none: no need to ask)
-            height = width * 3 // 2 if kind == "poster" else width * 9 // 16
             try:
+                async with asking(request):
+                    target, has = await shown_of(key, kind, viewer)
+                if not has:
+                    ctx.app_pictures.drop(here)
+                    raise HTTPException(404, NO_PICTURE)  # (the library has none: no need to ask)
+                height = width * 3 // 2 if kind == "poster" else width * 9 // 16
                 async with asking(request), picture_turns:
-                    got = await ctx.library.picture(shown.key, which, width, height)
-            except (httpx.HTTPStatusError, NoPicture):
+                    got = await ctx.library.picture(target, which, width, height)
+            except NoPicture:
+                ctx.app_pictures.drop(here)
                 raise HTTPException(404, NO_PICTURE) from None
+            except httpx.HTTPStatusError as ex:
+                if ex.response.status_code < 500:
+                    ctx.app_pictures.drop(here)
+                    raise HTTPException(404, NO_PICTURE) from None
+                if stale is None:
+                    raise HTTPException(404, NO_PICTURE) from None  # (as 1.41.0 answered)
+                kept = stale  # (changed, but can't be made now: the one kept)
             except httpx.HTTPError as ex:
-                raise unreachable(f"a picture didn't come: {type(ex).__name__}") from None
-            kept = ctx.app_pictures.put((key, kind, width), got)
-        data, content_type, tag = kept
+                if stale is None:
+                    raise unreachable(f"a picture didn't come: {type(ex).__name__}") from None
+                kept = stale
+            except HTTPException as ex:
+                if ex.status_code != 503 or stale is None:
+                    raise
+                kept = stale
+            else:
+                kept = ctx.app_pictures.put(here, got, version or "")
+        data, content_type, tag = kept[0], kept[1], kept[2]
         headers = {
             "Cache-Control": "private, max-age=86400",
             "ETag": tag,

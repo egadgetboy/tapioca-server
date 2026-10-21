@@ -417,6 +417,15 @@ class Library:
             return await self.folders.show_episodes(show) if self.folders is not None else []
         return await self.plex.show_episodes(show)
 
+    def picture_version(self, key: str, kind: str) -> str:
+        """For a Media folder's title, the version of the picture an app's
+        `kind` of it is made from, as the last scan saw it ("" if not known;
+        never reading the disk); "" for Plex's, whose versions come with its
+        lists (Catalog.picture_version)."""
+        if is_folder_key(key):
+            return self._folder_source().picture_version(key, kind)
+        return ""
+
     async def picture(self, key: str, which: str, width: int, height: int) -> tuple[bytes, str]:
         """A picture of a show, movie or episode: "thumb" (a poster, or an
         episode's still) or "art" (a backdrop). NoPicture (or for Plex's,

@@ -133,6 +133,15 @@ follow them in every change.
   and explain why.
 - While working, run the changed area's tests (and D's negative, race and restart cases), in a local environment matched to the image's pins where possible. The full suite (35 to 45 minutes) is proved by image.yml's Test step, in the exact image, on amd64 and arm64, once per release candidate; run it locally only to chase a failure.
 - Don't edit `tests/fakeplex.py`.
+- **No release may make browsing slower** (the owner, October 20; the plan's
+  release gate and DL282). Hard gates, with no margin: a folder page under
+  picture load never answers 503; the counts never go up (Plex details
+  lookups per picture, FFmpeg starts per Plex picture, picture requests in
+  the roll for pictures already kept). Timings: p95 at most 20% worse than
+  the recorded baseline, and never past the budget. Any change to pictures,
+  browsing, the apps' grids or caching runs `tests/test_picture_speed.py`,
+  `tools/picture_load.py` and the apps' timed roll before its candidate. A
+  new baseline is recorded only with the owner's OK.
 - The wording scan passes (from 1.33.0).
 
 ## Releases

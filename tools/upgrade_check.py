@@ -711,6 +711,14 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             asked = page.get("/api/setup").json().get("questions", [])
             checks.ok(page.put("/api/setup", json={"answered": asked}).status_code == 200,
                       "its setup is answered")  # fmt: skip
+        old_cache = data / "cache" / "pictures"
+        if (1, 42, 0) <= version_of(before) < (1, 43, 0):
+            # (1.42 kept pictures for the apps on disk: asked for a few, as 0.12.0
+            # asks, so its cache is there for 1.43.0 to remove.)
+            apps = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+            for key in ("300", "301", "100"):
+                apps.get(f"/api/internal/art/{key}?kind=poster&w=240&format=webp")
+            checks.ok(old_cache.is_dir(), f"{before} kept pictures on disk", old_cache)
         stopped(checks, sp, before)
         # (What this version changes in that database, if anything: a release
         # that changes nothing in it makes no copy, as the README says.)
@@ -727,6 +735,13 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         checks.ok(page.put("/api/notify", json=notify).status_code == 200,
                   "alerts are sent to a web address")  # fmt: skip
         has_data(checks, sp.url, made, __version__, "updated")
+        if (1, 42, 0) <= version_of(before) < (1, 43, 0) <= version_of(__version__):
+            # (1.43.0 removes 1.42's picture cache once, 30 s after it starts.)
+            end = time.monotonic() + 60
+            while (data / "cache").exists() and time.monotonic() < end:
+                time.sleep(1)
+            checks.ok(not old_cache.exists() and not (data / "cache").exists(),
+                      "1.42's picture cache was removed, and nothing else")  # fmt: skip
         copies = sorted((data / "backups").glob(f"before-{__version__}-*.db"))
         logs = page.get("/api/logs").json()["text"]  # (the text once: .text has each line twice)
         # (Whether the database changed is read from the database itself, not
