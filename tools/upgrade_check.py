@@ -717,8 +717,11 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             # asks, so its cache is there for 1.43.0 to remove.)
             apps = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
             webp, said = 0, []
-            for key in ("100", "201", "202"):  # (the stand-in's show and its episodes)
-                got = apps.get(f"/api/internal/art/{key}?kind=poster&w=240&format=webp")
+            apps.get(
+                "/api/internal/libraries/1"
+            )  # (browsed first: the stand-in describes no title)
+            for width in (240, 480):  # (the stand-in's show's poster, at two widths)
+                got = apps.get(f"/api/internal/art/100?kind=poster&w={width}&format=webp")
                 said.append(
                     (
                         got.status_code,
