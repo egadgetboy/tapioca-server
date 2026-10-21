@@ -16,11 +16,12 @@ def test_every_tool_the_tests_import_is_copied_into_the_test_stage():
         text = test.read_text(encoding="utf-8")
         imported |= set(re.findall(r"(?:import|from) tools\.(\w+)", text))
     copied = set(re.findall(r"tools/(\w+)\.py", (ROOT / "Dockerfile").read_text(encoding="utf-8")))
-    kept = set(
-        re.findall(
-            r"^!tools/(\w+)\.py$", (ROOT / ".dockerignore").read_text(encoding="utf-8"), re.M
-        )
-    )
     assert imported, "the tests import tools"
     assert imported <= copied, sorted(imported - copied)
-    assert imported <= kept, sorted(imported - kept)
+    # (In the image's test stage itself each is there; .dockerignore isn't, so
+    # it's read only outside it.)
+    assert all((ROOT / "tools" / f"{name}.py").is_file() for name in imported)
+    ignore = ROOT / ".dockerignore"
+    if ignore.is_file():
+        kept = set(re.findall(r"^!tools/(\w+)\.py$", ignore.read_text(encoding="utf-8"), re.M))
+        assert imported <= kept, sorted(imported - kept)
