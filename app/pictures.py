@@ -253,12 +253,8 @@ class DiskCache:
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pictures")
 
     async def run(self, fn: Callable[..., T], *args) -> T:
-        """`fn(*args)` on the cache's own threads (once it's closed, on the
-        shared ones: what's still being made as tapiOca stops ends quietly)."""
-        try:
-            return await asyncio.get_running_loop().run_in_executor(self._pool, fn, *args)
-        except RuntimeError:
-            return await asyncio.to_thread(fn, *args)
+        """`fn(*args)` on the cache's own threads."""
+        return await asyncio.get_running_loop().run_in_executor(self._pool, fn, *args)
 
     @property
     def on(self) -> bool:
@@ -272,30 +268,11 @@ class DiskCache:
     def _empty_folder(self) -> None:
         """Everything in the folder let go: moved aside at once, deleted off to
         one side, so a big cache never holds up a start."""
-        aside = self.folder.with_name(f"{self.GONE}{os.getpid()}-{time.monotonic_ns()}")
-        try:
+        aside = self.folder.with_name(f".{self.folder.name}-gone-{os.getpid()}-{time.monotonic_ns()}")
+        with contextlib.suppress(OSError):
             self.folder.rename(aside)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            # (It can't be moved, its own mount say: emptied where it is, never read.)
-            for entry in list(self.folder.iterdir()):
-                if entry.is_dir() and not entry.is_symlink():
-                    shutil.rmtree(entry, ignore_errors=True)
-                else:
-                    entry.unlink(missing_ok=True)
+            threading.Thread(target=shutil.rmtree, args=(aside, True), daemon=True).start()
         self.folder.mkdir(parents=True, exist_ok=True)
-
-    @property
-    def GONE(self) -> str:  # noqa: N802
-        return f".{self.folder.name}-gone-"
-
-    def _clear_gone(self) -> None:
-        """What earlier starts set aside, deleted off to one side (a restart may
-        have cut its delete short)."""
-        gone = [p for p in self.folder.parent.glob(f"{self.GONE}*") if p.is_dir()]
-        if gone:
-            threading.Thread(target=lambda: [shutil.rmtree(p, True) for p in gone], daemon=True).start()
 
     def open(self) -> None:
         """Ready to use: the folder made, emptied if its stamp isn't this
@@ -324,7 +301,6 @@ class DiskCache:
                 for part in [*self.folder.glob("*/.*"), *self.folder.glob(".*")]:  # (writes cut short)
                     if part.is_file():
                         part.unlink(missing_ok=True)
-                self._clear_gone()
                 self._db = db
                 self._bytes = db.execute("SELECT COALESCE(SUM(bytes), 0) FROM kept").fetchone()[0]
             except (OSError, sqlite3.Error) as e:
@@ -540,12 +516,9 @@ class Maker:
         what it makes itself). `ahead`: drawn ahead, at idle priority."""
         task = self._making.get(key)
         if task is None:
-
-            async def made() -> T:
-                drawing_ahead.set(ahead)  # (in the making's own context: its FFmpeg reads it)
-                return await make()
-
-            task = self._making[key] = asyncio.ensure_future(made())
+            context = contextvars.copy_context()
+            context.run(drawing_ahead.set, ahead)
+            task = self._making[key] = asyncio.ensure_future(context.run(make))
 
             def done(t: asyncio.Future) -> None:
                 if self._making.get(key) is t:
