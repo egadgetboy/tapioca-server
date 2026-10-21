@@ -16,3 +16,4 @@ tools/*
 !tools/image_check.py
 !tools/sbom.py
 !tools/gpl_source.py
+!tools/picture_load.py

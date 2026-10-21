@@ -82,7 +82,7 @@ COPY pytest.ini pyproject.toml tapioca-server.yaml docker-compose.yml Dockerfile
 COPY README.md SECURITY.md ./
 COPY docs ./docs
 COPY unraid ./unraid
-COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py tools/gpl_source.py ./tools/
+COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py tools/gpl_source.py tools/picture_load.py ./tools/
 COPY tools/logos/letters.py ./tools/logos/
 COPY .github/workflows/release.yml .github/workflows/image.yml ./.github/workflows/
 COPY tests ./tests
