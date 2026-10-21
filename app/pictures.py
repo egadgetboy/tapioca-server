@@ -251,14 +251,14 @@ class DiskCache:
         self._used: dict[str, float] = {}  # (viewed since the index last heard)
         self._said: set[str] = set()
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pictures")
-        self._closed = False
 
     async def run(self, fn: Callable[..., T], *args) -> T:
         """`fn(*args)` on the cache's own threads (once it's closed, on the
         shared ones: what's still being made as tapiOca stops ends quietly)."""
-        if self._closed:
+        try:
+            return await asyncio.get_running_loop().run_in_executor(self._pool, fn, *args)
+        except RuntimeError:
             return await asyncio.to_thread(fn, *args)
-        return await asyncio.get_running_loop().run_in_executor(self._pool, fn, *args)
 
     @property
     def on(self) -> bool:
@@ -354,7 +354,6 @@ class DiskCache:
                     self._write_used()
                     self._db.close()
                 self._db = None
-        self._closed = True
         self._pool.shutdown(wait=False)
 
     def _path(self, name: str) -> Path:
