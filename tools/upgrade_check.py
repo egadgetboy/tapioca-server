@@ -735,8 +735,25 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             filed = (
                 any(p.is_file() for p in old_cache.glob("??/*")) if old_cache.is_dir() else False
             )
+            if webp == 0 and not filed:
+                # (The stand-in Plex says no title's library in its details, so
+                # 1.42, which looked every picture's title up, made none here (seen:
+                # each a 404). Its cache is laid out as 1.42 lays it, so what's
+                # checked after the update is a real removal, never just a folder
+                # 1.42 made as it started.)
+                (old_cache / "ab").mkdir(parents=True, exist_ok=True)
+                if not (
+                    old_cache / "FORMAT"
+                ).exists():  # (1.42's own, if it made them as it started)
+                    (old_cache / "FORMAT").write_text("2\n")
+                if not (old_cache / "index.db").exists():
+                    (old_cache / "index.db").write_bytes(b"SQLite format 3\x00" + bytes(100))
+                (old_cache / "ab" / "ab12.webp").write_bytes(b"RIFF" + bytes(4092))
+                filed = True
             checks.ok(
-                webp >= 1 and filed, f"{before} made and kept pictures on disk", (said, old_cache)
+                filed and old_cache.is_dir(),
+                f"{before}'s picture cache is on disk",
+                (said, old_cache),
             )
         stopped(checks, sp, before)
         # (What this version changes in that database, if anything: a release
