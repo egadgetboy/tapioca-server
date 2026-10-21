@@ -417,16 +417,14 @@ class Library:
             return await self.folders.show_episodes(show) if self.folders is not None else []
         return await self.plex.show_episodes(show)
 
-    async def picture(
-        self, key: str, which: str, width: int, height: int, fmt: str = "", fallback: bool = True
-    ) -> tuple[bytes, str]:
+    async def picture(self, key: str, which: str, width: int, height: int, fmt: str = "") -> tuple[bytes, str]:
         """A picture of a show, movie or episode: "thumb" (a poster, or an
         episode's still) or "art" (a backdrop). NoPicture (or for Plex's,
         httpx.HTTPStatusError) if it has none. `fmt`: Plex's resize asked
         for it ("webp"); what comes says which it is."""
         if is_folder_key(key):
             return await self._folder_source().picture(key, which, width, height)
-        return await self.plex.picture(key, which, width, height, fmt, fallback)
+        return await self.plex.picture(key, which, width, height, fmt)
 
     async def picture_source(self, key: str, which: str) -> tuple[bytes, str]:
         """The same picture as it is, to be made into each size (pictures.py)."""

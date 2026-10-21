@@ -1377,7 +1377,6 @@ tapiOca is set up mostly on its page. These environment variables, in the YAML o
 | `FRIENDLY_NAME` | `tapiOca` | The tuner's name in Plex. |
 | `BASE_URL` | *(automatic)* | Only if Plex reaches tapiOca at a different address than your browser does. |
 | `IDLE_GRACE_SECONDS` | `20` | How long a station keeps running after its last viewer leaves. |
-| `PICTURE_CACHE_GB` | `2` | The space for pictures made for tapiOca's apps, kept on disk in `data/cache/pictures`, at the start. An Admin can change it on the page (Access, **Pictures for tapiOca's apps**). `0` keeps none on disk. |
 | `AUDIO_BITRATE_KBPS` | `192` | The stations' sound bitrate. |
 | `DATA_DIR` | `/data` | Where tapiOca keeps its data inside the container. |
 | `FFMPEG_PATH`, `FFPROBE_PATH` | `ffmpeg`, `ffprobe` | For a custom ffmpeg build. The image's own is recommended. |

@@ -1324,7 +1324,7 @@ class PlexClient:
         return sorted(found, key=episode_order)
 
     async def picture(
-        self, key: str, which: str, width: int, height: int, fmt: str = "", fallback: bool = True
+        self, key: str, which: str, width: int, height: int, fmt: str = ""
     ) -> tuple[bytes, str]:
         """A show's, movie's or episode's picture (`which`: "thumb", its
         poster or still, or "art", its backdrop), made the size asked for by
@@ -1339,8 +1339,6 @@ class PlexClient:
         try:
             return await self._picture("/photo/:/transcode", params)
         except httpx.HTTPStatusError:
-            if not fallback:  # (the caller decides what to do without a resize)
-                raise
             return await self._picture(path)
 
     async def picture_source(self, key: str, which: str) -> tuple[bytes, str]:

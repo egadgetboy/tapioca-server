@@ -422,8 +422,8 @@ Nothing new is required: pictures come faster, and an app may ask for more.
    them (round the width you draw up to the next), so two nearly equal
    widths are one download. Another width still works: it's rounded up.
 2. **WebP.** `GET /api/internal/art/{key}?format=webp` answers WebP,
-   smaller at the same quality. Read the answer's `Content-Type`: when the
-   server can't make WebP, it's JPEG, or the picture as Plex has it.
+   smaller at the same quality. Read the answer's `Content-Type`: it's
+   JPEG when the server can't make WebP.
 3. **Station logos at the width drawn.** A Station's `logo` address with
    `&w=` (a width in pixels) answers the logo as PNG, rounded up to
    `pictures.logo`'s widths, with `Cache-Control: private, max-age=31536000`:
@@ -1552,10 +1552,11 @@ the app asks:
   320, 480, 720, 960 or 1440, and backdrops and stills 320, 640, 720, 1280
   or 1920; before, 160, 320, 480, 720, 1280 or 1920 for all), with the
   largest for anything wider. `GET /api/internal/libraries` lists them.
+  Never made larger than the picture itself.
 - **Format** (from 1.42.0). `?format=webp` asks for WebP; with no
   `format`, or `format=jpeg`, it's JPEG, as before. When WebP can't be made
-  (an FFmpeg without it), the answer is as without `format`, and its
-  `Content-Type` says what it is. Any other format answers 400.
+  (an FFmpeg without it), the answer is JPEG, and its `Content-Type` says
+  so. Any other format answers 400.
 
 From 1.42.0, each picture is made once however many ask for it at once,
 and kept on the server's disk (`data/cache/pictures`), so it comes quickly

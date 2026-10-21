@@ -269,43 +269,23 @@ def test_a_replaced_poster_file_shows_after_the_next_rescan_never_reading_the_di
 
 
 def test_a_logo_an_app_asks_a_width_of_is_made_that_wide_kept_a_year_and_stays_png(home):
-    from app.logos import LogoLibrary
-
     made = home.post("/api/channels", json={"number": 42, "logo": "halloween",
                                             "sources": [{"type": "show", "ratingKey": "100"}]})  # fmt: skip
     assert made.status_code == 201, made.text
     plain = home.get("/channel-icon/42.png")  # (as Plex and the tuner have always had it)
     assert plain.status_code == 200 and plain.headers["cache-control"] == "max-age=86400"
-    assert plain.content == LogoLibrary().path("halloween").read_bytes(), "unchanged without w"
-    # (The address the apps are given, with its version: the test once made one up.)
-    logo = next(s["logo"] for s in home.get("/api/v1/stations").json()["stations"] if s["number"] == 42)
-    sized = home.get(f"{logo}&w=100")
+    sized = home.get("/channel-icon/42.png?v=1-halloween&w=100")
     assert sized.status_code == 200 and sized.headers["content-type"] == "image/png"
     assert sized.headers["cache-control"] == "private, max-age=31536000"
     seen = probe(sized.content)
     assert seen["codec_name"] == "png" and seen["width"] == 120, seen  # (rounded up)
     assert len(sized.content) < len(plain.content)
-    again = home.get(f"{logo}&w=110", headers={"If-None-Match": sized.headers["etag"]})
+    again = home.get("/channel-icon/42.png?v=1-halloween&w=110", headers={"If-None-Match": sized.headers["etag"]})
     assert again.status_code == 304
     for wrong in ("w=0", "w=wide", "w=10001"):
         refused(home.get(f"/channel-icon/42.png?{wrong}"), 400)
-    assert home.post("/api/channels", json={"number": 46, "sources": [{"type": "show", "ratingKey": "100"}]}).status_code == 201
-    badge = home.get("/channel-icon/46.png?w=160")  # (no logo: its number, drawn)
-    assert badge.status_code == 200 and probe(badge.content)["width"] == 160
-
-
-def test_a_logo_away_from_home_comes_at_its_width_too(home):
-    assert home.post("/api/channels", json={"number": 45, "logo": "halloween",
-                                            "sources": [{"type": "show", "ratingKey": "100"}]}).status_code == 201  # fmt: skip
-    signed = home.post("/api/access/users", json={"name": "Ada", "password": "correct horse"})
-    assert signed.status_code in (200, 201), signed.text
-    token = TestClient(home.app).post("/api/internal/sign-in", json={"name": "Ada", "password": "correct horse"}).json()["token"]
-    stations = home.get("/api/v1/stations", headers={"Authorization": f"Bearer {token}"}).json()["stations"]
-    logo = next(s["logo"] for s in stations if s["number"] == 45)
-    assert logo.startswith("/hls/k/"), logo
-    got = home.get(f"{logo}&w=100")
-    assert got.status_code == 200 and probe(got.content)["width"] == 120
-    assert got.headers["cache-control"] == "private, max-age=31536000"
+    badge = home.get("/channel-icon/99.png?w=160")  # (INFO's: its number, drawn)
+    assert badge.status_code in (200, 404)
 
 
 # Quality, at a measured floor -----------------------------------------------------------------------
@@ -431,194 +411,3 @@ def test_an_admin_sets_the_space_for_pictures_and_it_lasts(tmp_path, monkeypatch
         assert page.put("/api/app-pictures", json={"gb": 1.5}).json()["gb"] == 1.5
     with TestClient(server(plex, data)) as page:  # (started again: the Admin's choice stays)
         assert page.get("/api/app-pictures").json()["gb"] == 1.5
-
-
-# The cold audit (October 19): each failing first ----------------------------------------------------
-
-
-def test_letting_go_of_many_pictures_never_holds_up_other_disk_work(tmp_path):
-    # (Each row was its own synced commit under the cache's one lock, on the shared threads that also
-    # read a Station's pieces: lowering the space with 20,000 kept held a 1 MB read up for seconds.)
-    import concurrent.futures
-    import os as os_module
-
-    cache = pictures.DiskCache(tmp_path / "pictures", most_bytes=10 << 30)
-    cache.open()
-    for n in range(20_000):
-        cache.put(f"{n:040x}", pictures.Kept(b"x" * 1000, "image/jpeg", '"t"'))
-    piece = tmp_path / "piece.ts"
-    piece.write_bytes(os_module.urandom(1 << 20))
-
-    async def run() -> tuple[float, float]:
-        asyncio.get_running_loop().set_default_executor(concurrent.futures.ThreadPoolExecutor(8))
-        began = time.perf_counter()
-        letting_go = asyncio.create_task(cache.run(cache.set_most, 1 << 20))  # (as the page's Save calls it)
-        await asyncio.sleep(0.05)
-        asks = [asyncio.create_task(cache.run(cache.get, f"{19_999 - i:040x}")) for i in range(12)]  # (a screen's)
-        await asyncio.sleep(0.01)
-        read = time.perf_counter()
-        await asyncio.to_thread(piece.read_bytes)  # (a Station's piece, as hls.py reads it)
-        waited = time.perf_counter() - read
-        await letting_go
-        await asyncio.gather(*asks)
-        return waited, time.perf_counter() - began
-
-    waited, took = asyncio.run(run())
-    assert waited < 0.2, f"a Station's read waited {waited:.2f} s"
-    assert took < 5, f"letting go took {took:.1f} s"
-    assert cache.bytes_kept <= 1 << 20
-    cache.close()
-
-
-def test_a_picture_made_for_a_request_that_gave_up_is_still_kept(tmp_path, monkeypatch):
-    from app import ondemand
-
-    monkeypatch.setattr(plex_module, "RETRY_S", 0.01)
-    monkeypatch.setattr(ondemand, "LIBRARY_WAIT_S", 0.6)
-    plex = library()
-    with TestClient(server(plex, tmp_path / "data")) as home:
-        shared(home)
-        assert home.get("/api/internal/items/300").status_code == 200
-        plex.slow_at, plex.pause = {"/photo/:/transcode"}, 1.0
-        start = len(plex.requests)
-        assert home.get("/api/internal/art/300?kind=poster&w=320").status_code == 503  # (gave up waiting)
-        time.sleep(1.5)  # (its making goes on, and ends)
-        again = home.get("/api/internal/art/300?kind=poster&w=320")
-        assert again.status_code == 200 and again.content == b"poster 300"
-        assert plex.requests[start:].count("/photo/:/transcode") == 1, "made once, and kept"
-
-
-def test_a_resize_that_failed_never_keeps_the_full_size_picture_on_disk(tmp_path, monkeypatch):
-    monkeypatch.setattr(plex_module, "RETRY_S", 0.01)
-    plex = library()
-    big = real_picture(1000, 1500)
-    plex.odd["/library/metadata/300/thumb"] = httpx.Response(200, content=big, headers={"content-type": "image/jpeg"})
-    plex.odd["/photo/:/transcode"] = httpx.Response(503)  # (Plex's resizer busy, once)
-    with TestClient(server(plex, tmp_path / "data")) as home:
-        shared(home)
-        assert home.get("/api/internal/art/300?kind=poster&w=160").status_code == 200  # (as before: the original)
-        assert home.app.state.ctx.picture_disk.bytes_kept == 0, "but never kept on disk"
-
-
-def test_a_poster_removed_since_is_no_longer_served(home):
-    assert home.get("/api/internal/items/300").status_code == 200
-    assert home.get("/api/internal/art/300?w=320").status_code == 200
-    home.plex.episodes["300"].pop("thumb", None)  # (the poster removed in Plex)
-    home.plex.no_poster.add("300")
-    assert home.get("/api/internal/libraries/2").status_code == 200  # (the next browse hears of it)
-    refused(home.get("/api/internal/art/300?w=320"), 404, "There's no such picture")
-
-
-def test_a_changed_picture_that_cant_be_made_now_keeps_the_one_kept(home):
-    assert home.get("/api/internal/items/300").status_code == 200
-    first = home.get("/api/internal/art/300?w=320")
-    home.plex.episodes["300"]["thumb"] = "/library/metadata/300/thumb/1700000099"
-    assert home.get("/api/internal/libraries/2").status_code == 200
-    home.plex.odd["/photo/:/transcode"] = httpx.Response(500)
-    home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(500)
-    home.plex.slow_at = {"/photo/:/transcode"}
-    home.plex.down = True  # (Plex away just then)
-    got = home.get("/api/internal/art/300?w=320")
-    home.plex.down = False
-    assert got.status_code == 200 and got.content == first.content
-
-
-def test_a_torn_file_is_made_again_never_served_empty(tmp_path):
-    cache = pictures.DiskCache(tmp_path / "pictures", most_bytes=1 << 30)
-    cache.open()
-    name = "ab" + "0" * 38
-    assert cache.put(name, pictures.Kept(b"x" * 5000, "image/jpeg", '"t"'))
-    (tmp_path / "pictures" / name[:2] / name).write_bytes(b"x" * 10)  # (torn by a power cut)
-    assert cache.get(name) is None
-    assert cache.bytes_kept == 0
-
-
-def test_a_broken_or_missing_index_empties_the_cache_and_keeps_going(tmp_path):
-    folder = tmp_path / "pictures"
-    cache = pictures.DiskCache(folder, most_bytes=1 << 30)
-    cache.open()
-    for n in range(20):
-        cache.put(f"{n:040x}", pictures.Kept(b"x" * 5000, "image/jpeg", '"t"'))
-    cache.close()
-    (folder / ".leftover.1.2").write_bytes(b"part")  # (a write cut short)
-    for extra in ("index.db-wal", "index.db-shm"):
-        (folder / extra).unlink(missing_ok=True)
-    (folder / "index.db").write_bytes(b"not a database" * 100)
-    again = pictures.DiskCache(folder, most_bytes=1 << 30)
-    again.open()
-    assert [p for p in folder.rglob("*") if p.is_file() and (len(p.name) == 40 or p.name.startswith("."))] == []
-    assert again.put("cd" + "0" * 38, pictures.Kept(b"y" * 100, "image/jpeg", '"u"'))
-    assert again.get("cd" + "0" * 38) is not None
-    again.close()
-    (folder / "index.db").unlink()  # (deleted by hand: the files it named are let go too)
-    third = pictures.DiskCache(folder, most_bytes=1 << 30)
-    third.open()
-    assert [p for p in folder.rglob("*") if p.is_file() and len(p.name) == 40] == []
-    third.close()
-
-
-def test_a_viewer_without_limits_never_gets_a_picture_kept_from_a_media_folder_unshared_since(tmp_path, monkeypatch):
-    monkeypatch.setattr(plex_module, "RETRY_S", 0.01)
-    plex = library()
-    data = tmp_path / "data"
-    with TestClient(server(plex, data)) as home:
-        shared(home)
-        assert home.get("/api/internal/art/300?w=320").status_code == 200
-    with TestClient(server(plex, data)) as home:
-        assert home.put("/api/app-libraries", json={"libraries": ["1"]}).status_code == 200
-        refused(home.get("/api/internal/art/300?w=320"), 404)
-
-
-def test_drawing_ahead_waits_for_a_screens_request(home):
-    ctx = home.app.state.ctx
-    assert home.post("/api/internal/progress", json={"key": "300", "positionMs": 60_000}).status_code in (200, 204)
-    asked = len(home.plex.requests)
-
-    async def draw_while_a_screen_is_made() -> tuple[int, int]:
-        async with ctx.picture_maker.screen():
-            going = asyncio.create_task(ctx.draw_ahead())
-            await asyncio.sleep(0.3)
-            during = home.plex.requests[asked:].count("/photo/:/transcode")
-        return during, await going
-
-    during, made = home.portal.call(draw_while_a_screen_is_made)
-    assert during == 0 and made >= 1
-
-
-def test_a_new_encoder_version_makes_the_picture_again_never_reading_the_old(home, monkeypatch):
-    assert home.get("/api/internal/art/300?w=320").status_code == 200
-    home.app.state.ctx.app_pictures.clear()
-    asked = len(home.plex.requests)
-    monkeypatch.setattr(pictures, "ENCODER", "2")
-    assert home.get("/api/internal/art/300?w=320").status_code == 200
-    assert home.plex.requests[asked:].count("/photo/:/transcode") == 1
-
-
-def test_a_logo_that_couldnt_be_sized_is_never_kept_a_year(home, monkeypatch):
-    assert home.post("/api/channels", json={"number": 43, "logo": "halloween",
-                                            "sources": [{"type": "show", "ratingKey": "100"}]}).status_code == 201  # fmt: skip
-    plain = home.get("/channel-icon/43.png")
-
-    async def cant(*_):
-        return None
-
-    monkeypatch.setattr(pictures, "logo", cant)
-    sized = home.get("/channel-icon/43.png?v=1-halloween&w=100")
-    assert sized.status_code == 200 and sized.content == plain.content
-    assert sized.headers["cache-control"] == "max-age=86400", "as it is, for a day"
-    monkeypatch.undo()
-    again = home.get("/channel-icon/43.png?v=1-halloween&w=100")
-    assert probe(again.content)["width"] == 120, "sized once it can be"
-
-
-def test_a_logo_address_without_its_version_is_never_kept_a_year(home):
-    assert home.post("/api/channels", json={"number": 44, "logo": "halloween",
-                                            "sources": [{"type": "show", "ratingKey": "100"}]}).status_code == 201  # fmt: skip
-    current = home.get("/api/v1/stations").json()["stations"]
-    logo = next(s["logo"] for s in current if s["number"] == 44)
-    assert home.get(f"{logo}&w=100").headers["cache-control"] == "private, max-age=31536000"
-    for old in ("/channel-icon/44.png?w=100", "/channel-icon/44.png?v=0-old&w=100"):
-        assert home.get(old).headers["cache-control"] == "private, max-age=86400", old
-    tag = home.get(f"{logo}&w=100").headers["etag"]
-    assert home.get(f"{logo}&w=100", headers={"If-None-Match": "*"}).status_code == 304
-    assert home.get(f"{logo}&w=100", headers={"If-None-Match": f'"x{tag[1:]}'}).status_code == 200

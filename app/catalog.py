@@ -196,10 +196,6 @@ class Tags:
             return None
 
 
-# A picture's version when its source says it has none now (a poster removed): a kept one is let go.
-NO_PICTURE = "none"
-
-
 @dataclass(frozen=True)
 class Entry:
     """A show, movie or episode."""
@@ -249,12 +245,9 @@ class Entry:
     def picture_version(self, kind: str) -> str:
         """The version of the picture an app's `kind` ("poster", "backdrop"
         or "thumb") of it is made from: an episode's poster and backdrop are
-        its show's (see applibrary.picture); "" if not known; NO_PICTURE when
-        the source says it has none now."""
+        its show's (see applibrary.picture); "" if not known."""
         if self.kind == EPISODE and kind != "thumb":
             return self.show_art_v if kind == "backdrop" else self.show_thumb_v
-        if not (self.has_art if kind == "backdrop" else self.has_thumb):
-            return NO_PICTURE
         return self.art_v if kind == "backdrop" else self.thumb_v
 
     def version(self, version_id: str) -> Media | None:
