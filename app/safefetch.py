@@ -162,3 +162,17 @@ class GuardedTransport(httpx.AsyncBaseTransport):
 def transport(kind: str, inner: httpx.AsyncBaseTransport | None = None) -> GuardedTransport:
     """The transport every outbound client takes (`transport=safefetch.transport(...)`)."""
     return GuardedTransport(kind, inner)
+
+
+async def at_home(address: str) -> bool:
+    """Whether a typed address points inside the home (the page asks before
+    saving one: DL287). False when it can't be read or found: saving it is
+    then up to the address's own checks."""
+    try:
+        url = httpx.URL(address.strip())
+        if not url.host:
+            return False
+        found = await RESOLVE(url.host)
+    except (httpx.InvalidURL, Refused, ValueError):
+        return False
+    return any(_home_or_inside(ip) for ip in found)

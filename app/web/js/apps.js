@@ -411,8 +411,16 @@ async function loadNotify() {
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     result.textContent = '';
     const [first, ...more] = rows;
-    try { await api('/api/notify', { method: 'PUT', body: { on: on.checked, url: first.url, format: first.format, more: more.map(r => ({ url: r.url, format: r.format })) } }); }
-    catch (e) { result.textContent = e.message; return; }
+    const sent = { on: on.checked, url: first.url, format: first.format, more: more.map(r => ({ url: r.url, format: r.format })) };
+    try {
+      // (A new address on the home network: asked first, as a nudge. DL287.)
+      try { await api('/api/notify', { method: 'PUT', body: sent }); }
+      catch (e) {
+        if (e.status !== 409 || !confirm(`${e.message} Save it?`)) throw e;
+        await api('/api/notify', { method: 'PUT', body: { ...sent, homeOk: true } });
+      }
+    }
+    catch (e) { if (e.status !== 409) result.textContent = e.message; return; }
     const to = rows.filter(r => r.url.trim()).length > 1 ? 'those addresses' : 'that address';
     toast(on.checked ? `Saved. Alerts will be sent to ${to}.` : 'Saved. Alerts aren’t sent anywhere.');
     delete body.dataset.editing;

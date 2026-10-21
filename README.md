@@ -285,6 +285,15 @@ Put `PUBLIC_PORT` behind a Cloudflare Tunnel or a reverse proxy with HTTPS. [Rea
 - **Uploads.** A logo is accepted only as a PNG, JPEG, WebP, GIF or BMP image, and an Intro Bumper only as a video file. Each is turned into a clean copy before use. The limits are 500 of your own logos, 50 Intro Bumper videos, and no upload that would leave less than 2 GB free on the data folder's disk.
 - **The page.** It runs only its own scripts, can't be embedded in another site, and refuses changes sent from other sites. Every change it makes carries a header only tapiOca's own page sends (`X-Tapioca-Page`), so another site's page can't make one, even at home over plain http, with sign-in off or an Admin signed in. The same goes for anything a browser sends to the API's or the apps' addresses. Scripts and apps send no browser headers and aren't affected.
 - **Backups.** tapiOca restores a backup only if it's a genuine tapiOca backup. Anything unexpected is refused before anything changes.
+- **Where tapiOca connects.** tapiOca connects only to addresses you typed in (Plex, Sonarr, Radarr, your alert addresses, your own away-from-home address) and to GitHub, to see whether there's a newer version. An address you typed may be on your home network. Any other address must be on the internet, never inside your home. No connection ever follows a redirect, or reaches a cloud server's private metadata address.
+- **Tested every release.** Each release passes tapiOca's security tests before it's published: every address tapiOca serves, asked by someone signed out, by someone with a made-up sign-in, by a Kid, a User and an Admin, along with checks of sign-ins, outside connections, file paths and known ways of chaining small problems together. [SECURITY.md](SECURITY.md) says how to report a problem.
+
+**If your server is reachable from the internet:**
+
+- **Update promptly.** Each release fixes what it finds. tapiOca's page shows a banner when there's a newer one.
+- **Keep Plex up to date too.** Plex and tapiOca often run on the same machine, as the same user.
+- **At your reverse proxy:** remove any `X-Forwarded-For`, `X-Real-IP` or `Forwarded` header a visitor sends, so only the proxy's own reaches tapiOca. Limit sign-in attempts there too, if it can. Make sure it never caches a signed-in answer: tapiOca marks those `no-store`.
+- **Never forward your TrueNAS or NAS admin ports,** or tapiOca's home port (3310), to the internet.
 
 ## Updating
 

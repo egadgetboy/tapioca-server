@@ -606,3 +606,27 @@ async def test_1_33_1_reads_what_1_34_0_saves(db, monkeypatch, first, fmt, as_1_
     # Off, and the others gone: as 1.33.1 had it.
     sender.save(False, first, fmt, [])
     assert read_as_1_33_1(db)[:3] == (False, first, as_1_33_1)
+
+
+def test_a_new_address_at_home_is_saved_only_once_the_admin_says_yes(app):
+    # (DL287, the owner, October 21: an address typed into a setting may be at home, and the page asks
+    # first, "This points to a device on your home network. Save it?" A nudge, not a guard.)
+    home_hook = "http://192.168.1.9:8123/api/webhook/tapioca"
+    with TestClient(app) as home:
+        asked = home.put("/api/notify", json={"on": True, "url": home_hook, "format": "json"})
+        assert asked.status_code == 409 and asked.json()["detail"] == "This points to a device on your home network."
+        assert home.get("/api/notify").json()["url"] == ""  # (nothing saved)
+        yes = home.put("/api/notify", json={"on": True, "url": home_hook, "format": "json", "homeOk": True})
+        assert yes.status_code == 200, yes.text
+        assert home.get("/api/notify").json()["url"] == home_hook
+        # (Saved once: saving it again, or with another public address, asks nothing.)
+        again = home.put(
+            "/api/notify",
+            json={"on": True, "url": home_hook, "format": "json", "more": [{"url": NTFY, "format": "text"}]},
+        )
+        assert again.status_code == 200, again.text
+        # (A name at home counts too: the tests' .local names are at home.)
+        named = home.put(
+            "/api/notify", json={"on": True, "url": home_hook, "more": [{"url": "http://ha.local/x", "format": "json"}]}
+        )
+        assert named.status_code == 409

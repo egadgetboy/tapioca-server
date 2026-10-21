@@ -200,7 +200,25 @@ class AsPeer:
         await self.app(scope, receive, send)
 
 
+async def _stand_in_names(host: str):
+    """(The security suite, DL287) How the tapiOca started here resolves a
+    name: its stand-ins' (.test, .invalid) are at home, every other name a
+    public address, an address its own. It never asks the real DNS."""
+    import ipaddress
+
+    try:
+        return [ipaddress.ip_address(host)]
+    except ValueError:
+        pass
+    if host == "localhost" or host.endswith((".test", ".invalid", ".local", ".lan", ".home")):
+        return [ipaddress.ip_address("192.168.1.20")]
+    return [ipaddress.ip_address("93.184.216.34")]
+
+
 async def run(checks: Checks) -> None:
+    from app import safefetch
+
+    safefetch.RESOLVE = _stand_in_names
     tmp = Path(tempfile.mkdtemp(prefix="attack-check-"))
     fp = build_plex(tmp)
     scanner.STARTUP_DELAY_S = 10**6  # (no file checks: the stand-in files aren't on disk)

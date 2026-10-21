@@ -1,0 +1,5 @@
+{
+  "checks": 1138,
+  "about": "The regression corpus only grows (DL287): the number of checks tools/security_suite.py ran at the last release candidate. A run with fewer fails unless merges lists why (duplicates merged on purpose).",
+  "merges": []
+}

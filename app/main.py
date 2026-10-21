@@ -74,6 +74,7 @@ from . import (
     releases,
     replacing,
     reports,
+    safefetch,
     setup,
     smart,
     specials,
@@ -146,6 +147,8 @@ from .tuner import TunerAccess
 from .updates import GUIDE_FUTURE_MS, GUIDE_PAST_MS, MARGIN_MS, Updater
 
 log = logging.getLogger("stationplay")
+# (The page's question before saving an alert address at home: DL287.)
+HOME_ADDRESS = "This points to a device on your home network."
 
 WEB_DIR = Path(__file__).parent / "web"
 # The open-source notices, beside LICENSE (in the image, too: see Dockerfile).
@@ -440,6 +443,9 @@ class NotifyIn(BaseModel):
     url: str = Field(default="", max_length=notify.ADDRESS_MAX * 2)
     format: str = Field(default=notify.TEXT, max_length=10)
     more: list[NotifyAddressIn] | None = Field(default=None, max_length=10)
+    # (The page asked "This points to a device on your home network. Save it?", and the Admin said yes:
+    # the security suite, DL287. Without it, a new address at home is answered 409 and not saved.)
+    homeOk: bool = False
     which: int | None = Field(default=None, ge=0, lt=notify.ADDRESSES_MOST)
 
 
@@ -3750,6 +3756,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.put("/api/notify")
     async def notify_save(body: NotifyIn, request: Request):
         more = None if body.more is None else [(m.url, m.format) for m in body.more]
+        if not body.homeOk:
+            saved = {url for url, _ in ctx.notify.addresses()}
+            typed = [body.url, *(m.url for m in body.more or ())]
+            for url in (u for u in typed if u.strip() and u.strip() not in saved):
+                if await safefetch.at_home(url):
+                    raise HTTPException(409, HOME_ADDRESS)
         try:
             ctx.notify.save(body.on, body.url, body.format, more)
         except ValueError as e:
