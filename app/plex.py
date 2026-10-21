@@ -1323,21 +1323,18 @@ class PlexClient:
         ]
         return sorted(found, key=episode_order)
 
-    async def picture(
-        self, key: str, which: str, width: int, height: int, fmt: str = ""
-    ) -> tuple[bytes, str]:
+    async def picture(self, key: str, which: str, width: int, height: int) -> tuple[bytes, str]:
         """A show's, movie's or episode's picture (`which`: "thumb", its
         poster or still, or "art", its backdrop), made the size asked for by
-        Plex (or as it is, if Plex won't), at most PICTURE_MOST bytes; `fmt`
-        asked of Plex's resize ("webp"), what comes saying which it made.
+        Plex (or as it is, if Plex won't), at most PICTURE_MOST bytes.
         httpx.HTTPStatusError if there's none (or it isn't a picture);
         another httpx.HTTPError if Plex can't be reached."""
         path = _checked(f"/library/metadata/{key}/{which}")
-        params: dict[str, Any] = {"url": path, "width": width, "height": height, "minSize": 1, "upscale": 1}
-        if fmt:
-            params["format"] = fmt
         try:
-            return await self._picture("/photo/:/transcode", params)
+            return await self._picture(
+                "/photo/:/transcode",
+                {"url": path, "width": width, "height": height, "minSize": 1, "upscale": 1},
+            )
         except httpx.HTTPStatusError:
             return await self._picture(path)
 

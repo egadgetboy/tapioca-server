@@ -68,10 +68,6 @@ class Walked:
     videos: list[tuple[str, int, int]] = field(default_factory=list)
     names: dict[str, dict[str, str]] = field(default_factory=dict)
     nfos: dict[str, str] = field(default_factory=dict)
-    # Each picture file's modification time and size, as "mtime-size": its
-    # version, so a replaced poster is made again (pictures.py), read here so
-    # no picture asked for later has to touch the disk to know it.
-    pictures: dict[str, str] = field(default_factory=dict)
     skipped: int = 0
     unreadable: list[str] = field(default_factory=list)  # (folders below the top)
     bad_names: list[str] = field(default_factory=list)  # (as shown: not UTF-8)
@@ -157,11 +153,6 @@ def walk(root: str, media_dir: str) -> Walked:
                 with contextlib.suppress(OSError):
                     st = e.stat()
                     out.nfos[e.path] = f"{st.st_size}:{st.st_mtime_ns}"
-                continue
-            if low.endswith(tuple(TYPES)):
-                with contextlib.suppress(OSError):
-                    st = e.stat()
-                    out.pictures[e.path] = f"{st.st_mtime_ns}-{st.st_size}"
                 continue
             if not naming.is_video(e.name) or naming.is_extra(e.name):
                 if naming.is_video(e.name):

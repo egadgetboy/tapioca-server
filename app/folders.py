@@ -62,6 +62,7 @@ SCAN_EVERY_S = 6 * 3600
 STARTUP_DELAY_S = 30.0
 WATCHING_WAIT_S = 10.0  # while anyone's watching, scanning looks again this often
 DISK_WAIT_S = 10.0  # a picture or a folder's list, waited for at most
+PICTURE_STAMP_S = 0.5  # a kept picture's source looked at, at most (then the kept one is used)
 LOOK_EVERY_S = 300.0  # how often what's due is looked for
 PROBES_AT_ONCE = 2
 # Scanning a big library never holds everything else up (playing, the page,
@@ -177,10 +178,6 @@ class FolderSource:
         self._tasks: set[asyncio.Task] = set()
         self._waiting: set[int] = set()  # libraries with a scan waiting its turn
         self._said_missing: set[str] = set()
-        # Each picture file's version ("mtime-size"), from the last scan's walk: a
-        # kept picture made from another is made again (pictures.py). In memory
-        # only: until the first scan after a start, kept pictures are used.
-        self._picture_stamps: dict[str, str] = {}
         self.scanning: dict[str, Any] | None = None  # what's being scanned now, for the page
         # Set by the app: whether anyone's watching (scanning waits), and
         # what to tell when a library's programs change.
@@ -483,9 +480,6 @@ class FolderSource:
                     await folderart.on_disk(folderscan.walk, root, self.settings.media_dir)
                 )
             videos = {p: (s, m) for w in walked for p, s, m in w.videos}
-            for w in walked:
-                if w.reachable:
-                    self._picture_stamps.update(w.pictures)
             probes = await self._read_files(videos)
             nfos = await self._read_nfos(walked)
 
@@ -1530,11 +1524,11 @@ class FolderSource:
             return t.art.get("thumb", "") or (show.art.get("poster", "") if show else "")
         return t.art.get("poster", "")
 
-    def picture_version(self, key: str, kind: str) -> str:
+    async def picture_version(self, key: str, kind: str) -> str:
         """The version of the picture an app's `kind` ("poster", "backdrop" or
-        "thumb") of `key` is made from, as the last scan saw it (see
-        applibrary.picture for which picture each is), never reading the disk:
-        "" if there's none, or it isn't known yet (a kept picture is used then)."""
+        "thumb") of `key` is made from, as it is on disk now (see
+        applibrary.picture for which picture each is): "" if there's none, or
+        its disk isn't answering (a kept picture is used then)."""
         try:
             t = self.thing(key)
         except LibraryError:
@@ -1548,7 +1542,12 @@ class FolderSource:
         if where.startswith("cover:"):
             path = where.split(":", 3)[3]
             return f"cover-{digest}-{self._sizes({path}).get(path) or 0}"
-        stamp = self._picture_stamps.get(where, "")
+        try:
+            stamp = await asyncio.wait_for(
+                folderart.on_disk(folderart.picture_stamp, where, self.settings.media_dir), PICTURE_STAMP_S
+            )
+        except TimeoutError:
+            return ""
         return f"{digest}-{stamp}" if stamp else ""
 
     async def picture_source(self, key: str, which: str) -> tuple[bytes, str]:

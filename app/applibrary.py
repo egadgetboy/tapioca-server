@@ -60,8 +60,7 @@ from .broadcaster import now_ms
 from .broken import version_key
 from .catalog import Entry, Media, Track
 from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
-from . import pictures as kept_pictures
-from .library import LibraryError, NoPicture, is_folder_key
+from .library import LibraryError, NoPicture
 from .ondemand import NotShared
 from .plex import NOT_ANSWERING
 from .sources import find_file, learn_mapping, part_starts
@@ -1111,102 +1110,38 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "episodes": await cards(user_id, chosen[start : start + size]),
         }
 
-    def picture_source(key: str) -> str:
-        """Whose a kept picture is, in its name (pictures.name): the folder
-        libraries', or Plex's at its address (a different Plex there is caught
-        by its pictures' versions)."""
-        return "folders" if is_folder_key(key) else f"plex {ctx.settings.plex_url}"
-
-    def picture_version(key: str, kind: str) -> str:
-        """The version of the picture an app's `kind` of `key` is made from,
-        as last heard from its source, never asking ("" if not known)."""
-        found = ctx.library.picture_version(key, kind)
-        return found if found is not None else (cat.picture_version(key, kind) or "")
-
-    async def make_picture(key: str, kind: str, width: int, fmt: str) -> tuple[tuple[bytes, str], str, str]:
-        """A picture made for an app: ((it, its type), the version it was made
-        from, its title's library). As `fmt` asks when it can be made so, JPEG
-        otherwise (its type says which). NoPicture or httpx's errors if there's
-        none, or the library can't be reached; the library's own errors as
-        they come."""
-        # (An episode's poster is its show's; a show's still, its poster.)
-        which = "art" if kind == "backdrop" else "thumb"
-        e = await cat.entry(key)
-        target = e.show_key if e.kind == catalog.EPISODE and kind != "thumb" else e.key
-        shown = e if not target or target == e.key else await cat.entry(target)
-        if not (shown.has_art if which == "art" else shown.has_thumb):
-            raise NoPicture(key)  # (the library has none: no need to ask)
-        version = picture_version(key, kind)
-        height = kept_pictures.height_for(kind, width)
-        async with picture_turns:
-            if fmt == "webp" and await kept_pictures.makes_webp(ctx.settings.ffmpeg_path):
-                made = await webp_picture(shown.key, which, kind, width, height)
-                if made is not None:
-                    return (made, "image/webp"), version, e.library
-            return await ctx.library.picture(shown.key, which, width, height), version, e.library
-
-    async def webp_picture(key: str, which: str, kind: str, width: int, height: int) -> bytes | None:
-        """WebP: Plex's own, when its resize makes it (asked once, then
-        remembered); otherwise made by FFmpeg from the picture as the
-        library keeps it, in one lossy step (never a JPEG made again as
-        WebP). None if it can't be."""
-        if not is_folder_key(key) and ctx.plex_webp is not False:
-            data, got = await ctx.library.picture(key, which, width, height, fmt="webp")
-            if got == "image/webp":
-                ctx.plex_webp = True
-                return data
-            ctx.plex_webp = False
-        source, _ = await ctx.library.picture_source(key, which)
-        return await kept_pictures.encode(ctx.settings.ffmpeg_path, source, kind, width, "webp")
-
     @app.get("/api/internal/art/{key}")
     async def picture(key: str, request: Request):
         shared_here(request)
         kind = request.query_params.get("kind", "poster")
         if kind not in ondemand.PICTURE_KINDS:
             raise HTTPException(400, "kind must be poster, backdrop or thumb")
-        fmt = request.query_params.get("format", "jpeg")
-        if fmt not in kept_pictures.FORMATS:
-            raise HTTPException(400, "format must be jpeg or webp")
-        width = kept_pictures.width_for(kind, _whole(request.query_params.get("w"), 320, "w", 1, 10_000))
+        width = ondemand.width_for(_whole(request.query_params.get("w"), 320, "w", 1, 10_000))
         viewer = viewer_of(request)
-        here = (key, kind, width, fmt)
-        name = kept_pictures.name(picture_source(key), key, kind, width, fmt)
-        kept = ctx.app_pictures.get(here)
-        if kept is None and ctx.picture_disk.on:
-            # (Behind the memory: on disk, so a restart or an update never makes it again.)
-            found = await asyncio.to_thread(ctx.picture_disk.get, name)
-            if found is not None:
-                kept = ctx.app_pictures.put(here, (found.data, found.content_type), found.version, found.library)
         async with asking(request):
-            # (Shared now, even if its picture was kept from before: a kept picture's library is
-            # used only while nothing newer is known, so a restart asks nothing more of the library.)
-            await cat.check(key, kept[4] if kept else "")
+            await cat.check(key)  # (shared now, even if its picture was kept from before)
             if not viewer.unchecked:
                 await must_see(cat, viewer, await cat.entry(key))
-        if kept is not None and kept[3] != (now := picture_version(key, kind)) and now:
-            # (Changed since it was made, as its source said in a list or a scan: made again.)
-            ctx.app_pictures.drop(here)
-            await asyncio.to_thread(ctx.picture_disk.drop, name)
-            kept = None
+        kept = ctx.app_pictures.get((key, kind, width))
         if kept is None:
-            async with asking(request), ctx.picture_maker.screen():
-                try:
-                    made, version, library = await ctx.picture_maker.once(
-                        name, lambda: make_picture(key, kind, width, fmt)
-                    )
-                except (httpx.HTTPStatusError, NoPicture):
-                    # (Within the wait, so "no such picture" is never taken for "not shared".)
-                    raise HTTPException(404, NO_PICTURE) from None
-                except httpx.HTTPError as ex:
-                    raise unreachable(f"a picture didn't come: {type(ex).__name__}") from None
-            kept = ctx.app_pictures.put(here, made, version, library)
-            if made[1] == kept_pictures.TYPES[fmt] and ctx.picture_disk.on:
-                # (A JPEG sent for WebP isn't kept on disk: it's made as WebP once it can be.)
-                await asyncio.to_thread(
-                    ctx.picture_disk.put, name, kept_pictures.Kept(kept[0], kept[1], kept[2], version, library)
-                )
-        data, content_type, tag = kept[:3]
+            # (An episode's poster is its show's; a show's still, its poster.)
+            which = "art" if kind == "backdrop" else "thumb"
+            async with asking(request):
+                e = await cat.entry(key)
+                target = e.show_key if e.kind == catalog.EPISODE and kind != "thumb" else e.key
+                shown = e if not target or target == e.key else await cat.entry(target)
+            if not (shown.has_art if which == "art" else shown.has_thumb):
+                raise HTTPException(404, NO_PICTURE)  # (the library has none: no need to ask)
+            height = width * 3 // 2 if kind == "poster" else width * 9 // 16
+            try:
+                async with asking(request), picture_turns:
+                    got = await ctx.library.picture(shown.key, which, width, height)
+            except (httpx.HTTPStatusError, NoPicture):
+                raise HTTPException(404, NO_PICTURE) from None
+            except httpx.HTTPError as ex:
+                raise unreachable(f"a picture didn't come: {type(ex).__name__}") from None
+            kept = ctx.app_pictures.put((key, kind, width), got)
+        data, content_type, tag = kept
         headers = {
             "Cache-Control": "private, max-age=86400",
             "ETag": tag,

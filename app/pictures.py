@@ -306,16 +306,6 @@ class DiskCache:
                 self._trouble("keep a picture", e)
                 return False
 
-    def drop(self, name: str) -> None:
-        """No longer kept (its source's picture changed)."""
-        with self._lock:
-            if self._db is None:
-                return
-            try:
-                self._forget(name)
-            except (OSError, sqlite3.Error) as e:
-                self._trouble("let go of a picture", e)
-
     def _forget(self, name: str) -> None:
         row = self._db.execute("SELECT bytes FROM kept WHERE name = ?", (name,)).fetchone()  # type: ignore[union-attr]
         if row is not None:

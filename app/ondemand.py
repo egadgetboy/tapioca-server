@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from . import catalog, infostation, pictures
+from . import catalog, infostation
 from .catalog import Entry, Media, Track
 from .library import LibraryError, is_key
 from .text import and_list, plain
@@ -100,10 +100,9 @@ ADDED_S = 60.0  # (kept this long)
 CONTINUE_MOST = 20
 SHOW_ROWS = 20  # a show's latest progress looked through for what's next
 
-# Pictures are made one of a few widths for each kind (the next one up from
-# what's asked for), so a few sizes of each are kept rather than one of every
-# width: pictures.POSTER_WIDTHS and WIDE_WIDTHS.
-WIDTHS = {"poster": pictures.POSTER_WIDTHS, "wide": pictures.WIDE_WIDTHS}
+# Pictures are made one of these widths (the next one up from what's asked
+# for), so a few sizes of each are kept rather than one of every width.
+WIDTHS = (160, 320, 480, 720, 1280, 1920)
 PICTURE_KINDS = ("poster", "backdrop", "thumb")
 PICTURE_BYTES_KEPT = 48 << 20
 PICTURES_AT_ONCE = 8  # (asked of the library at once, at most: the rest wait their turn)
@@ -330,8 +329,6 @@ class Catalog:
         self.library = library
         self.shared = shared
         self._where: OrderedDict[str, str] = OrderedDict()  # key -> its library
-        # key -> its pictures' versions, as the library last said in any list or detail (pictures.py)
-        self._pictures: OrderedDict[str, Entry] = OrderedDict()
         self._entries: OrderedDict[str, tuple[float, Entry]] = OrderedDict()  # (in detail)
         self._cards: OrderedDict[str, tuple[float, Entry]] = OrderedDict()  # (as lists have them)
         self._episodes: OrderedDict[str, Whole] = OrderedDict()  # (shows' episodes)
@@ -348,8 +345,8 @@ class Catalog:
     def forget(self) -> None:
         """Everything kept, forgotten (a folder library changed: see
         folders.py), so what's asked next is asked afresh."""
-        for kept in (self._where, self._pictures, self._entries, self._cards, self._episodes,
-                     self._wholes, self._genres, self._added):  # fmt: skip
+        for kept in (self._where, self._entries, self._cards, self._episodes, self._wholes,
+                     self._genres, self._added):  # fmt: skip
             kept.clear()
         self._libraries = self._fingerprint = None
 
@@ -371,12 +368,8 @@ class Catalog:
         return await asyncio.shield(task)
 
     def learn(self, entries: Iterable[Entry]) -> None:
-        """Remembers which library each of these is in, and the versions of
-        their pictures, as the library says them now (pictures.py)."""
+        """Remembers which library each of these is in."""
         for e in entries:
-            if e.thumb_v or e.art_v or e.show_thumb_v or e.show_art_v:
-                self._pictures[e.key] = replace(e, media=(), summary="", tags=None)
-                self._pictures.move_to_end(e.key)
             if not e.library:
                 continue
             for key in (e.key, e.show_key):
@@ -385,8 +378,6 @@ class Catalog:
                     self._where.move_to_end(key)
         while len(self._where) > WHERE_KEPT:
             self._where.popitem(last=False)
-        while len(self._pictures) > WHERE_KEPT:
-            self._pictures.popitem(last=False)
 
     def shared_library(self, entry: Entry) -> bool:
         return bool(entry.library) and entry.library in self.shared.keys
@@ -466,8 +457,10 @@ class Catalog:
         """The version of the picture an app's `kind` of `key` is made from,
         as last heard from the library (in a list or in detail), never
         asking it; None if it isn't known here (see pictures.py)."""
-        heard = self._pictures.get(key)
-        return (heard.picture_version(kind) or None) if heard is not None else None
+        for kept in (self._cards.get(key), self._entries.get(key)):
+            if kept is not None:
+                return kept[1].picture_version(kind) or None
+        return None
 
     async def check(self, key: str, known_library: str = "") -> None:
         """NotShared unless `key` is in a shared library (asking the library
@@ -1581,12 +1574,6 @@ class PictureCache:
         self._kept.clear()
         self._bytes = 0
 
-    def drop(self, key: tuple) -> None:
-        """No longer kept (its source's picture changed: pictures.py)."""
-        gone = self._kept.pop(key, None)
-        if gone is not None:
-            self._bytes -= len(gone[0])
-
     def get(self, key: tuple) -> tuple[bytes, str, str, str, str] | None:
         """(the picture, its type, its ETag, its version, its library), if it's kept."""
         found = self._kept.get(key)
@@ -1614,11 +1601,10 @@ class PictureCache:
         return found
 
 
-def width_for(asked: int, kind: str = "poster") -> int:
-    """The width a picture of `kind` is made at: the next of its widths up
-    from what's asked for (the largest, for anything larger). The widths are
-    pictures.py's: posters', and wide pictures' (backdrops and stills)."""
-    return pictures.width_for(kind, asked)
+def width_for(asked: int) -> int:
+    """The width a picture is made at: the next of WIDTHS up from what's
+    asked for (the largest, for anything larger)."""
+    return next((w for w in WIDTHS if w >= asked), WIDTHS[-1])
 
 
 # The Resume row and what's next -------------------------------------------------

@@ -65,6 +65,7 @@ from . import (
     marathons,
     notify,
     ondemand,
+    pictures,
     playback,
     playing,
     problems,
@@ -86,7 +87,6 @@ from . import (
     viewing,
 )
 from . import cuts as picture_cuts
-from . import pictures as kept_pictures  # (AppContext has a `pictures` of its own)
 from .arr import NAMES as ARR_NAMES
 from .arr import Arr, ArrError, clean_url
 from .breaks import MAX_BREAKS, FillerLibrary, id_card_ms
@@ -567,10 +567,8 @@ class AppContext:
     plays: ondemand.PlaySessions = field(default_factory=ondemand.PlaySessions)
     app_pictures: ondemand.PictureCache = field(default_factory=ondemand.PictureCache)
     # Behind it, every picture made for the apps, on disk (pictures.py).
-    picture_disk: kept_pictures.DiskCache = field(init=False)
-    picture_maker: kept_pictures.Maker = field(default_factory=kept_pictures.Maker)
-    # Whether Plex's own resize makes WebP: None until it's been asked once.
-    plex_webp: bool | None = None
+    picture_disk: pictures.DiskCache = field(init=False)
+    picture_maker: pictures.Maker = field(default_factory=pictures.Maker)
     stats: stats.Stats = field(init=False)  # how much each station is watched
     health: health.Health = field(init=False)  # the server's health, now (see health.py)
     titles: titles.Titles = field(init=False)  # the ratings of what's on the stations
@@ -623,8 +621,8 @@ class AppContext:
         self.shared = ondemand.Shared(self.db)
         self.reach.media = lambda: self.shared.on
         self.catalog = ondemand.Catalog(self.library, self.shared)
-        self.picture_disk = kept_pictures.DiskCache(
-            self.settings.data_dir / kept_pictures.FOLDER, int(self.settings.picture_cache_gb * (1 << 30))
+        self.picture_disk = pictures.DiskCache(
+            self.settings.data_dir / pictures.FOLDER, int(self.settings.picture_cache_gb * (1 << 30))
         )
         self.stats = stats.Stats(self.db)
         self.plays.count_with = self.stats.played  # (Media played in the apps counts too)
