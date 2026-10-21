@@ -453,21 +453,10 @@ class Catalog:
         kept = self._entries.get(key)
         return kept[1] if kept is not None else None
 
-    def picture_version(self, key: str, kind: str) -> str | None:
-        """The version of the picture an app's `kind` of `key` is made from,
-        as last heard from the library (in a list or in detail), never
-        asking it; None if it isn't known here (see pictures.py)."""
-        for kept in (self._cards.get(key), self._entries.get(key)):
-            if kept is not None:
-                return kept[1].picture_version(kind) or None
-        return None
-
-    async def check(self, key: str, known_library: str = "") -> None:
+    async def check(self, key: str) -> None:
         """NotShared unless `key` is in a shared library (asking the library
-        only about keys not seen lately). `known_library`: the library it was
-        in when its picture was kept (pictures.py), used, never asking, when
-        nothing newer is known here."""
-        where = self._where.get(key) or known_library or None
+        only about keys not seen lately)."""
+        where = self._where.get(key)
         if where is None:
             await self.entry(key)
         elif where not in self.shared.keys:
@@ -1562,32 +1551,28 @@ class PlaySessions:
 class PictureCache:
     """Pictures for the apps, the most recently used kept up to a size, each
     with its ETag (from what's in it), so an app asking again for one it has
-    is told it has it (304); with the version of the picture each was made
-    from, and its title's library (see pictures.py, the disk behind it)."""
+    is told it has it (304)."""
 
     def __init__(self, most_bytes: int = PICTURE_BYTES_KEPT) -> None:
         self.most_bytes = most_bytes
-        self._kept: OrderedDict[tuple, tuple[bytes, str, str, str, str]] = OrderedDict()
+        self._kept: OrderedDict[tuple[str, str, int], tuple[bytes, str, str]] = OrderedDict()
         self._bytes = 0
 
     def clear(self) -> None:
         self._kept.clear()
         self._bytes = 0
 
-    def get(self, key: tuple) -> tuple[bytes, str, str, str, str] | None:
-        """(the picture, its type, its ETag, its version, its library), if it's kept."""
+    def get(self, key: tuple[str, str, int]) -> tuple[bytes, str, str] | None:
+        """(the picture, its type, its ETag), if it's kept."""
         found = self._kept.get(key)
         if found is not None:
             self._kept.move_to_end(key)
         return found
 
-    def put(
-        self, key: tuple, picture: tuple[bytes, str], version: str = "", library: str = ""
-    ) -> tuple[bytes, str, str, str, str]:
-        """Keeps a picture (unless it's too big to): (it, its type, its ETag,
-        its version, its library)."""
+    def put(self, key: tuple[str, str, int], picture: tuple[bytes, str]) -> tuple[bytes, str, str]:
+        """Keeps a picture (unless it's too big to): (it, its type, its ETag)."""
         data, kind = picture
-        found = (data, kind, f'"{hashlib.sha1(data).hexdigest()[:24]}"', version, library)
+        found = (data, kind, f'"{hashlib.sha1(data).hexdigest()[:24]}"')
         if len(data) > self.most_bytes // 8:
             return found  # (one huge picture doesn't push out everything else)
         old = self._kept.pop(key, None)

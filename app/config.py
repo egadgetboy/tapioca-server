@@ -15,16 +15,6 @@ def _int(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
-def _gb(name: str, default: float) -> float:
-    """A size in GB from the environment: a number from 0 up, or `default`."""
-    raw = os.environ.get(name, "").strip()
-    try:
-        value = float(raw) if raw else default
-    except ValueError:
-        return default
-    return value if 0 <= value <= 1_000 else default
-
-
 def _picture(height: str) -> str:
     """The picture size nearest a VIDEO_HEIGHT given ("" if none is)."""
     try:
@@ -93,10 +83,6 @@ class Settings:
     # synology, docker-desktop or docker-run), for the steps the page gives
     # to update tapiOca's image (see releases.py). "": not said.
     install: str = ""
-    # The most the pictures made for tapiOca's apps keep on disk, in GB
-    # (PICTURE_CACHE_GB; 0: none kept, made as they're asked for). See
-    # pictures.py: the least recently viewed go first.
-    picture_cache_gb: float = 2.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -120,7 +106,6 @@ class Settings:
             ffprobe_path=os.environ.get("FFPROBE_PATH", "ffprobe"),
             idle_grace_seconds=_int("IDLE_GRACE_SECONDS", 20),
             install=os.environ.get("TAPIOCA_INSTALL", "").strip().lower(),
-            picture_cache_gb=_gb("PICTURE_CACHE_GB", 2.0),
         )
 
     def map_path(self, plex_path: str) -> str:
