@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from . import __version__
+from . import __version__, safefetch
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -319,7 +319,10 @@ class Releases:
         logged = ""
         try:
             async with httpx.AsyncClient(
-                transport=self.transport, timeout=WAIT_S, follow_redirects=False, trust_env=False
+                transport=safefetch.transport(safefetch.FIXED, self.transport),
+                timeout=WAIT_S,
+                follow_redirects=False,
+                trust_env=False,
             ) as client:
                 got = await asyncio.wait_for(client.get(LATEST, headers=headers), WAIT_S)
             if got.status_code != 200:

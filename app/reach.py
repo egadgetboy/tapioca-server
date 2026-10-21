@@ -79,7 +79,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from . import __version__
+from . import __version__, safefetch
 from .access import REACH
 from .away import port_problem
 from .trusted import PROXIES_MOST
@@ -457,7 +457,7 @@ class Reach:
         would, and says what that found."""
         try:
             async with httpx.AsyncClient(
-                transport=self.transport,
+                transport=safefetch.transport(safefetch.TYPED, self.transport),
                 timeout=WAIT_S,
                 follow_redirects=False,
                 trust_env=False,  # (straight from here: no proxy the environment names)

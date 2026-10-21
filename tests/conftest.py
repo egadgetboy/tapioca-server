@@ -106,3 +106,27 @@ def no_info_station(request, monkeypatch):
     INFO station's own tests (marked info_station) leave it be."""
     if request.node.get_closest_marker("info_station") is None:
         monkeypatch.setattr(infostation, "wanted", lambda db, new: False)
+
+
+@pytest.fixture(autouse=True)
+def names_without_dns(monkeypatch):
+    """(The security suite, DL287) safefetch resolves every name before a
+    request goes out; the tests never ask the real DNS. A test name (.test,
+    .invalid, .local, .lan, localhost) is at home; any other name is a
+    public address. An address is its own. tests/security/test_ssrf.py sets
+    its own names to check each refusal."""
+    import ipaddress
+
+    from app import safefetch
+
+    async def resolve(host: str):
+        try:
+            return [ipaddress.ip_address(host)]
+        except ValueError:
+            pass
+        if host == "localhost" or host.endswith((".test", ".invalid", ".local", ".lan", ".home")):
+            return [ipaddress.ip_address("192.168.1.20")]
+        return [ipaddress.ip_address("93.184.216.34")]
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+

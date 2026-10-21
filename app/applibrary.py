@@ -49,6 +49,7 @@ from . import (
     playing,
     problems,
     ratings,
+    safefetch,
     setup,
     subtitles,
     viewing,
@@ -660,7 +661,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         players (made when first needed; closed as tapiOca stops)."""
         if ctx.play_client is None:
             ctx.play_client = httpx.AsyncClient(
-                timeout=PROXY_TIMEOUT, transport=ctx.play_transport, follow_redirects=False
+                timeout=PROXY_TIMEOUT,
+                transport=safefetch.transport(safefetch.TYPED, ctx.play_transport),
+                follow_redirects=False,
             )
         return ctx.play_client
 

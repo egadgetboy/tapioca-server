@@ -28,17 +28,42 @@ class Site:
 
 
 # What an outbound client is: httpx's clients, urllib's urlopen, a raw socket.
-_EGRESS = {("httpx", "AsyncClient"), ("httpx", "Client"), ("urllib.request", "urlopen"), ("request", "urlopen"),
-           ("socket", "create_connection"), ("asyncio", "open_connection"), ("requests", "get"), ("requests", "post")}
+_EGRESS = {
+    ("httpx", "AsyncClient"),
+    ("httpx", "Client"),
+    ("urllib.request", "urlopen"),
+    ("request", "urlopen"),
+    ("socket", "create_connection"),
+    ("asyncio", "open_connection"),
+    ("requests", "get"),
+    ("requests", "post"),
+}
 # What starts a program.
-_SPAWN = {("asyncio", "create_subprocess_exec"), ("asyncio", "create_subprocess_shell"), ("subprocess", "run"),
-          ("subprocess", "Popen"), ("subprocess", "call"), ("subprocess", "check_output"), ("subprocess", "check_call"),
-          ("os", "system"), ("os", "popen")}
+_SPAWN = {
+    ("asyncio", "create_subprocess_exec"),
+    ("asyncio", "create_subprocess_shell"),
+    ("subprocess", "run"),
+    ("subprocess", "Popen"),
+    ("subprocess", "call"),
+    ("subprocess", "check_output"),
+    ("subprocess", "check_call"),
+    ("os", "system"),
+    ("os", "popen"),
+}
 # What writes or moves a file (a Path's replace and rename take one argument; str.replace takes two).
 _WRITE_ANY = {"write_text", "write_bytes", "mkstemp", "NamedTemporaryFile", "mkdtemp"}
-_WRITE_OS = {("os", "replace"), ("os", "rename"), ("os", "remove"), ("os", "unlink"), ("shutil", "copy"),
-             ("shutil", "copy2"), ("shutil", "copyfile"), ("shutil", "copytree"), ("shutil", "move"),
-             ("shutil", "rmtree")}
+_WRITE_OS = {
+    ("os", "replace"),
+    ("os", "rename"),
+    ("os", "remove"),
+    ("os", "unlink"),
+    ("shutil", "copy"),
+    ("shutil", "copy2"),
+    ("shutil", "copyfile"),
+    ("shutil", "copytree"),
+    ("shutil", "move"),
+    ("shutil", "rmtree"),
+}
 
 
 def _dotted(node: ast.AST) -> str:
@@ -63,30 +88,56 @@ def _sites(kind: str) -> list[Site]:
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+            name = (
+                func.attr
+                if isinstance(func, ast.Attribute)
+                else func.id
+                if isinstance(func, ast.Name)
+                else ""
+            )
             base = _dotted(func.value) if isinstance(func, ast.Attribute) else ""
             where = owner.get(id(node), "<module>")
             rel = str(path.relative_to(APP))
             hit = ""
-            if kind == "egress" and (base, name) in _EGRESS:
-                hit = f"{base}.{name}"
-            elif kind == "spawn" and (base, name) in _SPAWN:
+            if (kind == "egress" and (base, name) in _EGRESS) or (
+                kind == "spawn" and (base, name) in _SPAWN
+            ):
                 hit = f"{base}.{name}"
             elif kind == "write":
                 if (base, name) in _WRITE_OS:
                     hit = f"{base}.{name}"
-                elif name in _WRITE_ANY and base not in ("str",):
+                elif (
+                    (name in _WRITE_ANY and base not in ("str",))
+                    or (
+                        name in ("replace", "rename", "unlink", "rmdir")
+                        and base not in ("os", "dataclasses", "str")
+                        and len(node.args) <= 1
+                        and not node.keywords
+                        and name != "replace"
+                    )
+                    or (
+                        name == "replace"
+                        and base not in ("os", "dataclasses")
+                        and len(node.args) == 1
+                        and not node.keywords
+                    )
+                ):
                     hit = f".{name}"
-                elif name in ("replace", "rename", "unlink", "rmdir") and base not in ("os", "dataclasses", "str") \
-                        and len(node.args) <= 1 and not node.keywords and name != "replace" or (
-                        name == "replace" and base not in ("os", "dataclasses") and len(node.args) == 1
-                        and not node.keywords):
-                    hit = f".{name}"
-                elif name == "open" and isinstance(func, ast.Name) and len(node.args) > 1 and isinstance(
-                        node.args[1], ast.Constant) and any(c in str(node.args[1].value) for c in "wax+"):
+                elif (
+                    name == "open"
+                    and isinstance(func, ast.Name)
+                    and len(node.args) > 1
+                    and isinstance(node.args[1], ast.Constant)
+                    and any(c in str(node.args[1].value) for c in "wax+")
+                ):
                     hit = f"open({node.args[1].value!r})"
-                elif name == "open" and isinstance(func, ast.Attribute) and node.args and isinstance(
-                        node.args[0], ast.Constant) and any(c in str(node.args[0].value) for c in "wax+"):
+                elif (
+                    name == "open"
+                    and isinstance(func, ast.Attribute)
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and any(c in str(node.args[0].value) for c in "wax+")
+                ):
                     hit = f".open({node.args[0].value!r})"
                 elif name == "backup" and base not in ("",):
                     hit = f".{name}"
@@ -203,3 +254,40 @@ WRITE = {
     "app/subtitles.py:link os.replace": "data: a subtitle file's plainly named link",
     "app/subtitles.py:tidy .unlink": "data: a subtitle file's plainly named link",
 }
+
+
+def egress_guards() -> dict[str, tuple[str | None, object]]:
+    """For each outbound client the census finds: the kind its transport is
+    vetted as (safefetch.transport(safefetch.<KIND>, ...)), or None when it
+    isn't made through safefetch; and its follow_redirects (None if unset)."""
+    out: dict[str, tuple[str | None, object]] = {}
+    for path in sorted(APP.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        owner: dict[int, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for inner in ast.walk(node):
+                    owner[id(inner)] = node.name
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            if (_dotted(node.func.value), node.func.attr) not in _EGRESS:
+                continue
+            site = str(Site(str(path.relative_to(APP)), owner.get(id(node), "<module>"),
+                            f"{_dotted(node.func.value)}.{node.func.attr}"))  # fmt: skip
+            kinds = {k.arg: k.value for k in node.keywords}
+            kind = None
+            made = kinds.get("transport")
+            if (
+                isinstance(made, ast.Call)
+                and _dotted(made.func) == "safefetch.transport"
+                and made.args
+            ):
+                first = made.args[0]
+                kind = first.attr.lower() if isinstance(first, ast.Attribute) else None
+            redirects = kinds.get("follow_redirects")
+            out[site] = (
+                kind,
+                redirects.value if isinstance(redirects, ast.Constant) else redirects,
+            )
+    return out

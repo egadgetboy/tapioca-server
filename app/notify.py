@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from . import __version__
+from . import __version__, safefetch
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -524,7 +524,7 @@ class Notify:
         at = _now_ms()
         try:
             async with httpx.AsyncClient(
-                transport=self.transport,
+                transport=safefetch.transport(safefetch.TYPED, self.transport),
                 timeout=WAIT_S,
                 follow_redirects=False,
                 trust_env=False,  # (straight from here: no proxy the environment names)

@@ -48,3 +48,15 @@ def test_the_census_finds_what_it_should():
     assert len(inventory.egress_sites()) >= 6
     assert len(inventory.spawn_sites()) >= 10
     assert len(inventory.write_sites()) >= 30
+
+
+def test_every_outbound_client_goes_through_safefetch_as_its_declared_kind_and_follows_no_redirect():
+    # (DEP-03 and SSRF-04, DL287: one vetted way out. A client made any other way fails here.)
+    guards = inventory.egress_guards()
+    assert set(guards) == set(inventory.EGRESS)
+    for site, (kind, redirects) in guards.items():
+        declared = inventory.EGRESS[site].split(":", 1)[0]
+        assert kind == declared, (
+            f"{site}: its transport is {kind!r}, but it's declared {declared!r}"
+        )
+        assert redirects in (None, False), f"{site} follows redirects"

@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 
 import httpx
 
-from . import catalog, languages
+from . import catalog, languages, safefetch
 from .catalog import Entry, Media, Track
 from .db import Item
 from .library import LibraryError
@@ -178,6 +178,10 @@ def trouble(base_url: str, error: PlexError | None) -> str:
 # Keys come partly from what people send tapiOca, and the token makes
 # every request the server owner's, so nothing else is ever sent.
 _PLEX_PATH = re.compile(r"(/[A-Za-z0-9_:-]+)+")
+# A file's or a stream's address in Plex (a part's, or a subtitle's), as its
+# answers give it: under /library/, with nothing that could change the host
+# or add to the address (no "@", "?", "#", "\\", spaces or control characters).
+_FILE_PATH = re.compile(r"/library/[A-Za-z0-9_.,:%~+=!$&'()*/-]+")
 # (And several shows, movies or episodes at once, by their keys.)
 _KEYS_PATH = re.compile(r"/library/metadata/\d+(,\d+)+")
 
@@ -229,7 +233,7 @@ class PlexClient:
         self._client = httpx.AsyncClient(
             base_url=self.base_url or "http://plex.invalid",
             timeout=httpx.Timeout(timeout, connect=min(timeout, CONNECT_S)),
-            transport=transport,
+            transport=safefetch.transport(safefetch.TYPED, transport),
             headers={
                 "Accept": "application/json",
                 "X-Plex-Token": token,
@@ -450,7 +454,12 @@ class PlexClient:
         return bytes(data)
 
     def stream_url(self, part_key: str) -> str:
-        """A direct URL to a media file, used when it isn't on local disk."""
+        """A direct URL to a media file, used when it isn't on local disk.
+        The key comes from Plex's answers, so it's checked: an address that
+        changed host (a key like "@elsewhere/x") would carry Plex's token
+        there (the security suite's SSRF-01 and SSRF-08)."""
+        if not _FILE_PATH.fullmatch(part_key) or "/../" in f"{part_key}/" or "//" in part_key:
+            raise PlexError("That isn't a Plex file address tapiOca uses", 400)
         return f"{self.base_url}{part_key}?X-Plex-Token={self.token}"
 
     # Browsing -----------------------------------------------------------

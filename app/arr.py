@@ -37,6 +37,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from . import safefetch
+
 log = logging.getLogger(__name__)
 
 SONARR, RADARR = "sonarr", "radarr"
@@ -89,7 +91,7 @@ class Arr:
                 base_url=f"{self.url}/api/v3/",
                 headers={"X-Api-Key": self.key, "Accept": "application/json"},
                 timeout=TIMEOUT_S,
-                transport=self.transport,
+                transport=safefetch.transport(safefetch.TYPED, self.transport),
                 follow_redirects=False,
             ) as client:
                 resp = await client.request(method, path, params=params, json=body)

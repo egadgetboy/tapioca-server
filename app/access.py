@@ -1667,6 +1667,11 @@ class Gate:
             user, idle = self.access.session_of(
                 session_hash(token), active=active, where=entry["id"] if entry else "", made=made
             )
+            # (The security suite's AUTH-06b, DL287: an app's sign-in is sent as its Bearer token and a
+            # browser's as its cookie, never the other way: a browser's cookie made from an app's
+            # sign-in would skip the page's own rules, its hour without activity among them.)
+            if user is not None and made and bool(made[0].app) != bool(app_token):
+                user, idle, made = None, False, []
         # A sign-in a trusted network made (with a PIN, or nothing) is for
         # watching, and so is one made for watching, or an Admin's made with
         # their PIN in Light sign-in, away from home: an Admin's acts as a
