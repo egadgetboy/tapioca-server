@@ -148,6 +148,11 @@ follow them in every change.
     plan's low-end server (8b, the owner's to run: that hardware is outside
     the repos); the apps' shared cases, picture tests and timed roll (8c).
   - A new baseline is recorded only with the owner's OK.
+  - **One exception, by the owner (October 21, DL283):** the picture
+    revert ships on 8a, the shared cases and the apps' picture tests, the
+    owner checking real devices after it's out, with 8c's timed roll built
+    right after it as its own release; every release after it runs the
+    whole rule.
 - The wording scan passes (from 1.33.0).
 
 ## Releases
