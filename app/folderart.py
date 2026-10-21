@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from . import ffmpeg as ff
-from . import pictures
 from .library import NoPicture
 
 log = logging.getLogger(__name__)
@@ -207,7 +206,7 @@ async def _scaled(ffmpeg: str, data: bytes, width: int, height: int) -> bytes | 
             *ff.low_priority(nice=10, idle_io=False), ffmpeg, "-hide_banner", "-nostdin",
             "-loglevel", "error", *ff.UPLOADED_PICTURE, "-i", "pipe:0", "-frames:v", "1",
             "-vf", f"scale='min({width},iw)':'min({height},ih)':force_original_aspect_ratio=decrease",
-            "-q:v", str(pictures.jpeg_q(width)), "-f", "image2", "-c:v", "mjpeg", "pipe:1",
+            "-q:v", "3", "-f", "image2", "-c:v", "mjpeg", "pipe:1",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )  # fmt: skip

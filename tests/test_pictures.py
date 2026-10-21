@@ -345,11 +345,8 @@ def test_every_width_and_format_keeps_every_color_plane_at_the_floor():
     # (Against a lossless resize at the same width: the encoder's own loss, on brightness and both
     # colors, so banding in a gradient shows. The settings are the smallest that keep it.)
     worst = {}
-    # (Kept in the repository, so every machine measures the same pictures: made on arm64's FFmpeg,
-    # the generated ones came out harsher than on amd64's. Made once by film_like's recipe.)
-    here = Path(__file__).parent / "pictures"
-    for kind in ("poster", "backdrop"):
-        sources = [(here / f"{kind}-{v}.jpg").read_bytes() for v in ("a", "b")]
+    for kind, size in (("poster", (2000, 3000)), ("backdrop", (3840, 2160))):
+        sources = [film_like(*size, busy=False), film_like(*size, busy=True)]
         for width in pictures.widths(kind):
             height = pictures.height_for(kind, width)
             for fmt, pix in (("jpeg", "yuvj420p"), ("webp", "yuv420p")):
