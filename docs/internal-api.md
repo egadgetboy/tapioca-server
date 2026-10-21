@@ -1510,9 +1510,10 @@ again. Answers as `PUT` does, with `item` null.
 ## GET /api/internal/art/{key}
 
 A picture, as Plex resizes it (JPEG), or as it's kept beside a file in a
-Media folder of tapiOca's own (JPEG or PNG). Read the answer's
-`Content-Type`. Any `format` is ignored (1.42.0 and 1.42.1 made WebP when
-asked; from 1.43.0 the answer is JPEG):
+Media folder of tapiOca's own, sized (JPEG). When Plex can't resize it, or
+a Media folder's picture can't be sized, it comes as it is (JPEG, PNG,
+WebP or GIF), so read the answer's `Content-Type`. Any `format` is ignored
+(1.42.0 and 1.42.1 made WebP when asked; 1.43.0 never does):
 
 - **Kind.** `?kind=poster` (the default; 2:3, and an episode's is its
   show's), `backdrop` (16:9) or `thumb` (an episode's still, 16:9).
@@ -1522,7 +1523,12 @@ asked; from 1.43.0 the answer is JPEG):
 
 A changed poster or backdrop shows after the next time its folder is
 browsed (Plex), or after the next scan (a Media folder). Art removed since
-answers 404.
+answers 404. A changed picture that can't be made just then (Plex
+restarting, say, or not answering) answers 200 with the one kept from
+before, and is made again at the next ask.
+
+A Station's logo (`/channel-icon/...`, the address the server gives) comes
+as it is: it ignores `w`, so don't send one.
 
 It answers 404 if there's no such picture, or what Plex has isn't one, and
 answers at once when Plex says there's none. It answers 503 when

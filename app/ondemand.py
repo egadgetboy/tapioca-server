@@ -378,7 +378,7 @@ class Catalog:
         need (the four versions, never a copy of the whole entry)."""
         for e in entries:
             self._facts[e.key] = Facts(
-                e.kind, e.show_key, e.has_thumb, e.has_art, e.thumb_v, e.art_v, e.show_thumb_v,
+                e.library, e.kind, e.show_key, e.has_thumb, e.has_art, e.thumb_v, e.art_v, e.show_thumb_v,
                 e.show_art_v,
             )  # fmt: skip
             self._facts.move_to_end(e.key)
@@ -410,10 +410,9 @@ class Catalog:
         shown = f
         if f.kind == catalog.EPISODE and kind != "thumb" and f.show_key:
             shown = self._facts.get(f.show_key)
-            version = f.show_art_v if kind == "backdrop" else f.show_thumb_v
-            if shown is not None and not (shown.has_art if kind == "backdrop" else shown.has_thumb):
-                return catalog.NO_PICTURE
-            return version or None
+            if shown is None:  # (the show not listed lately: as its episode's list said)
+                return (f.show_art_v if kind == "backdrop" else f.show_thumb_v) or None
+            # (The show's own, as its list last said: a new show poster reaches its episodes at the next browse.)
         if not (shown.has_art if kind == "backdrop" else shown.has_thumb):
             return catalog.NO_PICTURE
         return (shown.art_v if kind == "backdrop" else shown.thumb_v) or None
@@ -496,6 +495,10 @@ class Catalog:
         """NotShared unless `key` is in a shared library (asking the library
         only about keys not seen lately)."""
         where = self._where.get(key)
+        if where is None:
+            # (Listed lately, past the where table in a big folder: the top of a folder, where a roll starts.)
+            known = self._facts.get(key)
+            where = known.library if known is not None and known.library else None
         if where is None:
             await self.entry(key)
         elif where not in self.shared.keys:
@@ -1587,10 +1590,13 @@ class PlaySessions:
         return len(self._sessions)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Facts:
-    """What a picture of a title needs (Catalog.facts)."""
+    """What a picture of a title needs (Catalog.facts), and the library it's
+    in ("" if it wasn't said), so Catalog.check needs no details lookup for
+    a title listed lately, however big its folder."""
 
+    library: str
     kind: str
     show_key: str
     has_thumb: bool
@@ -1608,18 +1614,15 @@ class PictureCache:
 
     def __init__(self, most_bytes: int = PICTURE_BYTES_KEPT) -> None:
         self.most_bytes = most_bytes
-        self._kept: OrderedDict[tuple[str, str, int], tuple[bytes, str, str, str, str]] = (
-            OrderedDict()
-        )
+        self._kept: OrderedDict[tuple[str, str, int], tuple[bytes, str, str, str]] = OrderedDict()
         self._bytes = 0
 
     def clear(self) -> None:
         self._kept.clear()
         self._bytes = 0
 
-    def get(self, key: tuple[str, str, int]) -> tuple[bytes, str, str, str, str] | None:
-        """(the picture, its type, its ETag, the version it was made from, its
-        title's library), if it's kept."""
+    def get(self, key: tuple[str, str, int]) -> tuple[bytes, str, str, str] | None:
+        """(the picture, its type, its ETag, the version it was made from), if it's kept."""
         found = self._kept.get(key)
         if found is not None:
             self._kept.move_to_end(key)
@@ -1630,15 +1633,14 @@ class PictureCache:
         key: tuple[str, str, int],
         picture: tuple[bytes, str],
         version: str = "",
-        library: str = "",
-    ) -> tuple[bytes, str, str, str, str]:
+    ) -> tuple[bytes, str, str, str]:
         """Keeps a picture (unless it's too big to): (it, its type, its ETag,
-        its version, its library)."""
+        its version). One kept for `key` before goes, whichever."""
         data, kind = picture
-        found = (data, kind, f'"{hashlib.sha1(data).hexdigest()[:24]}"', version, library)
+        found = (data, kind, f'"{hashlib.sha1(data).hexdigest()[:24]}"', version)
+        self.drop(key)  # (never a stale one left behind a picture too big to keep)
         if len(data) > self.most_bytes // 8:
             return found  # (one huge picture doesn't push out everything else)
-        self.drop(key)
         self._kept[key] = found
         self._bytes += len(data)
         while self._bytes > self.most_bytes:

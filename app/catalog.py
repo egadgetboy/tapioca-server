@@ -247,14 +247,6 @@ class Entry:
     directors: tuple[str, ...] = ()
     writers: tuple[str, ...] = ()
 
-    def picture_version(self, kind: str) -> str:
-        """The version of the picture an app's `kind` ("poster", "backdrop"
-        or "thumb") of it is made from: an episode's poster and backdrop are
-        its show's (see applibrary.picture); "" if not known."""
-        if self.kind == EPISODE and kind != "thumb":
-            return self.show_art_v if kind == "backdrop" else self.show_thumb_v
-        return self.art_v if kind == "backdrop" else self.thumb_v
-
     def version(self, version_id: str) -> Media | None:
         """One version of its file, as a file key names it (see
         broken.version_key): "" for its first (the one a station plays),

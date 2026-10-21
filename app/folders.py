@@ -1557,15 +1557,15 @@ class FolderSource:
         stamp = self._picture_stamps.get(path, "")
         return f"{digest}-{stamp}" if stamp else ""
 
-    def _file_size(self, path: str) -> int:
+    async def _file_size(self, path: str) -> int:
         """A video's size, for its cover's kept copy: from the last scan's
-        walk; read from the database only before the first scan after a start."""
+        walk; before the first scan after a start, read from the database
+        (off the loop) and never written into the stamps, so the cover's
+        version stays as the scan will say it."""
         stamp = self._picture_stamps.get(path, "")
         if stamp:
             return int(stamp.rpartition("-")[2] or 0)
-        size = self._sizes({path}).get(path) or 0
-        self._picture_stamps.setdefault(path, f"0-{size}")
-        return size
+        return (await asyncio.to_thread(self._sizes, {path})).get(path) or 0
 
     async def picture(self, key: str, which: str, width: int, height: int) -> tuple[bytes, str]:
         """A show's, movie's or episode's picture ("thumb": its poster, or an
@@ -1594,7 +1594,7 @@ class FolderSource:
                 )
                 if real is None or not stream.isdigit():
                     raise NoPicture(where)
-                size = self._file_size(path)
+                size = await self._file_size(path)
                 return await folderart.cover(
                     self.settings.ffmpeg_path,
                     self.settings.data_dir,

@@ -155,3 +155,124 @@ def test_a_viewer_without_limits_never_gets_a_picture_kept_from_a_media_folder_u
     assert home.get("/api/internal/art/300?w=320").status_code == 200  # (kept)
     assert home.put("/api/app-libraries", json={"libraries": ["1"]}).status_code == 200
     refused(home.get("/api/internal/art/300?w=320"), 404)
+
+
+def changed(home):
+    """Poster 300 kept, then changed in Plex and heard of: (the kept bytes)."""
+    assert home.get("/api/internal/items/300").status_code == 200
+    first = home.get("/api/internal/art/300?w=320")
+    assert first.status_code == 200
+    home.plex.episodes["300"]["thumb"] = "/library/metadata/300/thumb/1700000099"
+    assert home.get("/api/internal/libraries/2").status_code == 200
+    return first.content
+
+
+def test_a_changed_picture_plex_refuses_for_now_keeps_the_one_kept(home):
+    # (The audit: 401, 403 and 429 counted as removed, dropping the kept copy.)
+    first = changed(home)
+    for refusing in (401, 403, 429):
+        home.plex.odd["/photo/:/transcode"] = httpx.Response(refusing)
+        home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(refusing)
+        got = home.get("/api/internal/art/300?w=320")
+        assert got.status_code == 200 and got.content == first, refusing
+    assert home.app.state.ctx.app_pictures.get(("300", "poster", 320)) is not None
+
+
+def test_a_changed_picture_now_gone_is_dropped(home):
+    changed(home)
+    for gone in (404, 410):
+        home.plex.odd["/photo/:/transcode"] = httpx.Response(gone)
+        home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(gone)
+        refused(home.get("/api/internal/art/300?w=320"), 404, "There's no such picture")
+        assert home.app.state.ctx.app_pictures.get(("300", "poster", 320)) is None
+
+
+def test_a_missing_media_folder_picture_drops_the_kept_one_and_says_so(home, monkeypatch):
+    # (The audit: NoPicture became "isn't in a Media folder shared" before the route saw it.)
+    from app.library import NoPicture
+
+    changed(home)
+    ctx = home.app.state.ctx
+
+    async def none(*a, **kw):
+        raise NoPicture("poster")
+
+    monkeypatch.setattr(ctx.library, "picture", none)
+    refused(home.get("/api/internal/art/300?w=320"), 404, "There's no such picture")
+    assert ctx.app_pictures.get(("300", "poster", 320)) is None
+
+
+def test_a_changed_picture_that_doesnt_come_keeps_the_one_kept(home, monkeypatch):
+    first = changed(home)
+    ctx = home.app.state.ctx
+    for trouble in (httpx.ConnectError("down"), httpx.ReadTimeout("slow")):
+
+        async def failing(*a, _t=trouble, **kw):
+            raise _t
+
+        monkeypatch.setattr(ctx.library, "picture", failing)
+        got = home.get("/api/internal/art/300?w=320")
+        assert got.status_code == 200 and got.content == first, type(trouble).__name__
+
+
+def test_with_nothing_kept_trouble_answers_as_1_41_did(home, monkeypatch):
+    ctx = home.app.state.ctx
+    assert home.get("/api/internal/items/300").status_code == 200
+    home.plex.odd["/photo/:/transcode"] = httpx.Response(502)
+    home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(502)
+    refused(home.get("/api/internal/art/300?w=320"), 404)
+    home.plex.odd = {}
+
+    async def failing(*a, **kw):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(ctx.library, "picture", failing)
+    assert home.get("/api/internal/art/300?w=480").status_code == 503
+
+
+def test_1_42s_picture_route_is_gone(home):
+    assert home.get("/api/app-pictures").status_code == 404
+    assert home.put("/api/app-pictures", json={"gb": 1}).status_code == 404
+
+
+def test_before_the_first_scan_a_cover_keeps_one_version(tmp_path):
+    # (The audit: before the first scan after a start, reading a video's size
+    # for its embedded cover wrote "0-<size>" into the stamps, so the cover's
+    # version changed on the next request and it was made again, and again at
+    # the scan: up to three FFmpeg runs per cover. And that read was the
+    # database's, on the loop.)
+    from .folderlib import Clips, radarr_movies
+    from .test_folder_media import add_library, keys_by_title
+
+    clips = Clips(tmp_path / "clips")
+    root = tmp_path / "media"
+    radarr_movies(root / "Movies", clips)
+    (
+        root / "Movies" / "The Glass Garden (1999)" / "poster.jpg"
+    ).unlink()  # (its cover is inside the file)
+    settings = Settings(data_dir=tmp_path / "data", media_dir=str(root))
+    with TestClient(create_app(settings, PlexClient("", ""))) as home:
+        lib = add_library(home, "Movies", "movie", str(root / "Movies"))
+        key = keys_by_title(home, lib)["The Glass Garden"]
+        library = home.app.state.ctx.library
+        library._folder_source()._picture_stamps.clear()  # (as before the first scan after a start)
+        before = library.picture_version(key, "poster")
+        assert home.get(f"/api/internal/art/{key}?w=320").status_code == 200
+        assert library.picture_version(key, "poster") == before, "the same version: made once"
+
+
+def test_a_changed_show_poster_reaches_its_episodes_after_the_shows_are_browsed(home):
+    # (The audit: an episode's poster took its version from the episode's own
+    # list, so a new show poster reached episode cards only once that show's
+    # episodes were fetched again.)
+    assert home.get("/api/internal/items/100/episodes").status_code == 200
+    first = home.get("/api/internal/art/201?kind=poster&w=320")
+    assert first.status_code == 200
+    home.plex.shows["100"]["thumb"] = (
+        "/library/metadata/100/thumb/1700000099"  # (a new show poster)
+    )
+    home.plex.odd["/photo/:/transcode"] = httpx.Response(
+        200, content=b"new show poster", headers={"content-type": "image/jpeg"}
+    )
+    assert home.get("/api/internal/libraries/1").status_code == 200  # (the shows, browsed)
+    assert home.get("/api/internal/art/201?kind=poster&w=320").content == b"new show poster"

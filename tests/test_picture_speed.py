@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import logging
 import os
 import subprocess
@@ -58,6 +59,7 @@ def big_folder() -> OddPlex:
     for n in range(TITLES):
         key = str(10_000 + n)
         fp.add_movie(key, f"Movie {n}", f"/m/{n}.mkv", 90 * MINUTE, section="2", genres=["Drama"])
+        fp.episodes[key]["art"] = f"/library/metadata/{key}/art/1"  # (a backdrop too, made at 1920)
         fp.odd[f"/library/metadata/{key}/thumb"] = httpx.Response(
             200, content=full, headers={"content-type": "image/jpeg"}
         )
@@ -123,10 +125,42 @@ def test_a_folder_opens_while_a_fast_rolls_pictures_are_made(folder):
         assert page.status_code == 200, (run, page.text)
         assert took < 2.0, (run, took)
         assert 503 not in statuses, (run, sorted(set(statuses)))
+        # (The audit: no 503 alone would pass a server shedding the load with 404s.)
+        assert set(statuses) == {200}, (run, sorted(set(statuses)))
 
 
 def details_of(requests: list[str], key: str) -> list[str]:
     return [p for p in requests if p == f"/library/metadata/{key}"]
+
+
+def test_the_top_of_a_folder_over_the_where_table_still_asks_no_details(tmp_path, monkeypatch):
+    # (The audit's P1: facts were kept for 40,000 titles but where each is for
+    # 5,000, so in a 6,000-title folder the top of the list, where a roll
+    # starts, had been forgotten and each poster looked its title up.)
+    from app import ondemand
+
+    monkeypatch.setattr(plex_module, "RETRY_S", 0.01)
+    fp = OddPlex()
+    fp.add_section("2", "Movies", "movie")
+    many = ondemand.WHERE_KEPT + 1_000
+    for n in range(many):
+        fp.add_movie(str(10_000 + n), f"Movie {n:05}", f"/m/{n}.mkv", 90 * MINUTE, section="2")
+    settings = Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data")
+    with TestClient(
+        create_app(settings, PlexClient("http://plex.test", "token", transport=fp.transport()))
+    ) as home:
+        shared(home)
+        first = home.get("/api/internal/libraries/2?start=0&size=50")
+        assert first.status_code == 200
+        keys = [i["key"] for i in first.json()["items"]]
+        assert len(keys) == 50
+        asked = len(fp.requests)
+        for k in keys:
+            assert home.get(f"/api/internal/art/{k}?kind=poster&w=320").status_code in (200, 404)
+        since = fp.requests[asked:]
+        assert all(details_of(since, k) == [] for k in keys), [
+            p for p in since if p.count("/") == 3
+        ][:5]
 
 
 def test_no_picture_asks_plex_for_details_when_its_list_said_enough(folder):
@@ -290,4 +324,206 @@ def test_a_cache_that_cant_be_moved_is_emptied_in_place(tmp_path, monkeypatch, c
     monkeypatch.setattr(cleanup.os, "rename", own_mount)
     cleanup.old_picture_cache(data)
     assert pictures.is_dir() and list(pictures.iterdir()) == []
-    assert "removed" in caplog.text and "abcdef" not in caplog.text
+    # (The audit: "couldn't all be removed" contains "removed" too.)
+    assert (
+        "was removed" in caplog.text
+        and "couldn't" not in caplog.text
+        and "abcdef" not in caplog.text
+    )
+
+
+def test_a_linked_data_cache_is_cleaned_through_its_link_and_says_so_truly(tmp_path, caplog):
+    # (The audit's P1: with data/cache a link, the folder was renamed aside in
+    # the link's target, never deleted, and the log said it was freed.)
+    from app import cleanup
+
+    caplog.set_level(logging.INFO)
+    data = tmp_path / "data"
+    target = tmp_path / "fast-disk" / "tapioca-cache"
+    old_cache(target.parent / "staged")
+    (target.parent).mkdir(exist_ok=True)
+    os.rename(target.parent / "staged" / "cache", target)
+    (target / "theirs.txt").write_text("keep")
+    data.mkdir()
+    (data / "cache").symlink_to(target, target_is_directory=True)
+    cleanup.old_picture_cache(data)
+    assert sorted(p.name for p in target.iterdir()) == ["theirs.txt"], (
+        "nothing of 1.42's left, nothing else touched"
+    )
+    assert os.path.islink(data / "cache"), "the link stays"
+    assert "was removed" in caplog.text and "couldn't" not in caplog.text
+
+
+def test_a_pictures_folder_that_isnt_1_42s_and_the_database_are_never_touched(tmp_path, caplog):
+    from app import cleanup
+
+    caplog.set_level(logging.INFO)
+    data = tmp_path / "data"
+    (data / "cache" / "pictures" / "family").mkdir(parents=True)
+    (data / "cache" / "pictures" / "family" / "beach.jpg").write_bytes(b"theirs")
+    (data / "stationplay.db").write_bytes(b"SQLite format 3\x00" + bytes(range(256)))
+    before = snapshot(data)
+    cleanup.old_picture_cache(data)
+    assert snapshot(data) == before, (
+        "no FORMAT and no index.db: not 1.42's; and the database byte for byte"
+    )
+    assert "isn't 1.42's" in caplog.text and "beach" not in caplog.text
+
+
+def test_a_delete_that_fails_says_where_to_delete(tmp_path, monkeypatch, caplog):
+    from app import cleanup
+
+    caplog.set_level(logging.INFO)
+    data = tmp_path / "data"
+    old_cache(data)
+    real = cleanup.shutil.rmtree
+
+    def refused(path, *a, **kw):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(cleanup.shutil, "rmtree", refused)
+    cleanup.old_picture_cache(data)
+    monkeypatch.setattr(cleanup.shutil, "rmtree", real)
+    assert "couldn't all be removed: delete data/cache to free its space" in caplog.text
+    assert "was removed" not in caplog.text
+
+
+def test_two_starts_at_once_end_clean_and_say_nothing_failed(tmp_path, caplog):
+    import threading
+
+    from app import cleanup
+
+    caplog.set_level(logging.INFO)
+    for n in range(10):
+        data = tmp_path / f"data{n}"
+        pictures = old_cache(data)
+        for i in range(200):
+            (pictures / "ab" / f"{i}.webp").write_bytes(b"x")
+        both = [threading.Thread(target=cleanup.old_picture_cache, args=(data,)) for _ in range(2)]
+        for t in both:
+            t.start()
+        for t in both:
+            t.join()
+        assert not (data / "cache").exists(), n
+    assert "couldn't" not in caplog.text
+
+
+def test_the_clean_up_runs_at_idle_disk_and_lowest_cpu_priority(tmp_path, monkeypatch):
+    import threading
+
+    from app import cleanup
+
+    asked: list[list[str]] = []
+    niced: list[tuple] = []
+    monkeypatch.setattr(cleanup, "DELAY_S", 0)
+    monkeypatch.setattr(cleanup.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(cleanup.subprocess, "run", lambda args, **kw: asked.append(args))
+    monkeypatch.setattr(cleanup.os, "setpriority", lambda *a: niced.append(a))
+    where: list[str] = []
+    monkeypatch.setattr(
+        cleanup, "old_picture_cache", lambda d: where.append(threading.current_thread().name)
+    )
+    asyncio.run(cleanup.later(tmp_path / "data"))
+    assert where == ["old-picture-cache"], "off the event loop, in its own thread"
+    assert len(asked) == 1 and asked[0][:4] == ["/usr/bin/ionice", "-c", "3", "-p"], asked
+    assert niced and niced[0][2] == 19
+    assert asked[0][4] == str(niced[0][1]), "the clean-up's own thread"
+
+
+def test_the_load_tool_measures_kept_and_cold_apart_and_from_when_each_is_sent(folder):
+    # (The audit's P1: it warmed the kept pictures at 320 and measured them at
+    # 480, so they were cold; cold and kept keys overlapped; and the time a
+    # request waited for one of the 64 connections was counted as the server's.)
+    import tools.picture_load as load
+
+    seen: list[str] = []
+    flying = {"now": 0, "most": 0}
+
+    class Watched(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.inner = httpx.ASGITransport(app=folder.app)
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if "/art/" in request.url.path:
+                seen.append(f"{request.url.path}?{request.url.query.decode()}")
+                flying["now"] += 1
+                flying["most"] = max(flying["most"], flying["now"])
+            try:
+                return await self.inner.handle_async_request(request)
+            finally:
+                if "/art/" in request.url.path:
+                    flying["now"] -= 1
+
+    async def go() -> None:
+        await load.run("http://testserver", "", "2", 400, 0, transport=Watched())
+
+    asyncio.run(go())
+    widths = {q.split("w=")[1] for q in seen}
+    assert widths == {str(load.WIDTH)}, widths
+    warm = [q.split("?")[0] for q in seen[: len(seen) - 400]]
+    rolled = [q.split("?")[0] for q in seen[len(seen) - 400 :]]
+    assert len(set(rolled)) == len(rolled), "each asked once in the roll"
+    cold = [k for k in rolled if k not in set(warm)]
+    assert cold and len(cold) < len(rolled), "kept and cold, apart"
+    assert flying["most"] <= load.AT_ONCE
+
+
+def ondemand_turns() -> int:
+    from app import ondemand
+
+    return ondemand.PICTURES_AT_ONCE
+
+
+def test_a_picture_given_up_on_is_never_asked_of_plex_under_a_real_server(tmp_path, monkeypatch):
+    # (The audit: httpx's ASGITransport cancels a handler when its client goes;
+    # uvicorn doesn't, so under it every scrolled-past poster still took a
+    # picture turn and asked Plex.)
+    import socket
+    import threading
+
+    import uvicorn
+
+    monkeypatch.setattr(plex_module, "RETRY_S", 0.01)
+    fp = big_folder()
+    made: list[str] = []
+
+    async def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/photo/:/transcode":
+            made.append(request.url.params.get("url", ""))
+            await asyncio.sleep(1.0)  # (a slow resize: every app has gone before the next turn)
+        return await fp.answer(request)
+
+    settings = Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data")
+    app = create_app(
+        settings, PlexClient("http://plex.test", "token", transport=httpx.MockTransport(answer))
+    )
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    running = threading.Thread(target=server.run, daemon=True)
+    running.start()
+    try:
+        end = time.monotonic() + 10
+        while not server.started and time.monotonic() < end:
+            time.sleep(0.05)
+        base = f"http://127.0.0.1:{port}"
+        with httpx.Client(base_url=base, headers={"X-Tapioca-Page": "1"}) as home:
+            shared(home)
+            assert home.get("/api/internal/libraries/2?size=200").status_code == 200
+
+        def given_up(n: int) -> None:
+            with (
+                contextlib.suppress(httpx.HTTPError),
+                httpx.Client(base_url=base, timeout=0.2) as c,
+            ):
+                c.get(f"/api/internal/art/{10_000 + n}?kind=poster&w=320")
+
+        with concurrent.futures.ThreadPoolExecutor(40) as pool:
+            list(pool.map(given_up, range(40)))
+        time.sleep(6)
+        # (Only those that had a turn before their app went: one round of the turns, and a few to spare.)
+        assert len(made) <= ondemand_turns() + 4, len(made)
+    finally:
+        server.should_exit = True
+        running.join(10)

@@ -86,7 +86,7 @@ EVEN_WHY = "even sound for the show's episodes"
 ASKED_WHY = "a converted copy, as the app asked"
 CANT_TAKE_COPY = "This app can't take a converted copy. Update the app to play this here."
 NOT_PLAYABLE = "Choose an episode or a movie to play"
-NO_PICTURE = "There's no such picture"
+NO_SUCH_PICTURE = "There's no such picture"
 PAST_END = "That's past the end of this program"
 # A place reported this far past the end of what plays is refused (a little
 # past it is the end: watched).
@@ -1150,7 +1150,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         version = cat.picture_version(key, kind)
         if version == catalog.NO_PICTURE:
             ctx.app_pictures.drop(here)  # (removed since: no longer served)
-            raise HTTPException(404, NO_PICTURE)
+            raise HTTPException(404, NO_SUCH_PICTURE)
         stale = kept if kept is not None and version is not None and kept[3] != version else None
         if stale is not None:
             kept = None  # (made from another version: made again)
@@ -1161,19 +1161,31 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     target, has = await shown_of(key, kind, viewer)
                 if not has:
                     ctx.app_pictures.drop(here)
-                    raise HTTPException(404, NO_PICTURE)  # (the library has none: no need to ask)
+                    raise HTTPException(
+                        404, NO_SUCH_PICTURE
+                    )  # (the library has none: no need to ask)
                 height = width * 3 // 2 if kind == "poster" else width * 9 // 16
+                missing = gone = False
                 async with asking(request), picture_turns:
-                    got = await ctx.library.picture(target, which, width, height)
-            except NoPicture:
-                ctx.app_pictures.drop(here)
-                raise HTTPException(404, NO_PICTURE) from None
-            except httpx.HTTPStatusError as ex:
-                if ex.response.status_code < 500:
+                    # (The app scrolled past while it waited for a turn: nothing asked of the
+                    # library for it. Uvicorn never cancels a handler whose client has gone.)
+                    gone = await request.is_disconnected()
+                    if not gone:
+                        try:
+                            got = await ctx.library.picture(target, which, width, height)
+                        except NoPicture:
+                            missing = True  # (caught here: asking would say it isn't shared)
+                if gone:
+                    return Response(status_code=499)  # (no one's there to read it)
+                if missing:
                     ctx.app_pictures.drop(here)
-                    raise HTTPException(404, NO_PICTURE) from None
+                    raise HTTPException(404, NO_SUCH_PICTURE)
+            except httpx.HTTPStatusError as ex:
+                if ex.response.status_code in (404, 410):  # (removed: the kept copy goes too)
+                    ctx.app_pictures.drop(here)
+                    raise HTTPException(404, NO_SUCH_PICTURE) from None
                 if stale is None:
-                    raise HTTPException(404, NO_PICTURE) from None  # (as 1.41.0 answered)
+                    raise HTTPException(404, NO_SUCH_PICTURE) from None  # (as 1.41.0 answered)
                 kept = stale  # (changed, but can't be made now: the one kept)
             except httpx.HTTPError as ex:
                 if stale is None:
