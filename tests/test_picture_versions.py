@@ -296,6 +296,23 @@ def test_plex_refusing_tapiocas_sign_in_for_a_picture_tells_the_admin_once(home)
     assert len(said) == 1 and "sign-in to Plex needs attention" in said[0].sentence, [
         a.sentence for a in alerts.now()
     ]
+    # (The apps' re-check: fixed by the very next picture, mixed answers would start and fix it
+    # over and over, each a notification. Fixed only after five in a row.)
+    started = len([a for a in alerts.listed() if a.about == "pictures"])
+    for width in (160, 320, 480, 720):
+        home.app.state.ctx.app_pictures.clear()
+        home.plex.odd = {}
+        assert home.get(f"/api/internal/art/300?w={width}").status_code == 200
+        home.plex.odd["/photo/:/transcode"] = httpx.Response(401)
+        home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(401)
+        home.app.state.ctx.app_pictures.clear()
+        refused(home.get(f"/api/internal/art/300?w={width}"), 503)
+    assert len([a for a in alerts.now() if a.about == "pictures"]) == 1, "still the one alert"
+    assert len([a for a in alerts.listed() if a.about == "pictures"]) == started, (
+        "never started again"
+    )
     home.plex.odd = {}
-    assert home.get("/api/internal/art/300?w=720").status_code == 200
+    for width in (160, 320, 480, 720, 1280):
+        home.app.state.ctx.app_pictures.clear()
+        assert home.get(f"/api/internal/art/300?w={width}").status_code == 200
     assert [a for a in alerts.now() if a.kind == "plex" and a.about == "pictures"] == [], "fixed"

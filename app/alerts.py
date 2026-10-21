@@ -10,7 +10,7 @@ only once things have been right a while too, so none comes and goes:
   plex        Plex can't be reached (or won't take tapiOca's token): 5
               checks in a row, a minute apart. Fixed after 2 that reach it.
               And (1.43.0, the owner) Plex answering 401 for a picture
-              for the apps, at once: fixed by the next picture it makes.
+              for the apps, at once: fixed after 5 pictures it makes in a row.
   data-full   The data folder's disk has less than 2 GB free: 3 checks in
               a row. Fixed once it has 3 GB free, twice. (A size, never a
               share: 2% of a large pool is still hundreds of GB.)
@@ -101,6 +101,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 PLEX, DATA_FULL, DATA_WRITE = "plex", "data-full", "data-write"
+PICTURES_FIXED = 5  # (Plex pictures made in a row that fix its "pictures" alert)
 STATION, BACKUPS, CLOCK, OUTSIDE = "station", "backups", "clock", "outside"
 FILES, CLIPS, ACCESS = "files", "clips", "access"
 KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE, FILES, CLIPS, ACCESS)
@@ -205,6 +206,7 @@ class Alerts:
             int, float
         ] = {}  # (when each run of failures began, by the wall clock)
         self._backup_fails = 0
+        self._pictures_made = 0  # (Plex pictures made since its last 401 for one)
         # The Broken files tab: what needed an Admin when it was last looked
         # at (None: not yet, since tapiOca started), when the alert was
         # last said (started), and what's come since.
@@ -469,7 +471,8 @@ class Alerts:
     def plex_refused_pictures(self) -> None:
         """Plex answered 401 for a picture: tapiOca's sign-in to Plex has
         likely stopped working (the owner, October 21, DL283). Said once,
-        while it lasts; fixed by the next picture Plex makes."""
+        while it lasts; fixed after PICTURES_FIXED pictures in a row."""
+        self._pictures_made = 0
         self.start(
             PLEX,
             "Plex won't make pictures for tapiOca: its sign-in to Plex needs attention. Check "
@@ -478,7 +481,13 @@ class Alerts:
         )
 
     def plex_made_a_picture(self) -> None:
-        if (PLEX, "pictures") in self._now:
+        """Fixed only after PICTURES_FIXED pictures in a row, so mixed answers
+        never start and fix it over and over (as the plex alert waits for 2
+        good checks)."""
+        if (PLEX, "pictures") not in self._now:
+            return
+        self._pictures_made += 1
+        if self._pictures_made >= PICTURES_FIXED:
             self.fix(PLEX, "Plex makes tapiOca's pictures again.", about="pictures")
 
     def backup_made(self) -> None:
