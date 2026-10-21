@@ -95,21 +95,18 @@ def old_picture_cache(data_dir: Path) -> None:
     pictures = cache / "pictures"
     if not cache.is_dir():  # (none, or a link to nothing: nothing to do)
         return
-    freed, ok, any_found = 0, True, False
+    freed, ok, any_found, linked = 0, True, False, False
     aside_name = ""
     try:
         if os.path.islink(pictures):
-            any_found = True
+            any_found = linked = True
             with contextlib.suppress(FileNotFoundError):
                 pictures.unlink()
+        elif pictures.is_dir() and not _is_1_42s(pictures) and os.path.lexists(pictures):
+            # (Someone else's: left as it is, while what an interrupted delete left is still swept.
+            # Gone meanwhile counts as removed: another start's.)
+            log.warning("data/cache/pictures isn't 1.42's picture cache, so it was left as it is")
         elif pictures.is_dir():
-            if not _is_1_42s(pictures) and os.path.lexists(
-                pictures
-            ):  # (gone meanwhile: another start's)
-                log.warning(
-                    "data/cache/pictures isn't 1.42's picture cache, so it was left as it is"
-                )
-                return
             any_found = True
             freed += _size(pictures)
             aside_name = f"{GONE_PREFIX}{os.getpid()}-{time.monotonic_ns()}"
@@ -135,15 +132,23 @@ def old_picture_cache(data_dir: Path) -> None:
         if not os.path.islink(cache):
             with contextlib.suppress(OSError):
                 cache.rmdir()  # (only if it's empty; a linked one stays)
+    except FileNotFoundError:
+        pass  # (data/cache itself gone meanwhile: another start finished first)
     except OSError:
         ok = False
     if not any_found:
         return
-    if ok:
+    if linked and ok:
+        log.warning(
+            "data/cache/pictures was a link, so only the link was removed: what it pointed to "
+            "(1.42's pictures, if it kept them there) was left as it is"
+        )
+    elif ok:
         log.info("tapiOca 1.42's picture cache was removed (%d MB freed)", freed // (1 << 20))
     else:
         log.warning(
-            "1.42's picture cache couldn't all be removed: delete data/cache to free its space"
+            "1.42's picture cache couldn't all be removed: delete data/cache/pictures and any "
+            "data/cache/.pictures-gone-* folders to free its space"
         )
 
 

@@ -155,8 +155,12 @@ def test_the_top_of_a_folder_over_the_where_table_still_asks_no_details(tmp_path
         keys = [i["key"] for i in first.json()["items"]]
         assert len(keys) == 50
         asked = len(fp.requests)
+        fp.odd["/photo/:/transcode"] = httpx.Response(
+            200, content=b"\xff\xd8poster", headers={"content-type": "image/jpeg"}
+        )
         for k in keys:
-            assert home.get(f"/api/internal/art/{k}?kind=poster&w=320").status_code in (200, 404)
+            # (The re-check's audit: 404 was let pass, so a wrong library refused them all unseen.)
+            assert home.get(f"/api/internal/art/{k}?kind=poster&w=320").status_code == 200, k
         since = fp.requests[asked:]
         assert all(details_of(since, k) == [] for k in keys), [
             p for p in since if p.count("/") == 3
@@ -384,7 +388,11 @@ def test_a_delete_that_fails_says_where_to_delete(tmp_path, monkeypatch, caplog)
     monkeypatch.setattr(cleanup.shutil, "rmtree", refused)
     cleanup.old_picture_cache(data)
     monkeypatch.setattr(cleanup.shutil, "rmtree", real)
-    assert "couldn't all be removed: delete data/cache to free its space" in caplog.text
+    # (The re-check: never "delete data/cache", which may be a link to a disk holding the person's own files.)
+    assert (
+        "couldn't all be removed: delete data/cache/pictures and any data/cache/.pictures-gone-* folders"
+        in caplog.text
+    )
     assert "was removed" not in caplog.text
 
 
@@ -460,11 +468,14 @@ def test_the_load_tool_measures_kept_and_cold_apart_and_from_when_each_is_sent(f
     asyncio.run(go())
     widths = {q.split("w=")[1] for q in seen}
     assert widths == {str(load.WIDTH)}, widths
-    warm = [q.split("?")[0] for q in seen[: len(seen) - 400]]
-    rolled = [q.split("?")[0] for q in seen[len(seen) - 400 :]]
-    assert len(set(rolled)) == len(rolled), "each asked once in the roll"
+    # (The re-check's audit: half the roll is given up on, so the split is by the warm-up's own count.)
+    kept = 400 // 4
+    warm = [q.split("?")[0] for q in seen[:kept]]
+    rolled = [q.split("?")[0] for q in seen[kept:]]
+    assert len(set(warm)) == kept and len(set(rolled)) == len(rolled), "each asked once in the roll"
     cold = [k for k in rolled if k not in set(warm)]
     assert cold and len(cold) < len(rolled), "kept and cold, apart"
+    assert len(rolled) > 100, len(rolled)
     assert flying["most"] <= load.AT_ONCE
 
 
@@ -527,3 +538,31 @@ def test_a_picture_given_up_on_is_never_asked_of_plex_under_a_real_server(tmp_pa
     finally:
         server.should_exit = True
         running.join(10)
+
+
+def test_leftovers_are_swept_even_beside_a_pictures_folder_that_isnt_1_42s(tmp_path, caplog):
+    # (The re-check: the early return for someone else's folder skipped the sweep.)
+    from app import cleanup
+
+    caplog.set_level(logging.INFO)
+    data = tmp_path / "data"
+    (data / "cache" / "pictures").mkdir(parents=True)
+    (data / "cache" / ".pictures-gone-1-2" / "ab").mkdir(parents=True)
+    (data / "cache" / ".pictures-gone-1-2" / "ab" / "x.webp").write_bytes(b"x")
+    cleanup.old_picture_cache(data)
+    assert sorted(p.name for p in (data / "cache").iterdir()) == ["pictures"]
+    assert "isn't 1.42's" in caplog.text
+
+
+def test_a_pictures_link_says_its_target_was_left(tmp_path, caplog):
+    # (The re-check: removing only the link logged "removed (0 MB freed)" while 1.42's files stayed.)
+    from app import cleanup
+
+    caplog.set_level(logging.INFO)
+    data = tmp_path / "data"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (data / "cache").mkdir(parents=True)
+    (data / "cache" / "pictures").symlink_to(elsewhere, target_is_directory=True)
+    cleanup.old_picture_cache(data)
+    assert "was a link" in caplog.text and "MB freed" not in caplog.text
