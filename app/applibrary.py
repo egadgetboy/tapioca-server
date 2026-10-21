@@ -1181,7 +1181,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     ctx.app_pictures.drop(here)
                     raise HTTPException(404, NO_SUCH_PICTURE)
             except httpx.HTTPStatusError as ex:
-                if ex.response.status_code in (404, 410):  # (removed: the kept copy goes too)
+                code = ex.response.status_code
+                if (
+                    code in (404, 410) or code < 400
+                ):  # (removed, or not a picture: the kept copy goes too)
                     ctx.app_pictures.drop(here)
                     raise HTTPException(404, NO_SUCH_PICTURE) from None
                 if stale is None:

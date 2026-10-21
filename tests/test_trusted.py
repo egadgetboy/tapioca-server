@@ -812,7 +812,8 @@ def test_an_admin_by_network_is_a_user_and_their_own_devices_are_as_before(home)
     assert "people" in pc.get("/api/stats").json()
     # An app the network signed in as Pat: a User, by network.
     signed = laptop.post("/api/internal/trusted", json={"app": "Phone"}).json()
-    assert signed["user"] == {"name": "Pat", "role": "user", "byNetwork": True}
+    # (1.43.0: and who by ID, for the apps' saved pictures: test_whose_pictures.)
+    assert signed["user"] == {"id": pat_id, "name": "Pat", "role": "user", "byNetwork": True}
     token = signed["token"]
     app = device_at(home, "192.168.1.44", authorization=f"Bearer {token}")
     me = app.get("/api/internal/me").json()["user"]

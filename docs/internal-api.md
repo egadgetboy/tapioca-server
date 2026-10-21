@@ -437,6 +437,7 @@ device.
 | `deviceKey` | string or null | For `picker`: the device's key, to keep (null: the one sent is still good) |
 | `token` | string | For `person`: the sign-in, as `POST /api/internal/sign-in` gives |
 | `user` | object | For `person`: who |
+| `user.id` | number | Their ID (from 1.43.0): what an app keeps to know whose its saved pictures are. It stays the same if they're renamed |
 | `user.name` | string | Their name |
 | `user.role` | string | Always `user`: a network's sign-in is for watching, an Admin a User there |
 | `user.byNetwork` | boolean | Always true (see `GET /api/internal/me`) |
@@ -485,6 +486,7 @@ while the code is waiting to be entered, and 404 once the code has expired
 | `token` | string | Send it as `Authorization: Bearer <token>` |
 | `deviceKey` | string or null | For an app with a picker: the device's key, to keep; null when the one sent is still good, or for an app without one |
 | `user` | object | Who linked it |
+| `user.id` | number | Their ID (from 1.43.0): what an app keeps to know whose its saved pictures are. It stays the same if they're renamed |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
 | `askPin` | boolean | Whether to ask them now to choose a PIN, or none (from 1.28.0: see A PIN, after the first sign-in) |
@@ -511,6 +513,7 @@ an app with a picker (see Linked devices, above).
 | `device` | string or null | Keep it, and send it when signing in again; null when the `device` sent is still good |
 | `deviceKey` | string or null | For an app with a picker: the device's key, to keep; null when the one sent is still good, or for an app without one |
 | `user` | object | Who signed in |
+| `user.id` | number | Their ID (from 1.43.0): what an app keeps to know whose its saved pictures are. It stays the same if they're renamed |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
 | `askPin` | boolean | Whether to ask them now to choose a PIN, or none (from 1.28.0: see A PIN, after the first sign-in) |
@@ -564,6 +567,7 @@ sign-in is for watching (see What 1.38.0 asks of the apps).
 |---|---|---|
 | `token` | string | Send it as `Authorization: Bearer <token>` |
 | `user` | object | Who was picked |
+| `user.id` | number | Their ID (from 1.43.0): what an app keeps to know whose its saved pictures are. It stays the same if they're renamed |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` (`user` for an Admin's sign-in for watching, as `GET /api/internal/me` says) |
 | `user.watching` | boolean | (From 1.38.0; only when true) An Admin picked for watching: with their PIN in Full sign-in, or in Light away from home or on a device they haven't signed in on with their password, or with nothing. Admin tasks need their password (`WATCHING_ONLY`) |
@@ -594,6 +598,7 @@ picker from then on.
 |---|---|---|
 | `token` | string | Send it as `Authorization: Bearer <token>` |
 | `user` | object | Who signed in |
+| `user.id` | number | Their ID (from 1.43.0): what an app keeps to know whose its saved pictures are. It stays the same if they're renamed |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
 | `askPin` | boolean | Whether to ask them now to choose a PIN, or none (from 1.28.0: see A PIN, after the first sign-in) |
@@ -625,6 +630,7 @@ sign-in has ended.
 | Field | Type | What it is |
 |---|---|---|
 | `user` | object or null | Who it is; null while signing in is off |
+| `user.id` | number | Their ID (from 1.43.0): what an app keeps to know whose its saved pictures are. It stays the same if they're renamed |
 | `user.name` | string | Their name, now |
 | `user.role` | string | `admin` or `user` |
 | `user.pin` | boolean | Whether they have a PIN (from 1.28.0) |

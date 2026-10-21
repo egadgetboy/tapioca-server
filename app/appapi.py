@@ -385,7 +385,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "token": token,
             "device": device,
             "deviceKey": new_key,
-            "user": {"name": user.name, "role": user.role},
+            "user": {"id": user.id, "name": user.name, "role": user.role},
             "askPin": ctx.devices.asks_for_pin(user),
         }
 
@@ -440,7 +440,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return {
             "token": pending.token,
             "deviceKey": pending.new_key,
-            "user": {"name": user.name, "role": user.role},
+            "user": {"id": user.id, "name": user.name, "role": user.role},
             "askPin": ctx.devices.asks_for_pin(user),
         }
 
@@ -460,6 +460,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         made = ctx.access.sign_in_made(request)
         secret = not access.without_secret(made)
         said: dict[str, Any] = {
+            "id": user.id,  # (1.43.0: whose the device's saved pictures are, by ID)
             "name": user.name,
             "role": user.role,
             "pin": user.has_pin,
@@ -638,8 +639,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         there (access.STEP_UP), and says so."""
         made = ctx.db.session_user(access.session_hash(token), 0)
         if user.role == access.ADMIN and access.for_watching(made, outside):
-            return {"name": user.name, "role": access.USER, "watching": True}
-        return {"name": user.name, "role": user.role}
+            return {"id": user.id, "name": user.name, "role": access.USER, "watching": True}
+        return {"id": user.id, "name": user.name, "role": user.role}
 
     def person_json(user: User) -> dict[str, Any]:
         return {
@@ -705,7 +706,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
         return {
             "token": token,
-            "user": {"name": user.name, "role": user.role},
+            "user": {"id": user.id, "name": user.name, "role": user.role},
             "askPin": ctx.devices.asks_for_pin(user),
         }
 

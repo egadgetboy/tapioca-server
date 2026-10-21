@@ -272,7 +272,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             f"{user.name} signed in on the trusted network "
             f"{entry.get('label') or entry['network']}, from {access.where(request.scope)}",
         )
-        return {"user": {"name": user.name, "role": user.role}}
+        return {"user": {"id": user.id, "name": user.name, "role": user.role}}
 
     @app.post("/api/internal/trusted")
     async def trusted_app(body: TrustedApp, request: Request):
@@ -294,7 +294,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             # (For watching: an Admin is a User here, as /api/internal/me says.)
             return {
                 "gives": "person", "token": token,
-                "user": {"name": user.name, "role": access.USER, "byNetwork": True},
+                "user": {"id": user.id, "name": user.name, "role": access.USER, "byNetwork": True},
                 "askPin": False,
             }  # fmt: skip
         if not body.picker:
