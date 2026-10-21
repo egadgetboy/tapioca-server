@@ -750,6 +750,9 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                     (old_cache / "index.db").write_bytes(b"SQLite format 3\x00" + bytes(100))
                 (old_cache / "ab" / "ab12.webp").write_bytes(b"RIFF" + bytes(4092))
                 filed = True
+                print(
+                    f"  (the stand-in Plex can't make {before} a picture: its cache laid out as {before} lays it)"
+                )
             checks.ok(
                 filed and old_cache.is_dir(),
                 f"{before}'s picture cache is on disk",

@@ -1408,6 +1408,7 @@ Problems are kept for 30 days. **Clear** removes them, and the log keeps its own
 **Alerts.** tapiOca alerts Admins when something needs attention:
 
 - **Plex.** Plex can't be reached, or won't accept tapiOca's token. The alert says what happened and what to check (see **Plex isn't connected** under **Plex**, below).
+- **Plex pictures.** Plex refuses tapiOca's sign-in for a picture its apps asked for. This one starts at once, since the apps show placeholders until it's fixed, and clears after Plex makes five pictures in a row.
 - **The data folder.** It has less than 2 GB free, or can't be written to.
 - **A failing station.** A station keeps failing to start (3 times in 10 minutes). The alert says when it began. One kept from before an update ends with the update, and comes back if the station fails again.
 - **Backups.** Backups fail twice in a row.
@@ -1415,7 +1416,7 @@ Problems are kept for 30 days. **Clear** removes them, and the log keeps its own
 - **Away from home.** tapiOca's apps can't reach it from outside.
 - **Broken files.** Something on the **Broken files** tab needs an Admin: a person's report, a broken or damaged file that isn't being replaced automatically, or one Sonarr or Radarr couldn't replace. An example: "There are 3 files to look at on the Broken files tab: Tia reported No sound on Northbound S2 E4". This alert appears at most once an hour. It starts again when there's something new, an hour or more after the last one.
 
-An alert starts only once a problem persists (for Plex, five checks a minute apart), and clears only once things stay right, so alerts don't flicker on and off. Each start and fix adds a line in the **Logs** tab. Admins also see a pill in the page's header with the number of current alerts, which opens a list of them, and they see alerts in tapiOca's apps too.
+An alert starts only once a problem persists (for Plex, five checks a minute apart; Plex pictures start at once), and clears only once things stay right, so alerts don't flicker on and off. Each start and fix adds a line in the **Logs** tab. Admins also see a pill in the page's header with the number of current alerts, which opens a list of them, and they see alerts in tapiOca's apps too.
 
 Alerts are kept in tapiOca's database, so a restart doesn't repeat them. An open alert stays open (the **Logs** tab notes it's still going) until its check finds it fixed. Then it's reported fixed, once. That's so even if it was fixed while tapiOca was stopped. The apps' list of alerts fixed in the last day survives restarts too. A restored backup starts with no alerts, so anything still wrong is reported again.
 

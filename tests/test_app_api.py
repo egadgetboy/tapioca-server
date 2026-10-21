@@ -221,11 +221,17 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         signed = check.answer(
             phone.post("/api/internal/sign-in", json=SAM), "POST /api/internal/sign-in"
         )
-        assert signed["user"] == {"name": "Sam", "role": "user"} and signed["device"]
+        # (1.43.0: and who by ID, a new field: test_whose_pictures.)
+        assert (
+            signed["user"] == {"id": signed["user"]["id"], "name": "Sam", "role": "user"}
+            and signed["device"]
+        )
+        assert isinstance(signed["user"]["id"], int)
         assert not phone.cookies  # (apps get a token, not a cookie)
         sam = bearer(signed["token"])
         me = check.answer(phone.get("/api/internal/me", headers=sam), "GET /api/internal/me")
         assert me["user"] == {
+            "id": signed["user"]["id"],  # (1.43.0: who by ID, as the sign-in said)
             "name": "Sam",
             "role": "user",
             "pin": False,
@@ -595,7 +601,12 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             tv.post("/api/internal/link/check", json={"poll": started["poll"]}),
             "POST /api/internal/link/check",
         )
-        assert linked["user"] == {"name": "Pat", "role": "admin"} and linked["askPin"] is True
+        assert linked["user"] == {
+            "id": linked["user"]["id"],
+            "name": "Pat",
+            "role": "admin",
+        }  # (1.43.0: id)
+        assert isinstance(linked["user"]["id"], int) and linked["askPin"] is True
         assert tv.get("/api/v1/stations", headers=bearer(linked["token"])).status_code == 200
         # (Handed over once.)
         gone = tv.post("/api/internal/link/check", json={"poll": started["poll"]})
@@ -646,7 +657,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             tv.post("/api/internal/picker/choose", json={"id": sam_id}, headers=key),
             "POST /api/internal/picker/choose",
         )
-        assert picked["user"] == {"name": "Sam", "role": "user"}
+        assert picked["user"] == {"id": sam_id, "name": "Sam", "role": "user"}
         # Pat with his PIN, in Full sign-in: for watching (1.38.0).
         pat_id = next(p["id"] for p in listed["people"] if p["name"] == "Pat")
         assert home.put(f"/api/access/users/{pat_id}/picker", json={"pin": "2468"}).is_success
@@ -654,7 +665,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             tv.post("/api/internal/picker/choose", json={"id": pat_id, "pin": "2468"}, headers=key),
             "POST /api/internal/picker/choose",
         )
-        assert by_pin["user"] == {"name": "Pat", "role": "user", "watching": True}
+        assert by_pin["user"] == {"id": pat_id, "name": "Pat", "role": "user", "watching": True}
         watching = check.answer(
             tv.get("/api/internal/me", headers=bearer(by_pin["token"])), "GET /api/internal/me"
         )

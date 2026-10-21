@@ -210,24 +210,26 @@ def test_the_apps_show_the_new_name_the_next_time_they_ask(app):
         # (Pat signs in on it too: from 1.38.0 only that puts him on its list.)
         assert tv.post("/api/internal/picker/sign-in", json=PAT, headers=key).status_code == 200
         his = bearer(tv.post("/api/internal/picker/sign-in", json=SAM, headers=key).json()["token"])
+        sam_id = ids(pat)["Sam"]
         assert tv.get("/api/internal/me", headers=his).json()["user"] == {
-            "name": "Sam", "role": "user", "pin": False, "canChangePassword": True,
+            "id": sam_id, "name": "Sam", "role": "user", "pin": False, "canChangePassword": True,
             "canChangePin": True, "canReport": True,
         }  # fmt: skip
-        rename(pat, ids(pat)["Sam"], "Samuel")
+        rename(pat, sam_id, "Samuel")
         # Who's tuning in?
         people = tv.get("/api/internal/picker", headers=key).json()["people"]
         assert [p["name"] for p in people] == ["Pat", "Samuel"]
         # Options: who this app is signed in as.
+        # (1.43.0: the same ID under the new name, so an app's saved pictures stay his.)
         assert tv.get("/api/internal/me", headers=his).json()["user"] == {
-            "name": "Samuel", "role": "user", "pin": False, "canChangePassword": True,
+            "id": sam_id, "name": "Samuel", "role": "user", "pin": False, "canChangePassword": True,
             "canChangePin": True, "canReport": True,
         }  # fmt: skip
         assert tv.get("/api/internal/me").status_code == 401  # (signing in is on)
         # Picking him gives a sign-in in his new name.
         sam = next(p for p in people if p["name"] == "Samuel")
         picked = tv.post("/api/internal/picker/choose", json={"id": sam["id"]}, headers=key)
-        assert picked.json()["user"] == {"name": "Samuel", "role": "user"}
+        assert picked.json()["user"] == {"id": sam_id, "name": "Samuel", "role": "user"}
 
 
 def test_a_device_is_its_linkers_by_who_they_are_not_their_name(app):

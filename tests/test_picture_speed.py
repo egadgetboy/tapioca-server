@@ -547,6 +547,7 @@ def test_leftovers_are_swept_even_beside_a_pictures_folder_that_isnt_1_42s(tmp_p
     caplog.set_level(logging.INFO)
     data = tmp_path / "data"
     (data / "cache" / "pictures").mkdir(parents=True)
+    (data / "cache" / "pictures" / "theirs.jpg").write_bytes(b"theirs")  # (someone else's, not empty)
     (data / "cache" / ".pictures-gone-1-2" / "ab").mkdir(parents=True)
     (data / "cache" / ".pictures-gone-1-2" / "ab" / "x.webp").write_bytes(b"x")
     cleanup.old_picture_cache(data)
@@ -566,3 +567,39 @@ def test_a_pictures_link_says_its_target_was_left(tmp_path, caplog):
     (data / "cache" / "pictures").symlink_to(elsewhere, target_is_directory=True)
     cleanup.old_picture_cache(data)
     assert "was a link" in caplog.text and "MB freed" not in caplog.text
+
+
+def test_an_emptied_mount_is_quiet_after_and_the_marks_go_last(tmp_path, monkeypatch, caplog):
+    # (The final audit: an emptied mount warned "isn't 1.42's" at every later start; a delete cut
+    # short after the marks went was never tried again; and someone else's folder was named for deleting.)
+    from app import cleanup
+
+    caplog.set_level(logging.INFO)
+    data = tmp_path / "data"
+    pictures = old_cache(data)
+    (pictures / "cd").mkdir()
+    (pictures / "cd" / "x.webp").write_bytes(b"x")
+    real_unlink = Path.unlink
+    gone: list[str] = []
+
+    def watched(self, *a, **kw):
+        gone.append(self.name)
+        return real_unlink(self, *a, **kw)
+
+    monkeypatch.setattr(
+        cleanup.os, "rename", lambda *a, **kw: (_ for _ in ()).throw(OSError(18, "EXDEV"))
+    )
+    monkeypatch.setattr(Path, "unlink", watched)
+    cleanup.old_picture_cache(data)
+    files = [n for n in gone if n in ("FORMAT", "index.db")]
+    assert files and gone[-len(files) :] == files, gone
+    caplog.clear()
+    cleanup.old_picture_cache(data)
+    assert "isn't 1.42's" not in caplog.text, "an emptied mount is done, said nothing"
+    (pictures / "family").mkdir()
+    (data / "cache" / ".pictures-gone-9").mkdir()
+    monkeypatch.setattr(cleanup, "_delete_tree", lambda path: False)
+    caplog.clear()
+    cleanup.old_picture_cache(data)
+    assert "delete any data/cache/.pictures-gone-* folders" in caplog.text
+    assert "delete data/cache/pictures" not in caplog.text

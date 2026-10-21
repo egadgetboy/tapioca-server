@@ -292,13 +292,13 @@ def test_plex_refusing_tapiocas_sign_in_for_a_picture_tells_the_admin_once(home)
     home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(401)
     for width in (160, 320, 480):
         refused(home.get(f"/api/internal/art/300?w={width}"), 503)
-    said = [a for a in alerts.now() if a.kind == "plex" and a.about == "pictures"]
+    said = [a for a in alerts.now() if a.kind == "plex-pictures"]
     assert len(said) == 1 and "sign-in to Plex needs attention" in said[0].sentence, [
         a.sentence for a in alerts.now()
     ]
     # (The apps' re-check: fixed by the very next picture, mixed answers would start and fix it
     # over and over, each a notification. Fixed only after five in a row.)
-    started = len([a for a in alerts.listed() if a.about == "pictures"])
+    started = len([a for a in alerts.listed() if a.kind == "plex-pictures"])
     for width in (160, 320, 480, 720):
         home.app.state.ctx.app_pictures.clear()
         home.plex.odd = {}
@@ -307,12 +307,87 @@ def test_plex_refusing_tapiocas_sign_in_for_a_picture_tells_the_admin_once(home)
         home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(401)
         home.app.state.ctx.app_pictures.clear()
         refused(home.get(f"/api/internal/art/300?w={width}"), 503)
-    assert len([a for a in alerts.now() if a.about == "pictures"]) == 1, "still the one alert"
-    assert len([a for a in alerts.listed() if a.about == "pictures"]) == started, (
+    assert len([a for a in alerts.now() if a.kind == "plex-pictures"]) == 1, "still the one alert"
+    assert len([a for a in alerts.listed() if a.kind == "plex-pictures"]) == started, (
         "never started again"
     )
     home.plex.odd = {}
     for width in (160, 320, 480, 720, 1280):
         home.app.state.ctx.app_pictures.clear()
         assert home.get(f"/api/internal/art/300?w={width}").status_code == 200
-    assert [a for a in alerts.now() if a.kind == "plex" and a.about == "pictures"] == [], "fixed"
+    assert [a for a in alerts.now() if a.kind == "plex-pictures"] == [], "fixed"
+
+
+def test_the_pictures_alert_never_flaps_on_pictures_already_coming(home, monkeypatch):
+    # (The final audit: five pictures asked before the 401 that finish after it
+    # fixed the alert at once, and the next 401 started it again: counted only
+    # pictures asked after the latest 401 now, and by what was sent, not what's up.)
+    ctx = home.app.state.ctx
+    sent: list[tuple[str, str]] = []
+    real = ctx.notify.send
+    monkeypatch.setattr(
+        ctx.notify,
+        "send",
+        lambda sentence, kind, state, **kw: (
+            sent.append((kind, state)),
+            real(sentence, kind, state, **kw),
+        ),
+    )
+    assert home.get("/api/internal/items/300").status_code == 200
+    began = ctx.alerts.pictures_asked()  # (as a picture's turn starts, before the 401)
+    home.plex.odd["/photo/:/transcode"] = httpx.Response(401)
+    home.plex.odd["/library/metadata/300/thumb"] = httpx.Response(401)
+    refused(home.get("/api/internal/art/300?w=320"), 503)
+    for _ in range(6):
+        ctx.alerts.plex_made_a_picture(began)  # (those already coming, finishing after it)
+    assert [k for k, _ in sent if k == "plex-pictures"] == ["plex-pictures"], sent
+
+
+def test_an_older_version_skips_the_pictures_alert_so_a_rollback_never_keeps_it(tmp_path):
+    # (The final audit: as kind plex, 1.42.1 restored it as going and nothing in it
+    # ever fixed it. A kind of its own is skipped by any version that doesn't know it.)
+    from app import alerts as alerts_module
+
+    assert alerts_module.PLEX_PICTURES not in (
+        "plex",
+        "data-full",
+        "data-write",
+        "station",
+        "backups",
+        "clock",
+        "outside",
+        "files",
+        "clips",
+        "access",
+    )  # fmt: skip  (1.42.1's kinds)
+    assert alerts_module.PLEX_PICTURES in alerts_module.KINDS
+
+
+def test_a_changed_picture_that_plex_answers_with_a_non_picture_drops_the_kept_one(home):
+    # (The final audit: untested. An answer that isn't a picture is as good as none.)
+    changed(home)
+    page = httpx.Response(200, content=b"<html>", headers={"content-type": "text/html"})
+    home.plex.odd["/photo/:/transcode"] = page
+    home.plex.odd["/library/metadata/300/thumb"] = page
+    refused(home.get("/api/internal/art/300?w=320"), 404, "There's no such picture")
+    assert home.app.state.ctx.app_pictures.get(("300", "poster", 320)) is None
+
+
+def test_a_media_folder_picture_never_touches_the_plex_alert(tmp_path, monkeypatch):
+    # (The final audit: untested.)
+    from .folderlib import Clips, radarr_movies
+    from .test_folder_media import add_library, keys_by_title
+
+    clips = Clips(tmp_path / "clips")
+    root = tmp_path / "media"
+    radarr_movies(root / "Movies", clips)
+    settings = Settings(data_dir=tmp_path / "data", media_dir=str(root))
+    with TestClient(create_app(settings, PlexClient("", ""))) as home:
+        lib = add_library(home, "Movies", "movie", str(root / "Movies"))
+        key = keys_by_title(home, lib)["The Glass Garden"]
+        touched: list[int] = []
+        monkeypatch.setattr(
+            home.app.state.ctx.alerts, "plex_made_a_picture", lambda asked: touched.append(asked)
+        )
+        assert home.get(f"/api/internal/art/{key}?w=320").status_code == 200
+        assert touched == []

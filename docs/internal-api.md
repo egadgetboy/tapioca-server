@@ -1538,9 +1538,10 @@ as it is: it ignores `w`, so don't send one.
 
 It answers 404 if there's no such picture, or what Plex has isn't one, and
 answers at once when Plex says there's none. It answers 503 when
-Plex doesn't send it in time, or answers with trouble (a 5xx, 401 or 429,
-from 1.43.0; 404 before), as for the rest of Media: keep the placeholder or
-your saved copy, and ask again later. Only a 404 means there's none.
+Plex doesn't send it in time, or answers with an error other than "not
+found" (from 1.43.0; 404 before), as for the rest of Media: keep the
+placeholder or your saved copy, and ask again later. Only a 404 means
+there's none.
 
 Each comes with `Cache-Control: private, max-age=86400` and an `ETag`. Keep
 it a day. After that, ask again with `If-None-Match` and its ETag. While

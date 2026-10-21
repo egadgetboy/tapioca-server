@@ -1167,6 +1167,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 height = width * 3 // 2 if kind == "poster" else width * 9 // 16
                 missing = gone = False
                 async with asking(request), picture_turns:
+                    asked = ctx.alerts.pictures_asked()
                     # (The app scrolled past while it waited for a turn: nothing asked of the
                     # library for it. Uvicorn never cancels a handler whose client has gone.)
                     gone = await request.is_disconnected()
@@ -1204,7 +1205,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 kept = stale
             else:
                 if not is_folder_key(target):
-                    ctx.alerts.plex_made_a_picture()
+                    ctx.alerts.plex_made_a_picture(asked)
                 kept = ctx.app_pictures.put(here, got, version or "")
         data, content_type, tag = kept[0], kept[1], kept[2]
         headers = {

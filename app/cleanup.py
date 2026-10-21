@@ -71,7 +71,8 @@ def _delete_tree(path: Path) -> bool:
 def _empty(path: Path) -> bool:
     """Deletes what's inside a folder, never following links, keeping it."""
     ok = True
-    for entry in list(os.scandir(path)):
+    # (1.42's marks last, so a delete cut short is still known as 1.42's at the next start.)
+    for entry in sorted(os.scandir(path), key=lambda e: e.name in MARKS):
         child = Path(entry.path)
         try:
             if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
@@ -95,7 +96,7 @@ def old_picture_cache(data_dir: Path) -> None:
     pictures = cache / "pictures"
     if not cache.is_dir():  # (none, or a link to nothing: nothing to do)
         return
-    freed, ok, any_found, linked = 0, True, False, False
+    freed, ok, any_found, linked, theirs = 0, True, False, False, False
     aside_name = ""
     try:
         if os.path.islink(pictures):
@@ -104,8 +105,12 @@ def old_picture_cache(data_dir: Path) -> None:
                 pictures.unlink()
         elif pictures.is_dir() and not _is_1_42s(pictures) and os.path.lexists(pictures):
             # (Someone else's: left as it is, while what an interrupted delete left is still swept.
-            # Gone meanwhile counts as removed: another start's.)
-            log.warning("data/cache/pictures isn't 1.42's picture cache, so it was left as it is")
+            # Gone meanwhile counts as removed: another start's. Empty, as an emptied mount is: done.)
+            theirs = True
+            if any(os.scandir(pictures)):
+                log.warning(
+                    "data/cache/pictures isn't 1.42's picture cache, so it was left as it is"
+                )
         elif pictures.is_dir():
             any_found = True
             freed += _size(pictures)
@@ -146,8 +151,9 @@ def old_picture_cache(data_dir: Path) -> None:
     elif ok:
         log.info("tapiOca 1.42's picture cache was removed (%d MB freed)", freed // (1 << 20))
     else:
+        where = "" if theirs else "data/cache/pictures and "
         log.warning(
-            "1.42's picture cache couldn't all be removed: delete data/cache/pictures and any "
+            f"1.42's picture cache couldn't all be removed: delete {where}any "
             "data/cache/.pictures-gone-* folders to free its space"
         )
 
