@@ -716,9 +716,16 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             # (1.42 kept pictures for the apps on disk: asked for a few, as 0.12.0
             # asks, so its cache is there for 1.43.0 to remove.)
             apps = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
-            webp = 0
-            for key in ("300", "301", "100"):
+            webp, said = 0, []
+            for key in ("100", "201", "202"):  # (the stand-in's show and its episodes)
                 got = apps.get(f"/api/internal/art/{key}?kind=poster&w=240&format=webp")
+                said.append(
+                    (
+                        got.status_code,
+                        got.headers.get("content-type", ""),
+                        got.text[:80] if got.status_code != 200 else "",
+                    )
+                )
                 webp += got.status_code == 200 and got.headers.get("content-type") == "image/webp"
             # (The folder alone would pass: 1.42.1 makes it as it starts. A picture made, and kept in a
             # two-letter folder, is what 1.43.0 must remove.)
@@ -726,7 +733,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                 any(p.is_file() for p in old_cache.glob("??/*")) if old_cache.is_dir() else False
             )
             checks.ok(
-                webp >= 1 and filed, f"{before} made and kept pictures on disk", (webp, old_cache)
+                webp >= 1 and filed, f"{before} made and kept pictures on disk", (said, old_cache)
             )
         stopped(checks, sp, before)
         # (What this version changes in that database, if anything: a release
