@@ -1,0 +1,28 @@
+# Spike S-3 (the apps repo's docs/threat-models/server-proof.md): the image's
+# own openssl and nice, on amd64 and arm64, building the image only (no
+# tests, no push). Runs only on a push to a spike/ branch; never on main.
+name: spike S-3
+on:
+  push:
+    branches: ["spike/**"]
+permissions:
+  contents: read
+jobs:
+  s3:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Build the image people get
+        run: docker build --tag stationplay:spike .
+      - name: The spike, inside it
+        run: docker run --rm -v "$PWD/tools/spikes:/spikes:ro" --entrypoint sh stationplay:spike /spikes/s3_openssl.sh | tee s3.txt
+      - name: Keep the result
+        if: always()
+        run: echo "$(cat s3.txt 2>/dev/null)" >> "$GITHUB_STEP_SUMMARY"
