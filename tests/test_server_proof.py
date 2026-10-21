@@ -381,7 +381,9 @@ def test_a_folder_that_cant_be_flushed_is_used_with_a_warning(tmp_path, monkeypa
     app = make_app(tmp_path)
     with TestClient(app):
         ready(app)
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    assert any(
+        r.levelno == logging.WARNING and "flush" in r.getMessage().lower() for r in caplog.records
+    )
 
 
 def test_a_key_swapped_under_a_running_server_stops_proofs(app, tmp_path):
