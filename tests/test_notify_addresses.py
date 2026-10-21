@@ -630,3 +630,12 @@ def test_a_new_address_at_home_is_saved_only_once_the_admin_says_yes(app):
             "/api/notify", json={"on": True, "url": home_hook, "more": [{"url": "http://ha.local/x", "format": "json"}]}
         )
         assert named.status_code == 409
+
+
+def test_whats_wrong_with_an_address_is_said_before_the_home_question(app):
+    # (The security suite, October 21: an ftp:// address at home was asked "Save it?" and only then
+    # refused. What's wrong comes first, as for Sonarr's and Radarr's.)
+    with TestClient(app) as home:
+        for bad in ("ftp://192.168.1.9/x", "gopher://127.0.0.1:70/_x", "//127.0.0.1/hook"):
+            got = home.put("/api/notify", json={"on": True, "url": bad, "format": "json"})
+            assert got.status_code == 400, (bad, got.status_code, got.text)

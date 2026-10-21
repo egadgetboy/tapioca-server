@@ -1386,7 +1386,8 @@ async def _alerts_and_notify(
             # One that never answers is given 5 seconds (and one more try),
             # and holds nothing else up meanwhile.
             await c.put("/api/notify", headers=admin_h,
-                        json={"on": True, "url": hook.url("/slow?token=sekret-token")})  # fmt: skip
+                        json={"on": True, "url": hook.url("/slow?token=sekret-token"),
+                              "homeOk": True})  # fmt: skip
             began = asyncio.get_running_loop().time()
             slow = asyncio.ensure_future(
                 c.post("/api/notify/test", headers=admin_h, json={}, timeout=30)
@@ -1828,7 +1829,7 @@ async def _broken_files(
                   f"got {r.status_code}")  # fmt: skip
         await c.post("/api/internal/report-problem", headers=admin_h,
                      json={"choice": "wrong-language", "key": "3204"})  # fmt: skip
-        dead = {"app": "radarr", "url": "http://127.0.0.1:9", "key": "abc123", "on": True}
+        dead = {"app": "radarr", "url": "http://127.0.0.1:9", "key": "abc123", "on": True, "homeOk": True}
         await c.put("/api/arr", headers=admin_h, json=dead)
         try:
             r = await c.post("/api/reports/3204/better", headers=admin_h)

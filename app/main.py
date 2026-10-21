@@ -371,6 +371,8 @@ class ArrIn(BaseModel):
     url: str = Field(default="", max_length=500)
     key: str | None = Field(default=None, max_length=100)
     on: bool = False
+    # A new address on the home network is saved once the Admin says yes (DL287).
+    homeOk: bool = False
 
 
 class ArrWhatIn(BaseModel):
@@ -3579,6 +3581,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.put("/api/arr")
     async def arr_save(body: ArrIn):
         try:
+            # (What's wrong with them is said first, then the question, DL287.)
+            typed = replacing.checked(ctx.db, body.app, body.url, body.key, body.on)["url"]
+            new = typed and typed != replacing.settings(ctx.db)[body.app]["url"]
+            if not body.homeOk and new and await safefetch.at_home(typed):
+                raise HTTPException(409, HOME_ADDRESS)
             replacing.save(ctx.db, body.app, body.url, body.key, body.on)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
@@ -3756,13 +3763,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.put("/api/notify")
     async def notify_save(body: NotifyIn, request: Request):
         more = None if body.more is None else [(m.url, m.format) for m in body.more]
-        if not body.homeOk:
-            saved = {url for url, _ in ctx.notify.addresses()}
-            typed = [body.url, *(m.url for m in body.more or ())]
-            for url in (u for u in typed if u.strip() and u.strip() not in saved):
-                if await safefetch.at_home(url):
-                    raise HTTPException(409, HOME_ADDRESS)
         try:
+            # (What's wrong with them is said first, then the question, DL287.)
+            kept = ctx.notify.checked(body.on, body.url, body.format, more)
+            if not body.homeOk:
+                saved = {url for url, _ in ctx.notify.addresses()}
+                for url in (u for u, _ in kept if u not in saved):
+                    if await safefetch.at_home(url):
+                        raise HTTPException(409, HOME_ADDRESS)
             ctx.notify.save(body.on, body.url, body.format, more)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None

@@ -60,3 +60,16 @@ def test_every_outbound_client_goes_through_safefetch_as_its_declared_kind_and_f
             f"{site}: its transport is {kind!r}, but it's declared {declared!r}"
         )
         assert redirects in (None, False), f"{site} follows redirects"
+
+
+def test_this_version_has_its_security_manifest():
+    # (DL287, the source's §0.4: every release answers the six questions, "none" where it applies.)
+    from pathlib import Path
+
+    from app import __version__
+
+    manifest = Path(__file__).resolve().parents[2] / "docs" / "security" / f"manifest-{__version__}.md"
+    assert manifest.exists(), f"Write {manifest.name}: the six questions, for this release's readiness record"
+    text = manifest.read_text(encoding="utf-8")
+    for n in range(1, 7):
+        assert f"\n{n}. **" in text, f"{manifest.name} doesn't answer question {n}"

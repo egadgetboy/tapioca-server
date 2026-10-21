@@ -320,6 +320,19 @@ class Notify:
         checked (see check_address), and listed once, and there are
         ADDRESSES_MOST at most. ValueError, with a sentence, if that won't
         do."""
+        kept = self.checked(on, url, fmt, more)
+        # (The first place left blank: the others move up.)
+        first_url, first_fmt = kept[0] if kept else ("", fmt)
+        self._keep_lasts(first_url, [u for u, _ in kept[1:]])
+        self.on, self.url, self.format, self.more = on, first_url, first_fmt, kept[1:]
+        self.db.set_meta(META, json.dumps({"on": on, "url": first_url, "format": first_fmt}))
+        self.db.set_meta(META_MORE, json.dumps([{"url": u, "format": f} for u, f in self.more]))
+
+    def checked(
+        self, on: bool, url: str, fmt: str, more: list[tuple[str, str]] | None = None
+    ) -> list[tuple[str, str]]:
+        """The addresses and formats `save` would keep, saving nothing.
+        ValueError, with a sentence, if that won't do."""
         if fmt not in FORMATS:
             raise ValueError(CHOOSE_FORMAT)
         given = [(url, fmt), *(self.more if more is None else more)]
@@ -341,12 +354,7 @@ class Notify:
             raise ValueError(TOO_MANY)
         if on and not kept:
             raise ValueError(NOT_HTTP)
-        # (The first place left blank: the others move up.)
-        first_url, first_fmt = kept[0] if kept else ("", fmt)
-        self._keep_lasts(first_url, [u for u, _ in kept[1:]])
-        self.on, self.url, self.format, self.more = on, first_url, first_fmt, kept[1:]
-        self.db.set_meta(META, json.dumps({"on": on, "url": first_url, "format": first_fmt}))
-        self.db.set_meta(META_MORE, json.dumps([{"url": u, "format": f} for u, f in self.more]))
+        return kept
 
     def _keep_lasts(self, first: str, more: list[str]) -> None:
         """How each address's last message went, kept with it as the list

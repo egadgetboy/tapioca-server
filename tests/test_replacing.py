@@ -111,7 +111,9 @@ def world(tmp_path):
             ("radarr", "http://radarr.test:7878", radarr),
         ):
             saved = c.put(
-                "/api/arr", json={"app": app_name, "url": url, "key": arr.key, "on": True}
+                "/api/arr",
+                # (Their stand-ins' .test names are at home: the Admin said yes. DL287.)
+                json={"app": app_name, "url": url, "key": arr.key, "on": True, "homeOk": True},
             )
             assert saved.status_code == 200, saved.text
         # (By themselves: what most of these are about. When you say so, the
@@ -561,7 +563,8 @@ def test_each_entry_says_which_stations_have_it(world):
 def test_a_missing_program_comes_off_the_list_once_no_station_has_it(world):
     c = world.client
     for app_name in ("sonarr", "radarr"):  # (the list alone)
-        c.put("/api/arr", json={"app": app_name, "url": f"http://{app_name}.test", "on": False})
+        # (A new address at home, as .test names are: the Admin said yes. DL287.)
+        c.put("/api/arr", json={"app": app_name, "url": f"http://{app_name}.test", "on": False, "homeOk": True})
     world.broken(
         "201", f"Check: file not found: {world.file('201')}", problem="broken", found=CHECK
     )
@@ -858,3 +861,24 @@ def test_radarr_never_replaces_part_of_a_movie_in_several_files(world, has):
     assert state.get("state") == replacing.CANT, state
     assert "several files" in state.get("note", ""), state
     assert not calls_like(world.radarr, "DELETE") and not calls_like(world.radarr, "POST command")
+
+
+def test_a_new_arr_address_at_home_is_saved_only_once_the_admin_says_yes(world):
+    # (DL287, the owner, October 21: an address typed into a setting may be at home, and the page asks
+    # first, "This points to a device on your home network. Save it?" The same question as alerts'.)
+    c = world.client
+    moved = "http://192.168.1.30:8989"
+    asked = c.put("/api/arr", json={"app": "sonarr", "url": moved, "key": world.sonarr.key, "on": True})
+    assert asked.status_code == 409 and asked.json()["detail"] == "This points to a device on your home network."
+    assert c.get("/api/arr").json()["apps"]["sonarr"]["url"] == "http://sonarr.test:8989"  # (nothing saved)
+    yes = c.put(
+        "/api/arr", json={"app": "sonarr", "url": moved, "key": world.sonarr.key, "on": True, "homeOk": True}
+    )
+    assert yes.status_code == 200, yes.text
+    assert c.get("/api/arr").json()["apps"]["sonarr"]["url"] == moved
+    # (Saved once: saving it again, turned off, asks nothing; nor does an empty address.)
+    assert c.put("/api/arr", json={"app": "sonarr", "url": moved, "on": False}).status_code == 200
+    assert c.put("/api/arr", json={"app": "radarr", "url": "", "on": False}).status_code == 200
+    # (A public address asks nothing.)
+    public = c.put("/api/arr", json={"app": "radarr", "url": "http://radarr.example.com:7878", "key": "abc123", "on": True})
+    assert public.status_code == 200, public.text

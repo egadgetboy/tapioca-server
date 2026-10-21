@@ -160,7 +160,30 @@ follow them in every change.
   `pyproject.toml`. (From 1.34.0, the TrueNAS file and `docker-compose.yml`
   ask for the published image at `:latest`. The TrueNAS file is
   `tapioca-server.yaml` from 1.35.0, `stationplay.yaml` before.)
-- **Each release candidate,** by class (the plan's release gate has the table): a threat model and every-path matrix before D code; reviews by class (A and B a written self-review; C a focused independent review; D a `cold-auditor` audit before integration and of the final diff, with later rounds re-checking the fixed items unless the design changed); the area's tests while building; then, always: CI's full suite in the exact image on both architectures, `python tools/upgrade_check.py --from <previous release's commit>`, `python -m tools.attack_check`, `python tools/image_check.py` and the release's own tests (`tests/test_info_station.py`, whose what's-new must be this version's, and `tests/test_release_workflow.py`) before the push to main (about 3 minutes), real FFmpeg streaming for affected playback, Playwright at 390, 768 and 1440 wide, light and dark, for page changes; then notes and a report.
+- **Each release candidate,** by class (the plan's release gate has the table): a threat model and every-path matrix before D code; reviews by class (A and B a written self-review; C a focused independent review; D a `cold-auditor` audit before integration and of the final diff, with later rounds re-checking the fixed items unless the design changed); the area's tests while building; then, always: CI's full suite in the exact image on both architectures, `python tools/upgrade_check.py --from <previous release's commit>`, the security suite (`python -m tools.security_suite`, below), `python tools/image_check.py` and the release's own tests (`tests/test_info_station.py`, whose what's-new must be this version's, and `tests/test_release_workflow.py`) before the push to main (about 3 minutes), real FFmpeg streaming for affected playback, Playwright at 390, 768 and 1440 wide, light and dark, for page changes; then notes and a report.
+- **The security suite, at every release candidate** (the owner, October
+  21: "Update security battery for every future tapioca release"; DL287;
+  the plan's release gate): `python -m tools.security_suite` passes with no
+  open Critical or High, in every class, on both sides. It runs
+  `tests/security` (also on every push, with the other tests) and the live
+  harness, `tools/attack_check.py` (`python -m tools.attack_check` still
+  runs it alone), and writes `docs/security/report-<version>.md`. A Medium
+  needs a tracked exception in `tools/security_exceptions.json`, which the
+  report lists. Its corpus only grows: a drop in its count fails the run
+  unless `tools/security_corpus.json` logs a merge of duplicates. Each
+  release writes `docs/security/manifest-<version>.md`, answering the six
+  questions (new routes or parameters, outbound requests, file writes,
+  programs started, stored fields sent to a client, dependencies; "none"
+  is fine), and adds what it answers yes to the suite's matrices. A new
+  route, outbound request, program or write that isn't declared fails the
+  suite's census. Every outbound request goes through `app/safefetch.py`:
+  a typed address may be at home; any other must be public (DL287's
+  provenance).
+- **Playback observability grows with every release** (DL289): a release
+  that touches playback, conversion, HDR or sound handling, or a new way
+  of playing asks whether the diagnostic view and the log capture the new
+  behavior, its reason and its health signal. New playback behavior ships
+  with its telemetry.
 - Any database change on upgrade is preceded by an automatic backup
   (`data/backups/before-<version>-<date>.db`), and the notes give tested
   rollback steps.
@@ -176,7 +199,7 @@ follow them in every change.
   each release zip signed. The YAML and compose files use `:latest` and start without the
   internet (`pull_policy: missing`; each install's update steps pull: the
   lead developer, October 12, for the owner to confirm, as U2 had `always`). Building from source stays an advanced choice.
-- **Report** to the owner, 5 lines, for each published release: version and summary; tests; choices; known limits; one improvement made to the development process (FYI). Then: which work went to `routine-builder`, and what `cold-auditor` found and what was done about each item.
+- **Report** to the owner, 5 lines, for each published release: version and summary; tests; choices; known limits; one improvement made to the development process (FYI). Then a security line (for example, "Security: 1,138 checks, all passing; no exceptions"). Then: which work went to `routine-builder`, and what `cold-auditor` found and what was done about each item.
 - **Every 3 releases, stop** and tell the owner, who runs an independent
   audit before work continues. (Suspended by the owner on October 12 until
   the apps reach their beta: keep going, decide as the lead developer, and

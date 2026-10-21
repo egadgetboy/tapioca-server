@@ -153,6 +153,14 @@ def shown(db) -> dict[str, dict[str, Any]]:
 def save(db, app: str, url: str, key: str | None, on: bool) -> None:
     """Saves one app's settings (`key` None: it stays as it was). ValueError
     if they won't do."""
+    current = settings(db)
+    current[app] = checked(db, app, url, key, on)
+    _store(db, current)
+
+
+def checked(db, app: str, url: str, key: str | None, on: bool) -> dict[str, Any]:
+    """One app's settings as `save` would keep them, saving nothing.
+    ValueError if they won't do."""
     if app not in APPS:
         raise ValueError("That's neither Sonarr nor Radarr")
     current = settings(db)
@@ -168,8 +176,7 @@ def save(db, app: str, url: str, key: str | None, on: bool) -> None:
         )
     if on and not (url and key):
         raise ValueError(f"Enter {NAMES[app]}'s address and API key to turn it on")
-    current[app] = {"url": url, "key": key, "on": on}
-    _store(db, current)
+    return {"url": url, "key": key, "on": on}
 
 
 def _store(db, changed: dict[str, Any]) -> None:

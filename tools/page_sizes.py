@@ -276,6 +276,10 @@ class Running:
     of its own; `call` runs something on its event loop."""
 
     def __init__(self, data: Path, plex: StandInPlex) -> None:
+        # (Its stand-ins' names are resolved here, never by the real DNS, as attack_check's: DL287.)
+        from tools.attack_check import _stand_in_names
+
+        server.safefetch.RESOLVE = _stand_in_names
         lan, public = (socket.create_server(("127.0.0.1", 0)) for _ in range(2))
         self.ports = lan.getsockname()[1], public.getsockname()[1]
         self.home, self.internet = (f"http://127.0.0.1:{port}" for port in self.ports)
@@ -1098,6 +1102,34 @@ def notify_addresses(page: Page, look: Look) -> None:
         "() => document.querySelector('#notifyBody .btn.primary').scrollIntoView({ block: 'end' })"
     )
     look("logs-notify-end")
+    home_question(page, look)
+
+
+def home_question(page: Page, look: Look) -> None:
+    """A new alert address on the home network: the page asks first (DL287).
+    Cancel keeps nothing; OK saves it. Put back as it was after."""
+    asked: list[str] = []
+    page.fill("#notifyUrl", "http://192.168.1.9:8123/api/webhook/tapioca")
+
+    def answer(yes: bool):
+        def on(dialog: Any) -> None:
+            asked.append(dialog.message)
+            dialog.accept() if yes else dialog.dismiss()
+
+        return on
+
+    saved = lambda: page.request.get("/api/notify", headers={"X-Tapioca-Page": "1"}).json()["url"]  # noqa: E731
+    page.once("dialog", answer(False))
+    page.click("#notifyBody .btn.primary")
+    page.wait_for_timeout(400)
+    look.expect("Alert notifications, a home address asks first", asked[:1],
+                ["This points to a device on your home network. Save it?"])  # fmt: skip
+    look.expect("Alert notifications, Cancel keeps nothing", saved(), "")
+    page.once("dialog", answer(True))
+    page.click("#notifyBody .btn.primary")
+    page.wait_for_timeout(400)
+    look.expect("Alert notifications, OK saves it", saved(), "http://192.168.1.9:8123/api/webhook/tapioca")
+    page.request.put("/api/notify", headers={"X-Tapioca-Page": "1"}, data={"on": False, "url": ""})
 
 
 def signin_answer_lost(context: Any, base: str, look: Look) -> None:

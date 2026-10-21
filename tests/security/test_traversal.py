@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import secrets
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -75,4 +76,4 @@ def test_the_check_reaches_the_handlers_and_would_see_a_leak(world, tmp_path):
     # asked; and the check itself finds the planted words when a file holds them.)
     admin, planted = world
     assert admin.get(f"/web/page.css?v={__version__}").status_code == 200
-    assert SECRET in open(planted).read()
+    assert SECRET in Path(planted).read_text()

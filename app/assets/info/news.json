@@ -1,7 +1,7 @@
 {
-  "version": "1.43.0",
+  "version": "1.44.0",
   "new": [
-    "Browsing Media in tapiOca's apps is quick again",
-    "Folders open on the first try"
+    "Safer when tapiOca is reachable from the internet",
+    "Security tests run with every release"
   ]
 }

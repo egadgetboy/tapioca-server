@@ -133,7 +133,7 @@ def test_chain_02_no_answer_to_a_user_or_outsider_carries_anyones_token(world):
 
 def test_chain_03_nothing_written_by_a_request_is_served_back_as_a_page_or_a_script(world):
     # (a file write → a served path → code in a browser: an upload served as HTML or a script.)
-    app, admin = world
+    _, admin = world
     html = b"<html><script>alert(1)</script></html>"
     svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
     for body, name in ((html, "x.png"), (svg, "x.svg"), (html, "x.html")):

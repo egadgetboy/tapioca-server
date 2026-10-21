@@ -770,7 +770,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         made_before = made  # (the sign-ins the copy puts back)
         made = admin_again(checks, sp.url, made, before, "updated")
         page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
-        notify = {"on": True, "url": f"{plex.url}/notify", "format": "json"}
+        notify = {"on": True, "url": f"{plex.url}/notify", "format": "json",
+                  "homeOk": True}  # (its stand-in is on this machine: the Admin said yes, DL287)
         checks.ok(page.put("/api/notify", json=notify).status_code == 200,
                   "alerts are sent to a web address")  # fmt: skip
         has_data(checks, sp.url, made, __version__, "updated")
@@ -888,7 +889,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         if version_of(__version__) >= (1, 34, 0):
             # Alerts to a first address in Slack's format (from 1.34.0), and another.
             slack = {"on": True, "url": f"{plex.url}/slack", "format": "slack",
-                     "more": [{"url": f"{plex.url}/notify", "format": "json"}]}  # fmt: skip
+                     "more": [{"url": f"{plex.url}/notify", "format": "json"}], "homeOk": True}  # fmt: skip
             checks.ok(page.put("/api/notify", json=slack).status_code == 200,
                       "alerts go to a first address in Slack's format, and another")  # fmt: skip
         stopped(checks, sp, __version__)

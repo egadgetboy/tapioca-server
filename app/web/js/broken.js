@@ -254,8 +254,15 @@ function arrRow(app, a, st) {
     } catch (e) { result.textContent = e.message; }
   } }, 'Test');
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
-    try { await api('/api/arr', { method: 'PUT', body: body() }); }
-    catch (e) { result.textContent = e.message; return; }
+    try {
+      // (A new address on the home network: asked first, as a nudge. DL287.)
+      try { await api('/api/arr', { method: 'PUT', body: body() }); }
+      catch (e) {
+        if (e.status !== 409 || !confirm(`${e.message} Save it?`)) throw e;
+        await api('/api/arr', { method: 'PUT', body: { ...body(), homeOk: true } });
+      }
+    }
+    catch (e) { if (e.status !== 409) result.textContent = e.message; return; }
     toast(`Saved. ${meta.name} is ${on.checked ? 'on' : 'off'}.`);
     delete $('#arrBody').dataset.editing;
     loadArr(); loadBroken();
