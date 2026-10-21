@@ -22,7 +22,9 @@ jobs:
       - name: Build the image people get
         run: docker build --tag stationplay:spike .
       - name: The spike, inside it
-        run: docker run --rm -v "$PWD/tools/spikes:/spikes:ro" --entrypoint sh stationplay:spike /spikes/s3_openssl.sh | tee s3.txt
-      - name: Keep the result
-        if: always()
-        run: echo "$(cat s3.txt 2>/dev/null)" >> "$GITHUB_STEP_SUMMARY"
+        # pipefail: the spike's own exit decides. Each line becomes an
+        # annotation, which the API can read (logs live on another host).
+        run: |
+          set -o pipefail
+          docker run --rm -v "$PWD/tools/spikes:/spikes:ro" --entrypoint sh stationplay:spike /spikes/s3_openssl.sh \
+            | while IFS= read -r line; do echo "::notice title=S-3 $(uname -m)::$line"; done
