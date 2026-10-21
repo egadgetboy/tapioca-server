@@ -454,13 +454,6 @@ class LimitsIn(BaseModel):
     names: dict[str, PlainText] = Field(default_factory=dict, max_length=500)
 
 
-class AppPicturesIn(BaseModel):
-    """How much of the disk the pictures made for tapiOca's apps may keep, in
-    GB (0: none kept; see pictures.py)."""
-
-    gb: float = Field(ge=0, le=1_000)
-
-
 class AppLimitsIn(BaseModel):
     """How many devices may watch through tapiOca's apps at once, and
     of those, away from home (0: no limit; see capacity.py)."""
@@ -605,8 +598,6 @@ class AppContext:
     # Stops what's playing that its person's limits no longer allow (set by
     # applibrary.routes; watched by applibrary.watch_limits_forever: 1.40.0).
     stop_restricted: Callable[[], int] = field(init=False, default_factory=lambda: lambda: 0)
-    # Draws the apps' common pictures ahead, while no one watches (applibrary; set there).
-    draw_ahead: Callable[[], Awaitable[int]] | None = None
     stop_learning: Callable[[], None] | None = field(init=False, default=None)
 
     def restart(self) -> None:
@@ -633,16 +624,8 @@ class AppContext:
         self.shared = ondemand.Shared(self.db)
         self.reach.media = lambda: self.shared.on
         self.catalog = ondemand.Catalog(self.library, self.shared)
-        # (An Admin's cap, from the page, wins over PICTURE_CACHE_GB's start.)
-        try:
-            gb = float(
-                self.db.get_meta(kept_pictures.META_GB, "") or self.settings.picture_cache_gb
-            )
-        except ValueError:
-            gb = self.settings.picture_cache_gb
         self.picture_disk = kept_pictures.DiskCache(
-            self.settings.data_dir / kept_pictures.FOLDER,
-            int(min(max(gb, 0), kept_pictures.MOST_GB) * (1 << 30)),
+            self.settings.data_dir / kept_pictures.FOLDER, int(self.settings.picture_cache_gb * (1 << 30))
         )
         self.stats = stats.Stats(self.db)
         self.plays.count_with = self.stats.played  # (Media played in the apps counts too)
@@ -914,7 +897,6 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             asyncio.create_task(ctx.health.run_forever(lambda: stats.on_gpu(ctx))),
             asyncio.create_task(stats.count_plays_forever(ctx)),
             asyncio.create_task(applibrary.watch_limits_forever(ctx)),
-            asyncio.create_task(applibrary.draw_ahead_forever(ctx)),
             asyncio.create_task(ctx.notify.run_forever()),
             asyncio.create_task(ctx.releases.run_forever()),
             asyncio.create_task(ctx.alerts.run_forever(ctx)),
@@ -3493,32 +3475,6 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "tests": [t.as_dict() for t in ctx.capacity.tests()],
             "watching": {"devices": len(watching), "away": sum(watching.values())},
         }
-
-    def app_pictures_json() -> dict:
-        disk = ctx.picture_disk
-        return {
-            "gb": round(disk.most_bytes / (1 << 30), 2),
-            "keptBytes": disk.bytes_kept,
-            "most": kept_pictures.MOST_GB,
-        }
-
-    @app.get("/api/app-pictures")
-    async def app_pictures_get():
-        return app_pictures_json()
-
-    @app.put("/api/app-pictures")
-    async def app_pictures_put(body: AppPicturesIn, request: Request):
-        most = int(body.gb * (1 << 30))
-        if most != ctx.picture_disk.most_bytes:
-            await asyncio.to_thread(ctx.picture_disk.set_most, most)
-            ctx.db.set_meta(kept_pictures.META_GB, repr(body.gb))
-            user = access.signed_in(request)
-            log.info(
-                "Pictures for tapiOca's apps kept on disk: %s%s",
-                f"up to {body.gb:g} GB" if most else "none",
-                f" (set by {user.name})" if user else "",
-            )
-        return app_pictures_json()
 
     @app.get("/api/app-limits")
     async def app_limits_get():

@@ -413,29 +413,6 @@ October 17).
 
 A server before 1.38.0 lists people by their Show on, as before.
 
-## What 1.42.0 offers the apps
-
-Nothing new is required: pictures come faster, and an app may ask for more.
-
-1. **Widths by kind.** Pictures are made at a few widths for each kind,
-   listed in `GET /api/internal/libraries` (`pictures`). Ask for one of
-   them (round the width you draw up to the next), so two nearly equal
-   widths are one download. Another width still works: it's rounded up.
-2. **WebP.** `GET /api/internal/art/{key}?format=webp` answers WebP,
-   smaller at the same quality. Read the answer's `Content-Type`: it's
-   JPEG when the server can't make WebP.
-3. **Station logos at the width drawn.** A Station's `logo` address with
-   `&w=` (a width in pixels) answers the logo as PNG, rounded up to
-   `pictures.logo`'s widths, with `Cache-Control: private, max-age=31536000`:
-   its address carries its version, so keep it a year. Without `w`, it's as
-   before.
-4. **Quicker after a restart.** Pictures are kept on the server's disk,
-   so the first screen after a restart or an update doesn't make each one
-   again.
-
-A server before 1.42.0 ignores `format` and `w` on a logo, and has no
-`pictures` in `GET /api/internal/libraries`: an app uses its own widths then.
-
 ## POST /api/internal/trusted
 
 What an app gets on a trusted network (1.36.0). Open to anyone; refused
@@ -1239,15 +1216,6 @@ The shared Media folders, in Plex's own order.
 | `libraries[].key` | string | Its key |
 | `libraries[].title` | string | Its name, such as "TV Shows" |
 | `libraries[].kind` | string | `show` (a Media folder of shows) or `movie` |
-| `pictures` | object | (From 1.42.0) The widths pictures are made at: ask for one of them (see `GET /api/internal/art/{key}`) |
-| `pictures.poster` | list | Posters' widths, in pixels: 160, 240, 320, 480, 720, 960 and 1440 |
-| `pictures.poster[]` | number | One width |
-| `pictures.wide` | list | Backdrops' and episodes' stills' widths: 320, 640, 720, 1280 and 1920 |
-| `pictures.wide[]` | number | One width |
-| `pictures.logo` | list | Station logos' widths, with `w`: 80, 120, 160, 240, 320 and 480 |
-| `pictures.logo[]` | number | One width |
-| `pictures.formats` | list | The formats an app may ask for: `jpeg` and `webp` |
-| `pictures.formats[]` | string | One format |
 
 ## GET /api/internal/libraries/{key}
 
@@ -1541,29 +1509,14 @@ again. Answers as `PUT` does, with `item` null.
 
 ## GET /api/internal/art/{key}
 
-A picture, as JPEG (or PNG, WebP or GIF, as Plex has it, or as it's
-kept beside a file in a Media folder of tapiOca's own), or as WebP when
-the app asks:
+A picture, as JPEG or PNG (or WebP or GIF, as Plex has it, or as it's
+kept beside a file in a Media folder of tapiOca's own):
 
 - **Kind.** `?kind=poster` (the default; 2:3, and an episode's is its
   show's), `backdrop` (16:9) or `thumb` (an episode's still, 16:9).
 - **Width.** `?w=` is the width in pixels (1 to 10000; 320 if it isn't given). It's
-  rounded up to one of the kind's widths (from 1.42.0, posters 160, 240,
-  320, 480, 720, 960 or 1440, and backdrops and stills 320, 640, 720, 1280
-  or 1920; before, 160, 320, 480, 720, 1280 or 1920 for all), with the
-  largest for anything wider. `GET /api/internal/libraries` lists them.
-  Never made larger than the picture itself.
-- **Format** (from 1.42.0). `?format=webp` asks for WebP; with no
-  `format`, or `format=jpeg`, it's JPEG, as before. When WebP can't be made
-  (an FFmpeg without it), the answer is JPEG, and its `Content-Type` says
-  so. Any other format answers 400.
-
-From 1.42.0, each picture is made once however many ask for it at once,
-and kept on the server's disk (`data/cache/pictures`), so it comes quickly
-after a restart or an update too. Whether the viewer may see the title is
-still checked first, every time. A picture whose source changed (a new
-poster in Plex, heard of in the next list, or a poster file replaced in a
-Media folder of tapiOca's own, seen at its next scan) is made again.
+  rounded up to 160, 320, 480, 720, 1280 or 1920, with the largest for
+  anything wider.
 
 It answers 404 if there's no such picture, or what Plex has isn't one, and
 answers at once when Plex says there's none. It answers 503 when

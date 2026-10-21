@@ -2017,9 +2017,6 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         )
         page.wait_for_timeout(800)
         look("access-panels", full=True)
-        # (1.42.0) Pictures for tapiOca's apps: the space kept for them, alone.
-        page.locator("#appPicturesPanel").scroll_into_view_if_needed()
-        page.locator("#appPicturesPanel").screenshot(path=str(look.folder / f"{look.prefix}-access-pictures.png"))
         # (1.36.1) A reverse proxy the check came through, not trusted yet:
         # Trust this proxy, right there (Docker's own address, with its
         # warning, the longest words).
