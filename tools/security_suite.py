@@ -62,7 +62,7 @@ LAYERS = {
 _RESULT = re.compile(r"^(PASSED|FAILED|ERROR) tests/security/([a-z_]+\.py)::(\S+)")
 
 
-def unit_layer() -> tuple[dict[str, list[str]], dict[str, list[str]], str, int]:
+def unit_layer() -> tuple[dict[str, list[str]], dict[str, list[str]], str, int, list[str]]:
     """Each file's passed and failed checks, and pytest's last lines."""
     ran = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", "tests/security"],
@@ -70,13 +70,24 @@ def unit_layer() -> tuple[dict[str, list[str]], dict[str, list[str]], str, int]:
     )  # fmt: skip
     passed: dict[str, list[str]] = {name: [] for name in LAYERS}
     failed: dict[str, list[str]] = {name: [] for name in LAYERS}
+    unexecuted = []
     for line in ran.stdout.splitlines():
         found = _RESULT.match(line)
         if found:
             kind, name, test = found.groups()
             (passed if kind == "PASSED" else failed).setdefault(name, []).append(test)
-    # Never treat a pytest collection/import/crash failure as a passing suite.
-    return passed, failed, "\n".join((ran.stdout + ran.stderr).strip().splitlines()[-8:]), ran.returncode
+        if re.match(r"^(SKIPPED|XFAIL|XPASS)\b", line):
+            unexecuted.append(line)
+    # Pytest summary lines are a second guard against a changed -rA format
+    # omitting per-case SKIPPED/XFAIL/XPASS records.
+    for kind in ("skipped", "xfailed", "xpassed"):
+        if re.search(rf"\b[1-9]\d* {kind}\b", ran.stdout) and not any(
+            kind.upper().replace("ED", "") in line for line in unexecuted
+        ):
+            unexecuted.append(f"pytest summary includes {kind} checks")
+    # Never treat an import/collection/crash or incomplete run as a passed suite.
+    tail = "\n".join((ran.stdout + ran.stderr).strip().splitlines()[-8:])
+    return passed, failed, tail, ran.returncode, unexecuted
 
 
 def live_harness() -> tuple[int, int, str]:
@@ -146,9 +157,16 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    passed, failed, tail, unit_exit = unit_layer()
+    passed, failed, tail, unit_exit, unexecuted = unit_layer()
     live = (0, 0, "not run (--no-live)") if args.no_live else live_harness()
     unknown = sorted((set(passed) | set(failed)) - set(LAYERS))
+    missing_layers = sorted(
+        name for name in LAYERS if not passed.get(name) and not failed.get(name)
+    )
+    new_test_files = sorted(
+        f.name for f in (ROOT / "tests" / "security").glob("test_*.py")
+        if f.name not in LAYERS
+    )
     checks = (
         sum(len(v) for v in passed.values())
         + sum(len(v) for v in failed.values())
@@ -188,7 +206,13 @@ def main(argv: list[str]) -> int:
     if args.no_live:
         lines += ["The live harness was NOT RUN (--no-live); this is not a release certification.", ""]
     if unknown:
-        lines += [f"Test files not in the suite's table: {', '.join(unknown)}.", ""]
+        lines += [f"Reported test files not in the suite's table: {', '.join(unknown)}.", ""]
+    if new_test_files:
+        lines += [f"Unregistered security-test source files: {', '.join(new_test_files)}.", ""]
+    if missing_layers:
+        lines += [f"Missing expected security test layers: {', '.join(missing_layers)}.", ""]
+    for status in unexecuted:
+        lines += [f"Unexecuted security test: {status}", ""]
     lines += [
         "Tracked exceptions (Medium):",
         *(f"- {e}" for e in exceptions),
@@ -207,7 +231,7 @@ def main(argv: list[str]) -> int:
 
     unit_failed = unit_exit != 0 or not any(passed.values()) and not any(failed.values())
     bad = sum(len(v) for v in failed.values()) + live[1] + len(unknown) + (1 if shrank else 0)
-    bad += int(unit_failed)
+    bad += int(unit_failed) + len(missing_layers) + len(new_test_files) + len(unexecuted)
     print("\n".join(lines))
     print(tail)
     if shrank:

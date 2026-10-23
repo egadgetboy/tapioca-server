@@ -19,7 +19,7 @@ class RunnerFailureTests(unittest.TestCase):
             args=["pytest"], returncode=5, stdout="no tests ran", stderr="ImportError: broken fixture"
         )
         with patch.object(runner.subprocess, "run", return_value=result):
-            passed, failed, tail, code = runner.unit_layer()
+            passed, failed, tail, code, unexecuted = runner.unit_layer()
         self.assertEqual(code, 5)
         self.assertEqual(sum(map(len, passed.values())), 0)
         self.assertEqual(sum(map(len, failed.values())), 0)
@@ -37,7 +37,7 @@ class RunnerFailureTests(unittest.TestCase):
                 patch.object(runner, "EXCEPTIONS", root / "tools" / "security_exceptions.json"),
                 patch.object(runner, "unit_layer", return_value=(
                     {k: [] for k in runner.LAYERS}, {k: [] for k in runner.LAYERS},
-                    "pytest collection crashed", 2,
+                    "pytest collection crashed", 2, [],
                 )),
                 redirect_stdout(io.StringIO()) as output,
             ):
@@ -66,7 +66,7 @@ class RunnerFailureTests(unittest.TestCase):
             stderr="",
         )
         with patch.object(runner.subprocess, "run", return_value=result):
-            passed, failed, _, code = runner.unit_layer()
+            passed, failed, _, code, unexecuted = runner.unit_layer()
         self.assertEqual(code, 0)
         self.assertEqual(passed["test_auth.py"], ["test_signed_in"])
         self.assertFalse(any(failed.values()))
@@ -106,6 +106,68 @@ class RunnerFailureTests(unittest.TestCase):
         self.assertFalse(runner.merge_explains_shrink(corpus, 1137))
         self.assertTrue(runner.merge_explains_shrink(corpus, 1138))
         self.assertTrue(runner.merge_explains_shrink(corpus, 1139))
+
+
+    def test_skipped_security_case_is_not_silently_ignored(self):
+        result = subprocess.CompletedProcess(
+            args=["pytest"], returncode=0,
+            stdout=(
+                "PASSED tests/security/test_auth.py::test_ok\n"
+                "SKIPPED [1] tests/security/test_authz.py:10: missing device\n"
+                "1 passed, 1 skipped"
+            ),
+            stderr="",
+        )
+        with patch.object(runner.subprocess, "run", return_value=result):
+            passed, failed, _, code, unexecuted = runner.unit_layer()
+        self.assertEqual(code, 0)
+        self.assertEqual(len(passed["test_auth.py"]), 1)
+        self.assertFalse(failed["test_auth.py"])
+        self.assertTrue(unexecuted)
+
+    def test_missing_security_test_layer_is_release_blocking(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "tools").mkdir()
+            (root / "tools" / "security_corpus.json").write_text('{"checks": 1138, "merges": []}')
+            (root / "tools" / "security_exceptions.json").write_text("[]")
+            good = {name: ["case_ok"] for name in runner.LAYERS}
+            good["test_authz.py"] = []
+            with (
+                patch.object(runner, "ROOT", root),
+                patch.object(runner, "CORPUS", root / "tools" / "security_corpus.json"),
+                patch.object(runner, "EXCEPTIONS", root / "tools" / "security_exceptions.json"),
+                patch.object(runner, "unit_layer", return_value=(
+                    good, {name: [] for name in runner.LAYERS},
+                    "unit layer complete", 0, [],
+                )),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                status = runner.main(["--no-live"])
+            self.assertEqual(status, 1)
+            self.assertIn("Missing expected security test layers: test_authz.py", output.getvalue())
+
+    def test_unknown_security_test_source_is_release_blocking(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "tools").mkdir()
+            (root / "tests" / "security").mkdir(parents=True)
+            (root / "tests" / "security" / "test_new_layer.py").write_text("def test_x(): pass")
+            (root / "tools" / "security_corpus.json").write_text('{"checks": 1138, "merges": []}')
+            (root / "tools" / "security_exceptions.json").write_text("[]")
+            with (
+                patch.object(runner, "ROOT", root),
+                patch.object(runner, "CORPUS", root / "tools" / "security_corpus.json"),
+                patch.object(runner, "EXCEPTIONS", root / "tools" / "security_exceptions.json"),
+                patch.object(runner, "unit_layer", return_value=(
+                    {name: ["case_ok"] for name in runner.LAYERS},
+                    {name: [] for name in runner.LAYERS}, "all ran", 0, [],
+                )),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                status = runner.main(["--no-live"])
+            self.assertEqual(status, 1)
+            self.assertIn("Unregistered security-test source files: test_new_layer.py", output.getvalue())
 
 
 if __name__ == "__main__":
