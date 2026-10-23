@@ -101,6 +101,42 @@ def live_harness() -> tuple[int, int, str]:
     return good, total - good, ran.stdout[-2000:]
 
 
+def merge_explains_shrink(corpus: dict, candidate_checks: int) -> bool:
+    """Allow only a precisely reviewed, candidate-specific case-count reduction.
+
+    An unrelated or historical entry under "merges" never waives the guard.
+    A merge record must name the exact before/after counts, the individual
+    removed case IDs, a reason and the full Git SHA of its review evidence.
+    """
+    baseline = corpus.get("checks", 0)
+    if candidate_checks >= baseline:
+        return True
+    removed_count = baseline - candidate_checks
+    entries = corpus.get("merges", [])
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        removed = entry.get("removed_case_ids")
+        reason = entry.get("reason")
+        review_sha = entry.get("review_sha")
+        if (
+            entry.get("from_checks") == baseline
+            and entry.get("to_checks") == candidate_checks
+            and isinstance(removed, list)
+            and len(removed) == removed_count
+            and all(isinstance(v, str) and v.strip() for v in removed)
+            and len(set(removed)) == len(removed)
+            and isinstance(reason, str)
+            and len(reason.strip()) >= 20
+            and isinstance(review_sha, str)
+            and re.fullmatch(r"[0-9a-f]{40}", review_sha) is not None
+        ):
+            return True
+    return False
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
@@ -125,7 +161,7 @@ def main(argv: list[str]) -> int:
         if CORPUS.exists()
         else {"checks": 0, "merges": []}
     )
-    shrank = not args.no_live and checks < corpus.get("checks", 0) and not corpus.get("merges")
+    shrank = not args.no_live and checks < corpus.get("checks", 0) and not merge_explains_shrink(corpus, checks)
     exceptions = json.loads(EXCEPTIONS.read_text(encoding="utf-8")) if EXCEPTIONS.exists() else []
 
     lines = [
@@ -176,7 +212,7 @@ def main(argv: list[str]) -> int:
     print(tail)
     if shrank:
         print(
-            f"The corpus shrank: {checks} checks, {corpus['checks']} recorded, with no merge logged."
+            f"The corpus shrank: {checks} checks, {corpus['checks']} recorded, with no exact reviewed merge for this transition."
         )
     print(
         f"Security: {checks} checks, {'unit-only PASS (live NOT RUN)' if args.no_live and not bad else 'all passing' if not bad else f'{bad} failing'}. "

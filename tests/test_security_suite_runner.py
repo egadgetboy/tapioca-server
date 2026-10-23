@@ -71,6 +71,42 @@ class RunnerFailureTests(unittest.TestCase):
         self.assertEqual(passed["test_auth.py"], ["test_signed_in"])
         self.assertFalse(any(failed.values()))
 
+    def test_unrelated_historic_merge_cannot_waive_corpus_shrink(self):
+        corpus = {
+            "checks": 1138,
+            "merges": [{
+                "from_checks": 1138,
+                "to_checks": 1137,
+                "removed_case_ids": ["authz::duplicate-old"],
+                "reason": "Duplicate case with identical result removed after review.",
+                "review_sha": "1" * 40,
+            }],
+        }
+        self.assertFalse(runner.merge_explains_shrink(corpus, 1000))
+        self.assertTrue(runner.merge_explains_shrink(corpus, 1137))
+
+    def test_unreviewed_or_inaccurate_merges_cannot_waive_loss(self):
+        corpus = {"checks": 1138, "merges": [{"count": 138, "reason": "historical"}]}
+        self.assertFalse(runner.merge_explains_shrink(corpus, 1000))
+        corpus["merges"] = [{
+            "from_checks": 1138,
+            "to_checks": 1136,
+            "removed_case_ids": ["one-id"],
+            "reason": "Two tests consolidated into one reviewed test.",
+            "review_sha": "a" * 40,
+        }]
+        self.assertFalse(runner.merge_explains_shrink(corpus, 1136))
+        corpus["merges"][0]["removed_case_ids"] = ["one-id", "one-id"]
+        self.assertFalse(runner.merge_explains_shrink(corpus, 1136))
+        corpus["merges"][0]["removed_case_ids"] = ["one-id", "two-id"]
+        self.assertTrue(runner.merge_explains_shrink(corpus, 1136))
+
+    def test_corpus_count_growth_is_allowed_without_a_merge(self):
+        corpus = {"checks": 1138, "merges": []}
+        self.assertFalse(runner.merge_explains_shrink(corpus, 1137))
+        self.assertTrue(runner.merge_explains_shrink(corpus, 1138))
+        self.assertTrue(runner.merge_explains_shrink(corpus, 1139))
+
 
 if __name__ == "__main__":
     unittest.main()
