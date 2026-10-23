@@ -1,0 +1,225 @@
+"""tapiOca's security suite (DL287): run at every release candidate.
+
+It runs, against tapiOca itself and nothing else:
+1. the unit layer, tests/security (also run on every push with the other
+   tests): the census of every outbound request, started program and file
+   write; every route from every vantage point; sign-in tokens; outbound
+   requests by provenance; paths; the four scripted chains;
+2. the live harness, tools/attack_check.py (absorbed here; `python -m
+   tools.attack_check` still runs it alone): a real tapiOca on two ports,
+   asked as the internet and the home network would;
+
+then writes its report (docs/security/report-<version>.md, for the
+release's readiness record) and exits non-zero on any failure. Every check
+here is Critical or High, so any failure blocks the release; a Medium found
+later needs a tracked exception in tools/security_exceptions.json, which the
+report lists for the owner.
+
+The regression corpus only grows: the report counts the checks, and a
+count below tools/security_corpus.json's fails the run unless that file
+logs why (a merge of duplicates, on purpose).
+
+Run it from the repo root:  python -m tools.security_suite
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from app import __version__  # noqa: E402
+
+CORPUS = ROOT / "tools" / "security_corpus.json"
+EXCEPTIONS = ROOT / "tools" / "security_exceptions.json"
+
+# Each file of the unit layer, what it covers, and its severity if it fails.
+LAYERS = {
+    "test_inventory.py": (
+        "The census: every way out, program and write declared (A.1, DEP-03, DEP-04)",
+        "High",
+    ),
+    "test_authz.py": (
+        "Every route from every vantage point (AZ-01 to AZ-03, AUTH-01, AUTH-02)",
+        "Critical",
+    ),
+    "test_auth.py": (
+        "Sign-in tokens: ended at once, never in an address or a log, kinds kept apart (AUTH-06, 06b, 07)",
+        "Critical",
+    ),  # fmt: skip
+    "test_ssrf.py": ("Outbound requests by provenance (SSRF-01 to SSRF-08)", "Critical"),
+    "test_traversal.py": ("Paths on every route with a parameter (INJ-01)", "Critical"),
+    "test_chains.py": ("The four scripted chains (CHAIN-01 to CHAIN-04)", "Critical"),
+}
+
+_RESULT = re.compile(r"^(PASSED|FAILED|ERROR) tests/security/([a-z_]+\.py)::(\S+)")
+
+
+def unit_layer() -> tuple[dict[str, list[str]], dict[str, list[str]], str, int]:
+    """Each file's passed and failed checks, and pytest's last lines."""
+    ran = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", "tests/security"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    passed: dict[str, list[str]] = {name: [] for name in LAYERS}
+    failed: dict[str, list[str]] = {name: [] for name in LAYERS}
+    for line in ran.stdout.splitlines():
+        found = _RESULT.match(line)
+        if found:
+            kind, name, test = found.groups()
+            (passed if kind == "PASSED" else failed).setdefault(name, []).append(test)
+    # Never treat a pytest collection/import/crash failure as a passing suite.
+    return passed, failed, "\n".join((ran.stdout + ran.stderr).strip().splitlines()[-8:]), ran.returncode
+
+
+def live_harness() -> tuple[int, int, str]:
+    """attack_check's passed and failed counts."""
+    ran = subprocess.run(
+        [sys.executable, "-m", "tools.attack_check"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    found = re.search(r"(\d+)/(\d+) checks passed", ran.stdout)
+    if not found:
+        return 0, 1, (ran.stdout + ran.stderr)[-2000:]
+    good, total = int(found.group(1)), int(found.group(2))
+    if total == 0 or good > total or ran.returncode != 0:
+        # A subprocess error is a failing gate even if it printed "all passed"
+        # before aborting. Keep its exit code and diagnostic in the report.
+        return good, max(total - good, 1), (
+            f"attack_check exited {ran.returncode}\n" + ran.stdout + ran.stderr
+        )[-2000:]
+    return good, total - good, ran.stdout[-2000:]
+
+
+def merge_explains_shrink(corpus: dict, candidate_checks: int) -> bool:
+    """Allow only a precisely reviewed, candidate-specific case-count reduction.
+
+    An unrelated or historical entry under "merges" never waives the guard.
+    A merge record must name the exact before/after counts, the individual
+    removed case IDs, a reason and the full Git SHA of its review evidence.
+    """
+    baseline = corpus.get("checks", 0)
+    if candidate_checks >= baseline:
+        return True
+    removed_count = baseline - candidate_checks
+    entries = corpus.get("merges", [])
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        removed = entry.get("removed_case_ids")
+        reason = entry.get("reason")
+        review_sha = entry.get("review_sha")
+        if (
+            entry.get("from_checks") == baseline
+            and entry.get("to_checks") == candidate_checks
+            and isinstance(removed, list)
+            and len(removed) == removed_count
+            and all(isinstance(v, str) and v.strip() for v in removed)
+            and len(set(removed)) == len(removed)
+            and isinstance(reason, str)
+            and len(reason.strip()) >= 20
+            and isinstance(review_sha, str)
+            and re.fullmatch(r"[0-9a-f]{40}", review_sha) is not None
+        ):
+            return True
+    return False
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "--no-live",
+        action="store_true",
+        help="the unit layer only (the live harness takes minutes)",
+    )
+    args = parser.parse_args(argv)
+
+    passed, failed, tail, unit_exit = unit_layer()
+    live = (0, 0, "not run (--no-live)") if args.no_live else live_harness()
+    unknown = sorted((set(passed) | set(failed)) - set(LAYERS))
+    checks = (
+        sum(len(v) for v in passed.values())
+        + sum(len(v) for v in failed.values())
+        + live[0]
+        + live[1]
+    )
+
+    corpus = (
+        json.loads(CORPUS.read_text(encoding="utf-8"))
+        if CORPUS.exists()
+        else {"checks": 0, "merges": []}
+    )
+    shrank = not args.no_live and checks < corpus.get("checks", 0) and not merge_explains_shrink(corpus, checks)
+    exceptions = json.loads(EXCEPTIONS.read_text(encoding="utf-8")) if EXCEPTIONS.exists() else []
+
+    lines = [
+        f"# Security report, tapiOca {__version__}",
+        "",
+        f"Run {date.today().isoformat()}.",
+        "",
+    ]
+    lines += ["| Area | Severity | Passed | Failed |", "| --- | --- | --- | --- |"]
+    for name, (what, severity) in LAYERS.items():
+        lines.append(
+            f"| {what} | {severity} | {len(passed.get(name, []))} | {len(failed.get(name, []))} |"
+        )
+    lines.append(f"| The live harness (attack_check) | Critical | {live[0]} | {live[1]} |")
+    lines += [
+        "",
+        f"Checks in all: {checks} (the corpus last recorded {corpus.get('checks', 0)}).",
+        "",
+    ]
+    if unit_exit != 0:
+        lines += [f"Pytest exited {unit_exit}; the unit layer is FAILED (including collection errors).", ""]
+    if not any(passed.values()) and not any(failed.values()):
+        lines += ["No recognized unit test results; unit layer is FAILED.", ""]
+    if args.no_live:
+        lines += ["The live harness was NOT RUN (--no-live); this is not a release certification.", ""]
+    if unknown:
+        lines += [f"Test files not in the suite's table: {', '.join(unknown)}.", ""]
+    lines += [
+        "Tracked exceptions (Medium):",
+        *(f"- {e}" for e in exceptions),
+        "" if exceptions else "- none",
+        "",
+    ]
+    for name, tests in failed.items():
+        for test in tests:
+            lines.append(f"FAILED ({LAYERS.get(name, ('', 'High'))[1]}): {name}::{test}")
+    if live[1]:
+        lines += ["", "The live harness:", "", "```", live[2], "```"]
+    report = ROOT / "docs" / "security" / f"report-{__version__}.md"
+    if not args.no_live:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    unit_failed = unit_exit != 0 or not any(passed.values()) and not any(failed.values())
+    bad = sum(len(v) for v in failed.values()) + live[1] + len(unknown) + (1 if shrank else 0)
+    bad += int(unit_failed)
+    print("\n".join(lines))
+    print(tail)
+    if shrank:
+        print(
+            f"The corpus shrank: {checks} checks, {corpus['checks']} recorded, with no exact reviewed merge for this transition."
+        )
+    print(
+        f"Security: {checks} checks, {'unit-only PASS (live NOT RUN)' if args.no_live and not bad else 'all passing' if not bad else f'{bad} failing'}. "
+        f"Report: {'not written (unit-only)' if args.no_live else report}"
+    )
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
