@@ -1,0 +1,27 @@
+name: Security runner fail-closed regression (WIP)
+
+on:
+  push:
+    branches:
+      - wip/security-suite
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  failclosed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Verify runner failures are never reported as successes
+        run: python3 -m unittest discover -s tests -p test_security_suite_runner.py -v
+      - name: Install pinned runtime and pytest for actual security cases
+        run: python3 -m pip install -r requirements.txt 'pytest==8.4.2'
+      - name: Execute security unit layer (live harness intentionally not run)
+        run: python3 -m tools.security_suite --no-live
