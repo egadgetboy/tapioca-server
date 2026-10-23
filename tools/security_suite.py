@@ -62,7 +62,7 @@ LAYERS = {
 _RESULT = re.compile(r"^(PASSED|FAILED|ERROR) tests/security/([a-z_]+\.py)::(\S+)")
 
 
-def unit_layer() -> tuple[dict[str, list[str]], dict[str, list[str]], str]:
+def unit_layer() -> tuple[dict[str, list[str]], dict[str, list[str]], str, int]:
     """Each file's passed and failed checks, and pytest's last lines."""
     ran = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", "tests/security"],
@@ -75,7 +75,8 @@ def unit_layer() -> tuple[dict[str, list[str]], dict[str, list[str]], str]:
         if found:
             kind, name, test = found.groups()
             (passed if kind == "PASSED" else failed).setdefault(name, []).append(test)
-    return passed, failed, "\n".join(ran.stdout.strip().splitlines()[-3:])
+    # Never treat a pytest collection/import/crash failure as a passing suite.
+    return passed, failed, "\n".join((ran.stdout + ran.stderr).strip().splitlines()[-8:]), ran.returncode
 
 
 def live_harness() -> tuple[int, int, str]:
@@ -88,9 +89,15 @@ def live_harness() -> tuple[int, int, str]:
         check=False,
     )
     found = re.search(r"(\d+)/(\d+) checks passed", ran.stdout)
-    if not found or ran.returncode not in (0, 1):
+    if not found:
         return 0, 1, (ran.stdout + ran.stderr)[-2000:]
     good, total = int(found.group(1)), int(found.group(2))
+    if total == 0 or good > total or ran.returncode != 0:
+        # A subprocess error is a failing gate even if it printed "all passed"
+        # before aborting. Keep its exit code and diagnostic in the report.
+        return good, max(total - good, 1), (
+            f"attack_check exited {ran.returncode}\n" + ran.stdout + ran.stderr
+        )[-2000:]
     return good, total - good, ran.stdout[-2000:]
 
 
@@ -103,7 +110,7 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    passed, failed, tail = unit_layer()
+    passed, failed, tail, unit_exit = unit_layer()
     live = (0, 0, "not run (--no-live)") if args.no_live else live_harness()
     unknown = sorted((set(passed) | set(failed)) - set(LAYERS))
     checks = (
@@ -138,6 +145,12 @@ def main(argv: list[str]) -> int:
         f"Checks in all: {checks} (the corpus last recorded {corpus.get('checks', 0)}).",
         "",
     ]
+    if unit_exit != 0:
+        lines += [f"Pytest exited {unit_exit}; the unit layer is FAILED (including collection errors).", ""]
+    if not any(passed.values()) and not any(failed.values()):
+        lines += ["No recognized unit test results; unit layer is FAILED.", ""]
+    if args.no_live:
+        lines += ["The live harness was NOT RUN (--no-live); this is not a release certification.", ""]
     if unknown:
         lines += [f"Test files not in the suite's table: {', '.join(unknown)}.", ""]
     lines += [
@@ -152,10 +165,13 @@ def main(argv: list[str]) -> int:
     if live[1]:
         lines += ["", "The live harness:", "", "```", live[2], "```"]
     report = ROOT / "docs" / "security" / f"report-{__version__}.md"
-    report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if not args.no_live:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    unit_failed = unit_exit != 0 or not any(passed.values()) and not any(failed.values())
     bad = sum(len(v) for v in failed.values()) + live[1] + len(unknown) + (1 if shrank else 0)
+    bad += int(unit_failed)
     print("\n".join(lines))
     print(tail)
     if shrank:
@@ -163,7 +179,8 @@ def main(argv: list[str]) -> int:
             f"The corpus shrank: {checks} checks, {corpus['checks']} recorded, with no merge logged."
         )
     print(
-        f"Security: {checks} checks, {'all passing' if not bad else f'{bad} failing'}. Report: {report}"
+        f"Security: {checks} checks, {'unit-only PASS (live NOT RUN)' if args.no_live and not bad else 'all passing' if not bad else f'{bad} failing'}. "
+        f"Report: {'not written (unit-only)' if args.no_live else report}"
     )
     return 1 if bad else 0
 
