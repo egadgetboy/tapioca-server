@@ -21,3 +21,7 @@ jobs:
           python-version: '3.13'
       - name: Verify runner failures are never reported as successes
         run: python3 -m unittest discover -s tests -p test_security_suite_runner.py -v
+      - name: Install pinned runtime and pytest for actual security cases
+        run: python3 -m pip install -r requirements.txt 'pytest==8.4.2'
+      - name: Execute security unit layer (live harness intentionally not run)
+        run: python3 -m tools.security_suite --no-live
