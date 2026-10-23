@@ -25,3 +25,13 @@ jobs:
         run: python3 -m pip install -r requirements.txt 'pytest==8.4.2'
       - name: Execute security unit layer (live harness intentionally not run)
         run: python3 -m tools.security_suite --no-live
+      - name: Execute full security gate (includes local live attack harness)
+        timeout-minutes: 25
+        run: python3 -m tools.security_suite
+      - name: Archive security gate report for audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-${{ github.sha }}
+          path: docs/security/report-1.44.0.md
+          if-no-files-found: warn
