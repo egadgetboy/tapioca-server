@@ -579,3 +579,71 @@ def test_a_failed_lookup_nobody_waits_for_leaves_no_error_in_the_log(monkeypatch
         asyncio.run(go())
         gc.collect()
     assert not [r for r in caplog.records if "never retrieved" in r.getMessage()], caplog.text
+
+
+def test_in_an_outage_only_one_request_a_while_waits_for_the_lookup(monkeypatch):
+    # (The cold audit's last round: with DNS down, every request waited out its connect timeout
+    # before the kept answer was used.)
+    looked: list[int] = []
+    answers = iter([[ipaddress.ip_address("192.168.1.9")]])
+
+    async def resolve(host):
+        looked.append(1)
+        try:
+            return next(answers)
+        except StopIteration:
+            raise safefetch.NotFound("tapiOca can't find it", "a name that can't be found") from None
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+
+    class Real(httpx.AsyncBaseTransport):
+        def __init__(self, **_):
+            pass
+
+        async def handle_async_request(self, request):
+            return httpx.Response(200)
+
+    monkeypatch.setattr(safefetch.httpx, "AsyncHTTPTransport", Real)
+    now = [1000.0]
+    monkeypatch.setattr(safefetch.time, "monotonic", lambda: now[0])
+
+    async def go():
+        async with httpx.AsyncClient(transport=safefetch.transport("typed")) as c:
+            await c.get("http://plex.home:32400/")
+            now[0] += safefetch.KEEP_S + 1
+            for _ in range(5):
+                await c.get("http://plex.home:32400/")
+
+    asyncio.run(go())
+    assert len(looked) == 2, looked  # (the first, then one failed refresh: the other four used the kept answer)
+
+
+def test_a_lookup_left_by_a_closed_event_loop_is_never_joined_by_another(monkeypatch):
+    # (The cold audit's last round: a lookup still running when its loop closed stayed in the list,
+    # and a later loop could join it and get a RuntimeError.)
+    gate = threading.Event()
+
+    def answer(host):
+        gate.wait(2)
+        return _info("192.168.1.9")
+
+    _system_names(monkeypatch, answer)
+
+    async def leave():
+        with pytest.raises(httpx.ConnectTimeout):
+            await safefetch.lookup("slow.example", 0.05)
+
+    asyncio.run(leave())
+    for key in list(safefetch._FLYING):
+        if key[1] == "slow.example":
+            # (As if the next loop had the same id(): the old entry must not be joined.)
+            fut = safefetch._FLYING.pop(key)
+            gate.set()
+
+            async def again():
+                safefetch._FLYING[(id(asyncio.get_running_loop()), "slow.example")] = fut
+                return await safefetch.lookup("slow.example", 2)
+
+            assert asyncio.run(again()) == [ipaddress.ip_address("192.168.1.9")]
+            return
+    gate.set()

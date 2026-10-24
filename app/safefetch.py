@@ -125,6 +125,8 @@ async def _resolve(host: str) -> list[Address]:
     loop = asyncio.get_running_loop()
     key = (id(loop), host)
     flying = _FLYING.get(key)
+    if flying is not None and (flying.get_loop() is not loop or loop.is_closed()):
+        flying = None  # (left by a loop that's gone, whose id() this one now has)
     if flying is None:
         flying = loop.run_in_executor(
             _LOOKUPS, lambda: socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
@@ -244,7 +246,8 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         # (One pool of connections for each scheme, name and port: a kept TLS
         # connection checked for one name is never used for another.)
         self._real: dict[tuple[str, str, int | None], httpx.AsyncHTTPTransport] = {}
-        self._kept: dict[str, tuple[float, list[Address]]] = {}  # (when looked up, what was allowed)
+        # (For each name: when it was looked up, what was allowed, and until when it's used as is.)
+        self._kept: dict[str, tuple[float, list[Address], float]] = {}
 
     async def _addresses(self, request: httpx.Request) -> list[Address]:
         url = request.url
@@ -253,16 +256,18 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         host = _host_checked(url, self.kind)
         kept = self._kept.get(host)
         now = time.monotonic()
-        if kept and now - kept[0] < KEEP_S:
+        if kept and now < kept[2]:
             return kept[1]
         try:
             found = allowed(host, await _lookup(host, _connect_timeout(request)), self.kind)
         except (NotFound, httpx.ConnectTimeout):
-            # (Looking it up again failed: what was vetted before still goes, for a while.)
+            # (Looking it up again failed: what was vetted before still goes, for a while, and
+            # only the next request after KEEP_S tries the lookup again, not every one.)
             if kept and now - kept[0] < STALE_S:
+                self._kept[host] = (kept[0], kept[1], now + KEEP_S)
                 return kept[1]
             raise
-        self._kept[host] = (now, found)
+        self._kept[host] = (now, found, now + KEEP_S)
         return found
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
