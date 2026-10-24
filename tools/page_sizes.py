@@ -1131,15 +1131,16 @@ def home_question(page: Page, look: Look) -> None:
     look.expect("Alert notifications, Cancel keeps what was saved", setting()["url"], before["url"])
     # (And says so: a blocked or cancelled question never looks like nothing happened.)
     look.expect("Alert notifications, Cancel says Not saved.",
-                page.locator("#notifyBody [role=status]").first.text_content(), "Not saved.")  # fmt: skip
+                page.text_content("#notifySaid"), "Not saved.")  # fmt: skip
     page.once("dialog", answer(True))
     page.click("#notifyBody .btn.primary")
     page.wait_for_timeout(400)
     look.expect("Alert notifications, OK saves it", setting()["url"], home)
     more = [{"url": m["url"], "format": m["format"]} for m in before.get("more", [])]
-    page.request.put(f"{base}/api/notify", headers=PAGE, data={
+    put_back = page.request.put(f"{base}/api/notify", headers=PAGE, data={
         "on": before["on"], "url": before["url"], "format": before["format"], "more": more, "homeOk": True,
     })  # fmt: skip
+    look.expect("Alert notifications, put back as they were", (put_back.status, setting()["url"]), (200, before["url"]))
 
 
 def signin_answer_lost(context: Any, base: str, look: Look) -> None:

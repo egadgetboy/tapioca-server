@@ -407,7 +407,7 @@ async function loadNotify() {
     add.hidden = rows.length >= NOTIFY_MOST;
   };
   paint();
-  const result = h('span', { class: 'hint', role: 'status' });
+  const result = h('span', { class: 'hint', role: 'status', id: 'notifySaid' });
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     result.textContent = '';
     const [first, ...more] = rows;
