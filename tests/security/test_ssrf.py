@@ -428,3 +428,82 @@ def test_a_typed_address_that_will_never_be_sent_to_is_named_before_saving(monke
 
     monkeypatch.setattr(safefetch, "RESOLVE", resolve)
     assert asyncio.run(safefetch.typed_refusal(address)) == why
+
+
+# --- The audits' second round ------------------------------------------------------------------
+
+
+def test_dead_lookups_for_one_name_never_starve_another_names_lookup(monkeypatch):
+    # (Round 2: four alert lookups to a dead DNS server took every lookup thread, so Plex's own
+    # lookup, which answers at once, timed out.)
+    gate = threading.Event()
+
+    def answer(host):
+        if host.startswith("dead"):
+            gate.wait(5)
+        return _info("192.168.1.9")
+
+    _system_names(monkeypatch, answer)
+
+    async def go():
+        dead = [asyncio.ensure_future(safefetch.lookup("dead.example", 3)) for _ in range(12)]
+        await asyncio.sleep(0.05)
+        began = time.monotonic()
+        found = await safefetch.lookup("plex.example", 1)
+        took = time.monotonic() - began
+        for d in dead:
+            d.cancel()
+        return found, took
+
+    try:
+        found, took = asyncio.run(go())
+    finally:
+        gate.set()
+    assert found == [ipaddress.ip_address("192.168.1.9")] and took < 0.5, took
+
+
+def test_a_name_whose_lookup_fails_later_keeps_its_last_vetted_answer_for_a_while(monkeypatch):
+    # (Round 2: during an internet outage, Plex by name would stop once its kept answer ran out.)
+    answers = iter([[ipaddress.ip_address("192.168.1.9")]])
+
+    async def resolve(host):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise safefetch.NotFound("tapiOca can't find it", "a name that can't be found") from None
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+    sent: list[str] = []
+
+    class Real(httpx.AsyncBaseTransport):
+        def __init__(self, **_):
+            pass
+
+        async def handle_async_request(self, request):
+            sent.append(request.url.host)
+            return httpx.Response(200)
+
+    monkeypatch.setattr(safefetch.httpx, "AsyncHTTPTransport", Real)
+    now = [1000.0]
+    monkeypatch.setattr(safefetch.time, "monotonic", lambda: now[0])
+
+    async def go():
+        async with httpx.AsyncClient(transport=safefetch.transport("typed")) as c:
+            await c.get("http://plex.home:32400/")
+            now[0] += safefetch.KEEP_S + 1  # (kept answer out of date: looked up again, which fails)
+            await c.get("http://plex.home:32400/")
+            now[0] += safefetch.STALE_S  # (far too old to trust)
+            with pytest.raises(httpx.ConnectError):
+                await c.get("http://plex.home:32400/")
+
+    asyncio.run(go())
+    assert sent == ["192.168.1.9", "192.168.1.9"]
+
+
+@pytest.mark.parametrize(
+    "ip",
+    ["100.100.100.200", "192.0.0.192", "::169.254.169.254", "2002:a9fe:a9fe::", "::ffff:100.100.100.200"],
+)
+def test_every_clouds_metadata_address_is_refused_however_its_written(ip):
+    # (Round 2: Alibaba's and Oracle's metadata addresses, and IPv4-compatible and 6to4 forms.)
+    assert safefetch.refusal(ipaddress.ip_address(ip), "typed") == "a cloud metadata address"

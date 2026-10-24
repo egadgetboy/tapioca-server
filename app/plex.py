@@ -201,7 +201,11 @@ def _file_path_ok(key: str) -> bool:
             or not seen.startswith("/library/")
         ):  # fmt: skip
             return False
+        if "%u" in seen.lower():
+            return False  # (an IIS-style escape: never in a real key)
         decoded = unquote(seen)
+        if "\ufffd" in decoded:
+            return False  # (bytes that aren't UTF-8, such as an overlong "%c0%ae")
         if decoded == seen:
             return True
         seen = decoded

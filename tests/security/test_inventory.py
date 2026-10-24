@@ -160,3 +160,44 @@ def test_the_suites_guard_stops_every_way_a_socket_leaves_this_machine(how):
             sock.sendto(b"x", ("192.0.2.1", 53))
         else:
             getattr(sock, how)(("192.0.2.1", 80))
+
+
+def test_the_census_sees_a_client_kept_under_another_name_or_made_later(tmp_path, monkeypatch):
+    # (The cold audit's second round: Maker = httpx.AsyncClient, functools.partial and anyio were
+    # missed, and of two clients in one function only the last was judged.)
+    found = _census_of(tmp_path, monkeypatch, (
+        "import functools, httpx, anyio\n"
+        "def kept():\n    Maker = httpx.AsyncClient\n    return Maker()\n"
+        "def partly():\n    return functools.partial(httpx.AsyncClient, timeout=3)\n"
+        "async def tcp():\n    await anyio.connect_tcp('x', 1)\n"
+        "def typed(client: httpx.AsyncClient) -> httpx.AsyncClient:\n    return client\n"
+    ))  # fmt: skip
+    assert found == {"kept", "partly", "tcp"}, found
+
+
+def test_two_clients_in_one_function_are_each_judged(tmp_path, monkeypatch):
+    folder = tmp_path / "app"
+    folder.mkdir()
+    (folder / "sneaky.py").write_text(
+        "import httpx\nfrom app import safefetch\n"
+        "async def both():\n"
+        "    httpx.AsyncClient()\n"
+        "    httpx.AsyncClient(transport=safefetch.transport(safefetch.FIXED), follow_redirects=False)\n"
+    )
+    monkeypatch.setattr(inventory, "APP", folder)
+    assert inventory.egress_guards()["app/sneaky.py:both httpx.AsyncClient"][0] is None
+
+
+@pytest.mark.parametrize("how", ["name", "sendmsg"])
+def test_the_suites_guard_stops_a_name_and_sendmsg(how):
+    import socket
+
+    from .conftest import LeftTheMachine
+
+    kind = socket.SOCK_DGRAM if how == "sendmsg" else socket.SOCK_STREAM
+    with socket.socket(socket.AF_INET, kind) as sock, pytest.raises(LeftTheMachine):
+        sock.setblocking(False)
+        if how == "sendmsg":
+            sock.sendmsg([b"x"], [], 0, ("192.0.2.1", 53))
+        else:
+            sock.connect(("example.com", 80))

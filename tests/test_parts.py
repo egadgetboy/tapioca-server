@@ -587,3 +587,20 @@ def test_a_part_key_with_an_encoded_space_still_plays():
 
     got = PlexClient("http://plex.test:32400", "tok").stream_url("/library/parts/1/2/My%20Movie.mkv")
     assert got == "http://plex.test:32400/library/parts/1/2/My%20Movie.mkv?X-Plex-Token=tok"
+
+
+@pytest.mark.parametrize("part_key", ["/library/parts/1/%c0%ae%c0%ae/x", "/library/parts/1/%u002e%u002e/x"])
+def test_an_odd_encoding_in_a_part_key_is_refused(part_key):
+    # (The security audit's second round: overlong UTF-8 and %u escapes passed.)
+    from app.plex import PlexClient, PlexError
+
+    with pytest.raises(PlexError):
+        PlexClient("http://plex.test:32400", "tok").stream_url(part_key)
+
+
+def test_a_logged_address_never_shows_a_name_or_password():
+    # (The security audit's second round: redact kept user:pass@ in an address FFmpeg was given.)
+    from app.ffmpeg import redact
+
+    said = redact("Opening http://alice:s3cret@plex.example:32400/library/parts/1/2/file.mkv?X-Plex-Token=abc")
+    assert "s3cret" not in said and "alice" not in said and "abc" not in said, said

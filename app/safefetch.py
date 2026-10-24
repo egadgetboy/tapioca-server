@@ -50,7 +50,15 @@ KINDS = (TYPED, FIXED, DATA)
 USER_AGENT = f"tapiOca/{__version__}"
 
 # The cloud metadata addresses, refused for every kind (SSRF-03).
-_METADATA = (ipaddress.ip_network("169.254.169.254/32"), ipaddress.ip_network("fd00:ec2::254/128"))
+_METADATA = tuple(
+    ipaddress.ip_network(n)
+    for n in (
+        "169.254.169.254/32",  # (most clouds)
+        "fd00:ec2::254/128",  # (AWS, over IPv6)
+        "100.100.100.200/32",  # (Alibaba Cloud)
+        "192.0.0.192/32",  # (Oracle Cloud)
+    )
+)
 # NAT64's well-known prefix: an address there is the IPv4 address it carries (RFC 6052).
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
 
@@ -59,9 +67,15 @@ LOOKUP_S = 10.0
 # How long a looked-up name's addresses are kept, for each transport (the
 # request still goes only to them: pinning holds).
 KEEP_S = 30.0
+# How long they're still used if looking the name up again fails (an
+# internet outage with Plex at home by name): only addresses already vetted.
+STALE_S = 600.0
 # Lookups run here, never on the event loop's default pool, which disk reads
-# for playback share: a dead DNS server can't hold up a stream.
-_LOOKUPS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tapioca-lookup")
+# for playback share: a dead DNS server can't hold up a stream. One lookup
+# at a time for each name, however many ask, so a dead one ties up one
+# thread, not all of them.
+_LOOKUPS = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tapioca-lookup")
+_FLYING: dict[tuple[int, str], asyncio.Future] = {}
 
 
 class Refused(httpx.TransportError):
@@ -82,12 +96,17 @@ Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
 def _as_ipv4(ip: Address) -> Address:
-    """An IPv6 address that carries an IPv4 one (mapped, or NAT64's), as that IPv4 address."""
+    """An IPv6 address that carries an IPv4 one (mapped, IPv4-compatible,
+    NAT64's, 6to4's or Teredo's), as that IPv4 address."""
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None:
             return ip.ipv4_mapped
-        if ip in _NAT64:
+        if ip in _NAT64 or 1 < int(ip) < 2**32:
             return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        if ip.sixtofour is not None:
+            return ip.sixtofour
+        if ip.teredo is not None:
+            return ip.teredo[1]
     return ip
 
 
@@ -104,10 +123,17 @@ async def _resolve(host: str) -> list[Address]:
     except ValueError:
         pass
     loop = asyncio.get_running_loop()
-    try:
-        found = await loop.run_in_executor(
+    key = (id(loop), host)
+    flying = _FLYING.get(key)
+    if flying is None:
+        flying = loop.run_in_executor(
             _LOOKUPS, lambda: socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         )
+        _FLYING[key] = flying
+        flying.add_done_callback(lambda _: _FLYING.pop(key, None))
+    try:
+        # (Shielded: one asker's time limit never ends the lookup for the others.)
+        found = await asyncio.shield(flying)
     except (OSError, UnicodeError) as e:
         # (UnicodeError: a name with an empty or overlong label, such as a mistyped "192.168.1..5".)
         raise NotFound(f"tapiOca can't find {host}: {e}", "a name that can't be found") from e
@@ -213,7 +239,7 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         # (One pool of connections for each scheme, name and port: a kept TLS
         # connection checked for one name is never used for another.)
         self._real: dict[tuple[str, str, int | None], httpx.AsyncHTTPTransport] = {}
-        self._kept: dict[str, tuple[float, list[Address]]] = {}
+        self._kept: dict[str, tuple[float, list[Address]]] = {}  # (when looked up, what was allowed)
 
     async def _addresses(self, request: httpx.Request) -> list[Address]:
         url = request.url
@@ -221,10 +247,17 @@ class GuardedTransport(httpx.AsyncBaseTransport):
             return await vet(url, self.kind, _connect_timeout(request))
         host = _host_checked(url, self.kind)
         kept = self._kept.get(host)
-        if kept and kept[0] > time.monotonic():
+        now = time.monotonic()
+        if kept and now - kept[0] < KEEP_S:
             return kept[1]
-        found = allowed(host, await _lookup(host, _connect_timeout(request)), self.kind)
-        self._kept[host] = (time.monotonic() + KEEP_S, found)
+        try:
+            found = allowed(host, await _lookup(host, _connect_timeout(request)), self.kind)
+        except (NotFound, httpx.ConnectTimeout):
+            # (Looking it up again failed: what was vetted before still goes, for a while.)
+            if kept and now - kept[0] < STALE_S:
+                return kept[1]
+            raise
+        self._kept[host] = (now, found)
         return found
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:

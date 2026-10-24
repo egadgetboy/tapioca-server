@@ -40,6 +40,7 @@ _EGRESS_NAMES = _HTTPX_CLIENTS | {
     "asyncio.open_connection", "asyncio.open_unix_connection",
     "requests.get", "requests.post", "requests.request", "requests.Session",
     "aiohttp.ClientSession", "aiohttp.request",
+    "anyio.connect_tcp", "anyio.connect_unix", "anyio.create_udp_socket",
 }  # fmt: skip
 # And these, on whatever they're called on (a socket, an event loop).
 _EGRESS_METHODS = {"connect", "connect_ex", "sock_connect", "create_connection", "create_datagram_endpoint", "getaddrinfo", "sendto"}
@@ -116,6 +117,38 @@ def _egress_hit(func: ast.AST, aliases: dict[str, str]) -> str:
     return ""
 
 
+def _annotations(tree: ast.AST) -> set[int]:
+    """Every node inside a type annotation (a client named there is no way out)."""
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        for ann in (
+            [node.annotation] if isinstance(node, (ast.arg, ast.AnnAssign)) and node.annotation else []
+        ) + ([node.returns] if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.returns else []):
+            out.update(id(n) for n in ast.walk(ann))
+    return out
+
+
+def _named_not_called(tree: ast.AST, aliases: dict[str, str]) -> list[ast.AST]:
+    """A way out named without being called there (Maker = httpx.AsyncClient,
+    functools.partial(httpx.AsyncClient)): it'll be called somewhere the
+    census can't follow, so the naming counts as the way out."""
+    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    inside = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute):
+            inside.update(id(c) for c in ast.walk(n.value))
+    skip = _annotations(tree)
+    out = []
+    for n in ast.walk(tree):
+        if not isinstance(n, (ast.Name, ast.Attribute)) or id(n) in called or id(n) in inside or id(n) in skip:
+            continue
+        if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load):
+            continue
+        if _full_name(n, aliases) in _EGRESS_NAMES and not isinstance(getattr(n, "ctx", None), ast.Store):
+            out.append(n)
+    return out
+
+
 def _sites(kind: str) -> list[Site]:
     out: list[Site] = []
     for path in sorted(APP.rglob("*.py")):
@@ -185,6 +218,10 @@ def _sites(kind: str) -> list[Site]:
                     hit = f".{name}"
             if hit:
                 out.append(Site(rel, where, hit))
+        if kind == "egress":
+            for named in _named_not_called(tree, aliases):
+                out.append(Site(str(path.relative_to(APP)), owner.get(id(named), "<module>"),
+                                f"{_full_name(named, aliases)} (named)"))  # fmt: skip
     return sorted(set(out), key=str)
 
 
@@ -332,10 +369,12 @@ def egress_guards() -> dict[str, tuple[str | None, object]]:
                 first = made.args[0]
                 kind = first.attr.lower() if isinstance(first, ast.Attribute) else None
             redirects = kinds.get("follow_redirects")
-            out[site] = (
-                kind,
-                redirects.value if isinstance(redirects, ast.Constant) else redirects,
-            )
+            judged = (kind, redirects.value if isinstance(redirects, ast.Constant) else redirects)
+            if site in out and out[site] != judged:
+                # (Two clients at one site: each is judged, and the worst stands. The cold audit's
+                # second round: only the last one walked was.)
+                judged = (None, True) if None in (out[site][0], kind) else (kind, True)
+            out[site] = judged
     return out
 
 

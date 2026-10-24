@@ -21,11 +21,16 @@ def no_network(monkeypatch):
 
     def _check(address):
         host = address[0] if isinstance(address, tuple) else address
+        if not isinstance(address, tuple):
+            return  # (a Unix socket's path)
         try:
             ip = ipaddress.ip_address(str(host).split("%", 1)[0])
         except ValueError:
-            ip = None  # (a Unix socket's path)
-        if ip is not None and not ip.is_loopback:
+            # (A name: only this machine's own may be asked by name. The second round of 1.44.0's audit.)
+            if str(host) in ("localhost", "localhost.localdomain"):
+                return
+            raise LeftTheMachine(f"A security test tried to reach {host} by name: the suite never leaves this machine") from None
+        if not ip.is_loopback:
             raise LeftTheMachine(f"A security test tried to reach {host}: the suite never leaves this machine")
 
     def connect(self, address):
@@ -47,3 +52,12 @@ def no_network(monkeypatch):
     # (The security audit of 1.44.0: connect_ex and UDP's sendto went around the guard.)
     monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
     monkeypatch.setattr(socket.socket, "sendto", sendto)
+    real_sendmsg = socket.socket.sendmsg
+
+    def sendmsg(self, buffers, ancdata=(), flags=0, address=None):
+        if address is not None:
+            _check(address)
+            return real_sendmsg(self, buffers, ancdata, flags, address)
+        return real_sendmsg(self, buffers, ancdata, flags)
+
+    monkeypatch.setattr(socket.socket, "sendmsg", sendmsg)

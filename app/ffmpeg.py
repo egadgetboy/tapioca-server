@@ -133,9 +133,12 @@ async def run_to_end(args: list[str], timeout_s: float) -> tuple[int, str]:
     return proc.returncode or 0, err.decode(errors="replace")[-300:].strip()
 
 
+_USERINFO = re.compile(r"(?i)\b(https?://)[^/\s@]+@")
+
+
 def redact(text: str) -> str:
-    """Hides Plex tokens in anything that might be logged or shown."""
-    return _TOKEN.sub(r"\1<hidden>", text)
+    """Hides Plex tokens, and any name and password in an address, in anything that might be logged or shown."""
+    return _USERINFO.sub(r"\1", _TOKEN.sub(r"\1<hidden>", text))
 
 
 # A program may stop this much short of the length its file gives and still

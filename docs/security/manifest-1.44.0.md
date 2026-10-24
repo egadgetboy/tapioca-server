@@ -9,8 +9,9 @@ The six questions every release answers (DL287), for its readiness record.
 2. **New outbound request?** None. All six of tapiOca's own ways out (Plex,
    a player's file from Plex, Sonarr and Radarr, alerts, the away-address
    check, the update check) now go through `app/safefetch.py`, and so does
-   every name lookup. The census follows imports and aliases (httpx's
-   helpers, urllib, http.client, sockets and lookups), and fails on a way
+   every name lookup. The census follows imports, aliases and a client kept
+   under another name (httpx's helpers, urllib, http.client, anyio, sockets
+   and lookups), and fails on a way
    out outside safefetch, a proxy or mounts that could route around it, or a
    redirect followed. FFmpeg and ffprobe aren't requests of tapiOca's own:
    they read the media folder's files and Plex's stream addresses, which
@@ -26,9 +27,11 @@ security suite's slices 2 and 3 (the HLS boundary in depth, injection
 breadth, uploads and FFmpeg, timing, linked servers, cryptography, races,
 fault injection, rate limits, data at rest, dependency and image scans,
 smuggling, logging, property and differential tests, fuzzing), and checks
-for what isn't built yet. Also left for slice 2 (the media pipeline): a
-`-protocol_whitelist` on FFmpeg's inputs from the media folder (only
-uploads have one today), so a playlist file there can't make FFmpeg fetch
-over the network; and CHAIN-01 covers what an outsider or a User can reach,
+for what isn't built yet. Tracked as a Medium exception for slice 2 (the media pipeline;
+`tools/security_exceptions.json`, MED-FFMPEG-01): FFmpeg and ffprobe read
+Media with no protocol or format whitelist (only uploads have one), so a
+file in the media folder holding a playlist or a DASH manifest under a
+video's name can make them fetch an address inside the home, and they
+follow a redirect from Plex's address. And CHAIN-01 covers what an outsider or a User can reach,
 not the Admin-only routes this release changed, which test_ssrf.py and the
 alert and Sonarr tests cover instead. No external pen test yet.

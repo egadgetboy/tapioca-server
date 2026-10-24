@@ -1,1 +1,3 @@
-[]
+[
+  "MED-FFMPEG-01 (Medium, tracked for The security suite: breadth and depth, slice 2's media pipeline): FFmpeg and ffprobe read Media with no protocol or format whitelist (uploads have one). A file in the media folder that holds a playlist or a DASH manifest under a video's name can make them fetch an address from this machine or the home network, and they follow a redirect from Plex's address. tapiOca's own requests (safefetch) aren't affected. Found by the security audit of 1.44.0."
+]
