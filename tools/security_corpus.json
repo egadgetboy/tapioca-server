@@ -1,5 +1,11 @@
 {
-  "checks": 1138,
-  "about": "The regression corpus only grows (DL287): the number of checks tools/security_suite.py ran at the last release candidate. A run with fewer fails unless merges lists why (duplicates merged on purpose).",
-  "merges": []
+  "checks": 1139,
+  "about": "The regression corpus only grows (DL287): the number of checks tools/security_suite.py ran at the last release candidate. A run with fewer fails unless merges holds that exact reduction, reviewed: from_checks, to_checks, removed_case_ids, a reason and the review's commit (review_sha).",
+  "merges": [],
+  "history": [
+    {
+      "to_checks": 1139,
+      "why": "1.44.0: test_this_version_has_its_security_manifest added (tests/security/test_inventory.py)"
+    }
+  ]
 }

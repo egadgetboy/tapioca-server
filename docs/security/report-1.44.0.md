@@ -1,6 +1,8 @@
 # Security report, tapiOca 1.44.0
 
-Run 2026-10-21.
+Run 2026-10-24.
+A local run, at commit 0eecc8c530274bed882b5d693033c1b182f0d294.
+Python 3.11.15, pytest 9.1.1.
 
 | Area | Severity | Passed | Failed |
 | --- | --- | --- | --- |
