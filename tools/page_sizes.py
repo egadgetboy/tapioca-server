@@ -1107,9 +1107,14 @@ def notify_addresses(page: Page, look: Look) -> None:
 
 def home_question(page: Page, look: Look) -> None:
     """A new alert address on the home network: the page asks first (DL287).
-    Cancel keeps nothing; OK saves it. Put back as it was after."""
+    Cancel keeps what was saved; OK saves it. Put back as it was after."""
+    # (Playwright's page.request needs a whole address: the page's own server.)
+    base = re.match(r"https?://[^/]+", page.url).group(0)
+    setting = lambda: page.request.get(f"{base}/api/notify", headers=PAGE).json()  # noqa: E731
+    before = setting()
     asked: list[str] = []
-    page.fill("#notifyUrl", "http://192.168.1.9:8123/api/webhook/tapioca")
+    home = "http://192.168.1.9:8123/api/webhook/tapioca"
+    page.fill("#notifyUrl", home)
 
     def answer(yes: bool):
         def on(dialog: Any) -> None:
@@ -1118,18 +1123,20 @@ def home_question(page: Page, look: Look) -> None:
 
         return on
 
-    saved = lambda: page.request.get("/api/notify", headers={"X-Tapioca-Page": "1"}).json()["url"]  # noqa: E731
     page.once("dialog", answer(False))
     page.click("#notifyBody .btn.primary")
     page.wait_for_timeout(400)
     look.expect("Alert notifications, a home address asks first", asked[:1],
                 ["This points to a device on your home network. Save it?"])  # fmt: skip
-    look.expect("Alert notifications, Cancel keeps nothing", saved(), "")
+    look.expect("Alert notifications, Cancel keeps what was saved", setting()["url"], before["url"])
     page.once("dialog", answer(True))
     page.click("#notifyBody .btn.primary")
     page.wait_for_timeout(400)
-    look.expect("Alert notifications, OK saves it", saved(), "http://192.168.1.9:8123/api/webhook/tapioca")
-    page.request.put("/api/notify", headers={"X-Tapioca-Page": "1"}, data={"on": False, "url": ""})
+    look.expect("Alert notifications, OK saves it", setting()["url"], home)
+    more = [{"url": m["url"], "format": m["format"]} for m in before.get("more", [])]
+    page.request.put(f"{base}/api/notify", headers=PAGE, data={
+        "on": before["on"], "url": before["url"], "format": before["format"], "more": more, "homeOk": True,
+    })  # fmt: skip
 
 
 def signin_answer_lost(context: Any, base: str, look: Look) -> None:

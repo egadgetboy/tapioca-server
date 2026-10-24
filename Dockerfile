@@ -83,6 +83,8 @@ COPY README.md SECURITY.md ./
 COPY docs ./docs
 COPY unraid ./unraid
 COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py tools/gpl_source.py tools/picture_load.py ./tools/
+# (The security suite, run in this image at every release candidate: DL287.)
+COPY tools/security_suite.py tools/attack_check.py tools/security_corpus.json tools/security_exceptions.json ./tools/
 COPY tools/logos/letters.py ./tools/logos/
 COPY .github/workflows/release.yml .github/workflows/image.yml ./.github/workflows/
 COPY tests ./tests

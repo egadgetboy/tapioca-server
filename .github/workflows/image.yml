@@ -157,6 +157,13 @@ jobs:
             [ -n "$why" ] && echo "::error title=Why::$why"
             exit 1
           }
+      # The security suite (DL287), in the exact image tested, on both kinds
+      # of machine: the unit layer and the live harness, a real tapiOca on
+      # two loopback ports, with no open Critical or High. Its report is
+      # printed here, for the release's readiness record.
+      - name: Security suite
+        timeout-minutes: 30
+        run: docker run --rm --init -e COLUMNS=400 -e GITHUB_SHA -e GITHUB_RUN_ID stationplay:test python -m tools.security_suite
       # What the tested image was made of (tools/sbom.py), for release.yml
       # to add to the release: made after the tests, and kept with this run.
       - name: Made of

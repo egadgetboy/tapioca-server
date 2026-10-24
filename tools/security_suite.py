@@ -148,6 +148,30 @@ def merge_explains_shrink(corpus: dict, candidate_checks: int) -> bool:
     return False
 
 
+def provenance() -> list[str]:
+    """What this run ran on (SEC-GATE-P1-05): the commit, the CI run, Python and pytest."""
+    import os
+    import platform
+    from importlib import metadata
+
+    sha, run = os.environ.get("GITHUB_SHA", ""), os.environ.get("GITHUB_RUN_ID", "")
+    if sha:
+        where = f"Commit {sha}, CI run {run or 'unknown'}."
+    else:
+        try:
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=False
+            ).stdout.strip()
+        except OSError:
+            head = ""
+        where = f"A local run, at commit {head}." if head else "A local run (no commit known)."
+    try:
+        pytest_version = metadata.version("pytest")
+    except metadata.PackageNotFoundError:
+        pytest_version = "not installed"
+    return [where, f"Python {platform.python_version()}, pytest {pytest_version}."]
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
@@ -186,6 +210,7 @@ def main(argv: list[str]) -> int:
         f"# Security report, tapiOca {__version__}",
         "",
         f"Run {date.today().isoformat()}.",
+        *provenance(),
         "",
     ]
     lines += ["| Area | Severity | Passed | Failed |", "| --- | --- | --- | --- |"]

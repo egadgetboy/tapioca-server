@@ -172,3 +172,25 @@ class RunnerFailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportProvenanceTests(unittest.TestCase):
+    # (SEC-GATE-P1-05: a report says what it ran on: the commit, the run, Python and pytest.)
+    def test_the_report_names_the_commit_run_and_versions(self):
+        import os
+
+        with patch.dict(os.environ, {"GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "123"}):
+            lines = runner.provenance()
+        text = "\n".join(lines)
+        self.assertIn("a" * 40, text)
+        self.assertIn("123", text)
+        self.assertIn("Python", text)
+        self.assertIn("pytest", text)
+
+    def test_without_ci_the_report_says_its_a_local_run(self):
+        import os
+
+        env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_SHA", "GITHUB_RUN_ID")}
+        with patch.dict(os.environ, env, clear=True):
+            text = "\n".join(runner.provenance())
+        self.assertIn("local run", text)

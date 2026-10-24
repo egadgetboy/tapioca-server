@@ -17,3 +17,7 @@ tools/*
 !tools/sbom.py
 !tools/gpl_source.py
 !tools/picture_load.py
+!tools/security_suite.py
+!tools/attack_check.py
+!tools/security_corpus.json
+!tools/security_exceptions.json
