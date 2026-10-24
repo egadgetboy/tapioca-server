@@ -497,7 +497,7 @@ class Reach:
                 )
             )
             return Finding(WRONG_PORT, detail, "Wrong port", reached=True, sure=True)
-        if not secure and not await _local(_host(address)):
+        if not secure and not await _local(ascii_host(address)):
             # (An http:// address with a name on the internet.)
             if not outside:
                 detail = (
@@ -643,6 +643,10 @@ class Reach:
                 f"The name {host} isn't found. Check the address for typos, and that your "
                 f"domain's DNS points {host} at your home's internet address."
             )
+            return Finding(NO_NAME, detail, "Name not found", sure=True)
+        if isinstance(e, safefetch.NotFound):
+            # (A name the system can't even look up, such as one with "..": no gaierror, only this.)
+            detail = f"The name {host} isn't found. Check the address for typos."
             return Finding(NO_NAME, detail, "Name not found", sure=True)
         if (unaccepted := _cause(e, ssl.SSLCertVerificationError)) is not None:
             return _certificate(address, host, unaccepted)
@@ -793,6 +797,14 @@ def _cause(e: BaseException, kind: type[_E]) -> _E | None:
 
 def _host(address: str) -> str:
     return urlsplit(address).hostname or ""
+
+
+def ascii_host(address: str) -> str:
+    """An address's name as it's looked up and sent (IDNA ASCII), as safefetch has it."""
+    try:
+        return safefetch.host_of(httpx.URL(address))
+    except (httpx.InvalidURL, UnicodeError):
+        return _host(address)
 
 
 def _with_port(address: str, port: int) -> str:

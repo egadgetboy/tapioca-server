@@ -331,6 +331,10 @@ class Library:
                 log.warning("Plex gave a file address tapiOca won't use, for %s: it can't be played from Plex", key)
             return None
 
+    def refused(self, key: str) -> bool:
+        """Whether Plex's file address for `key` was one tapiOca won't use."""
+        return key in self._refused_keys
+
     def resolution(self, key: str) -> str | None:
         """A program's picture size as its library lists it ("4K", "1080p",
         "720p" or "SD"), if it's been said."""

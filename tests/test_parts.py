@@ -604,3 +604,26 @@ def test_a_logged_address_never_shows_a_name_or_password():
 
     said = redact("Opening http://alice:s3cret@plex.example:32400/library/parts/1/2/file.mkv?X-Plex-Token=abc")
     assert "s3cret" not in said and "alice" not in said and "abc" not in said, said
+
+
+async def test_a_refused_part_key_says_so_never_file_not_found(tmp_path):
+    # (The cold audit's second round: the reason read "file not found", when only Plex's address was refused.)
+    from app.config import Settings
+    from app.db import Item
+    from app.library import Library
+    from app.plex import PlexClient
+    from app.sources import resolve_source
+
+    from .fakeplex import FakePlex
+    from .helpers import like_plex
+
+    fp = FakePlex()
+    fp.add_show("100", "Show")
+    fp.add_episode("201", "100", 1, 1, "Pilot", "/nowhere/ep.mkv", 60000)
+    odd = "/library/parts/201/1/%2e%2e/x"
+    fp.episodes["201"]["Media"][0]["Part"][0]["key"] = odd
+    library = Library(PlexClient("http://plex.test", "token", transport=like_plex(fp)))
+    item = Item(position=0, start_ms=0, duration_ms=60000, rating_key="201", kind="episode", title="Pilot",
+                file_path="/nowhere/ep.mkv", part_key=odd)  # fmt: skip
+    got = await resolve_source(Settings(data_dir=tmp_path), library, item)
+    assert got.error == "Plex gave a file address tapiOca won't use", got

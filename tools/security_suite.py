@@ -274,13 +274,14 @@ def main(argv: list[str]) -> int:
         except OSError as e:
             print(f"The report couldn't be written to {report}: {e}")
             bad += 1
+            report = None
     if shrank:
         print(
             f"The corpus shrank: {checks} checks, {corpus['checks']} recorded, with no exact reviewed merge for this transition."
         )
     print(
         f"Security: {checks} checks, {'unit-only PASS (live NOT RUN)' if args.no_live and not bad else 'all passing' if not bad else f'{bad} failing'}. "
-        f"Report: {'not written (unit-only)' if args.no_live else report}"
+        f"Report: {'not written (unit-only)' if args.no_live else report or 'not written'}"
     )
     return 1 if bad else 0
 

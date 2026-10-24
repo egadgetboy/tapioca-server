@@ -102,6 +102,8 @@ def _connection_kind(error: Exception | None) -> str:
     """What a failed request means: "refused" (nothing there takes the
     connection), "unknown-host", "slow" (it answered too slowly), "unreadable",
     or "no-answer" (nothing answered at all)."""
+    if isinstance(error, safefetch.NotFound):
+        return "unknown-host"
     if isinstance(error, httpx.TimeoutException):
         return "no-answer" if isinstance(error, httpx.ConnectTimeout) else "slow"
     if isinstance(error, ValueError):

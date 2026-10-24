@@ -205,8 +205,7 @@ def _host_checked(url: httpx.URL, kind: str) -> str:
     if kind not in KINDS:
         raise ValueError(kind)
     if url.scheme not in ("http", "https"):
-        shown = url.scheme or "no kind of address"
-        raise Refused(f"Only web addresses (http or https), not {shown}", "not a web address")
+        raise Refused("That isn't a web address (http or https)", "not a web address")
     if url.userinfo and kind != TYPED:
         raise Refused("An address with a name or password in it", "an address with a name or password in it")
     if not url.raw_host:
@@ -287,6 +286,9 @@ class GuardedTransport(httpx.AsyncBaseTransport):
                     return await real.handle_async_request(request)
                 except (httpx.ConnectError, httpx.ConnectTimeout):
                     if n == len(ips) - 1:
+                        # (None of them answers: the name is looked up again next time, in case
+                        # it's moved. The cold audit of 1.44.0's second round.)
+                        self._kept.pop(host, None)
                         raise
             raise Refused(f"{host} has no address to go to", "a name with no address to go to")
         finally:

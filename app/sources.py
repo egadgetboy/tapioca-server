@@ -375,7 +375,9 @@ async def resolve_source(
             else "Plex can't be reached, and tapiOca can't see the file directly",
             transient=True,
         )
-    return ResolvedSource(None, plex_file, size, error=f"file not found: {plex_file}", parts=parts)
+    return ResolvedSource(
+        None, plex_file, size, error=_unplayable(library, item.rating_key, f"file not found: {plex_file}"), parts=parts
+    )
 
 
 async def readable(
@@ -415,7 +417,7 @@ async def readable(
     stream = library.stream_url(item.rating_key, item.part_key) if item.part_key and library.configured else None
     if stream is not None:
         return ResolvedSource(stream, item.file_path)
-    return ResolvedSource(None, item.file_path, error="file not found")
+    return ResolvedSource(None, item.file_path, error=_unplayable(library, item.rating_key, "file not found"))
 
 
 async def _checked(
@@ -463,7 +465,16 @@ async def locate(
     if stream is not None:
         access.via_plex += 1
         return ResolvedSource(stream, media.file, media.size)
-    return ResolvedSource(None, media.file, media.size, error=f"file not found: {media.file}")
+    return ResolvedSource(None, media.file, media.size, error=_unplayable(library, key, f"file not found: {media.file}"))
+
+
+REFUSED_ADDRESS = "Plex gave a file address tapiOca won't use"
+
+
+def _unplayable(library: Library, key: str, otherwise: str) -> str:
+    """Why a program has no file to play: Plex's address for it was refused, or `otherwise`."""
+    refused = getattr(library, "refused", None)
+    return REFUSED_ADDRESS if refused is not None and refused(key) else otherwise
 
 
 async def part_starts(

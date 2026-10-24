@@ -507,3 +507,49 @@ def test_a_name_whose_lookup_fails_later_keeps_its_last_vetted_answer_for_a_whil
 def test_every_clouds_metadata_address_is_refused_however_its_written(ip):
     # (Round 2: Alibaba's and Oracle's metadata addresses, and IPv4-compatible and 6to4 forms.)
     assert safefetch.refusal(ipaddress.ip_address(ip), "typed") == "a cloud metadata address"
+
+
+def test_a_name_whose_kept_addresses_all_fail_is_looked_up_again(monkeypatch):
+    # (The cold audit's second round: after a name moved to a new address, requests kept going to
+    # the dead old one for KEEP_S.)
+    answers = iter([[ipaddress.ip_address("192.168.1.8")], [ipaddress.ip_address("192.168.1.9")]])
+
+    async def resolve(host):
+        return next(answers)
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+    sent: list[str] = []
+
+    class Real(httpx.AsyncBaseTransport):
+        def __init__(self, **_):
+            pass
+
+        async def handle_async_request(self, request):
+            sent.append(request.url.host)
+            if request.url.host == "192.168.1.8":
+                raise httpx.ConnectError("All connection attempts failed")
+            return httpx.Response(200)
+
+    monkeypatch.setattr(safefetch.httpx, "AsyncHTTPTransport", Real)
+
+    async def go():
+        async with httpx.AsyncClient(transport=safefetch.transport("typed")) as c:
+            with pytest.raises(httpx.ConnectError):
+                await c.get("http://plex.home:32400/")
+            return await c.get("http://plex.home:32400/")
+
+    assert asyncio.run(go()).status_code == 200 and sent == ["192.168.1.8", "192.168.1.9"]
+
+
+def test_a_name_that_cant_be_looked_up_at_all_is_an_unknown_host_to_plexs_trouble():
+    # (The cold audit's second round: "http://192.168.1..10:32400" said "nothing answered".)
+    from app.plex import _connection_kind
+
+    assert _connection_kind(safefetch.NotFound("tapiOca can't find 192.168.1..10: label empty")) == "unknown-host"
+
+
+def test_a_file_address_says_its_not_a_web_address():
+    # (The cold audit's second round: "Only web addresses (http or https), not no kind of address".)
+    with pytest.raises(safefetch.Refused) as caught:
+        asyncio.run(safefetch.vet(httpx.URL("/etc/passwd"), "typed"))
+    assert str(caught.value) == "That isn't a web address (http or https)"

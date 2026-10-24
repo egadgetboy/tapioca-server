@@ -1032,3 +1032,28 @@ def test_trusting_with_signing_in_off(app):
         assert ctx.trusted.proxies == []
         assert trust(home).status_code == 200
         assert [p["network"] for p in ctx.trusted.proxies] == ["192.168.1.3/32"]
+
+
+def test_a_name_that_cant_be_looked_up_at_all_is_said_as_not_found():
+    # (The cold audit of 1.44.0's second round: a mistyped name such as "tv..example.com" makes no
+    # gaierror, only safefetch's NotFound, and the check said it couldn't connect.)
+    from app import safefetch
+
+    r = reach_at("https://tv..example.com")
+    found = r._failed("https://tv..example.com", safefetch.NotFound("tapiOca can't find it: label empty"))
+    assert found.short == "Name not found", found
+
+
+async def test_the_away_check_looks_a_name_up_as_its_sent(monkeypatch):
+    # (The cold audit of 1.44.0's second round: _local looked up the Unicode form of a name.)
+    asked: list[str] = []
+
+    async def addresses(host: str) -> list[str]:
+        asked.append(host)
+        return ["10.0.0.5"]
+
+    monkeypatch.setattr(reach, "_addresses", addresses)
+    r = reach_at("http://faß.de")
+    answering(r, stationplay(r, outside=True, https=False))
+    await r.check_now()
+    assert asked and set(asked) == {"xn--fa-hia.de"}, asked
