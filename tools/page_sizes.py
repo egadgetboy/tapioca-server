@@ -1129,6 +1129,9 @@ def home_question(page: Page, look: Look) -> None:
     look.expect("Alert notifications, a home address asks first", asked[:1],
                 ["This points to a device on your home network. Save it?"])  # fmt: skip
     look.expect("Alert notifications, Cancel keeps what was saved", setting()["url"], before["url"])
+    # (And says so: a blocked or cancelled question never looks like nothing happened.)
+    look.expect("Alert notifications, Cancel says Not saved.",
+                page.locator("#notifyBody [role=status]").first.text_content(), "Not saved.")  # fmt: skip
     page.once("dialog", answer(True))
     page.click("#notifyBody .btn.primary")
     page.wait_for_timeout(400)

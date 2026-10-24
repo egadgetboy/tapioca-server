@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qs, urlparse, urlsplit
+from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 import httpx
 
@@ -184,6 +184,28 @@ _PLEX_PATH = re.compile(r"(/[A-Za-z0-9_:-]+)+")
 _FILE_PATH = re.compile(r"/library/[A-Za-z0-9_.,:%~+=!$&'()*/-]+")
 # (And several shows, movies or episodes at once, by their keys.)
 _KEYS_PATH = re.compile(r"/library/metadata/\d+(,\d+)+")
+
+
+def _file_path_ok(key: str) -> bool:
+    """Whether a file's address from Plex's answers stays a file's address,
+    as given and once decoded (as Plex would decode it, up to three times):
+    under /library/, with no "..", "//", "?", "#", "\\" or control
+    characters (the security audit of 1.44.0: "%2e%2e" passed)."""
+    if not _FILE_PATH.fullmatch(key):
+        return False
+    seen = key
+    for _ in range(4):
+        if (
+            "/../" in f"{seen}/" or "/./" in f"{seen}/" or "//" in seen
+            or any(c in seen for c in "?#\\") or any(ord(c) < 32 or ord(c) == 127 for c in seen)
+            or not seen.startswith("/library/")
+        ):  # fmt: skip
+            return False
+        decoded = unquote(seen)
+        if decoded == seen:
+            return True
+        seen = decoded
+    return False  # (still changing after that many decodings: not a real key)
 
 
 def _checked(path: str) -> str:
@@ -458,7 +480,7 @@ class PlexClient:
         The key comes from Plex's answers, so it's checked: an address that
         changed host (a key like "@elsewhere/x") would carry Plex's token
         there (the security suite's SSRF-01 and SSRF-08)."""
-        if not _FILE_PATH.fullmatch(part_key) or "/../" in f"{part_key}/" or "//" in part_key:
+        if not _file_path_ok(part_key):
             raise PlexError("That isn't a Plex file address tapiOca uses", 400)
         return f"{self.base_url}{part_key}?X-Plex-Token={self.token}"
 

@@ -149,6 +149,8 @@ from .updates import GUIDE_FUTURE_MS, GUIDE_PAST_MS, MARGIN_MS, Updater
 log = logging.getLogger("stationplay")
 # (The page's question before saving an alert address at home: DL287.)
 HOME_ADDRESS = "This points to a device on your home network."
+# (An address every request to would be refused: never saved, DL287.)
+NEVER_SENT = "tapiOca won't connect to that address: it's {why}."
 
 WEB_DIR = Path(__file__).parent / "web"
 # The open-source notices, beside LICENSE (in the image, too: see Dockerfile).
@@ -3584,6 +3586,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             # (What's wrong with them is said first, then the question, DL287.)
             typed = replacing.checked(ctx.db, body.app, body.url, body.key, body.on)["url"]
             new = typed and typed != replacing.settings(ctx.db)[body.app]["url"]
+            why = await safefetch.typed_refusal(typed) if new else None
+            if why:
+                raise HTTPException(400, NEVER_SENT.format(why=why))
             if not body.homeOk and new and await safefetch.at_home(typed):
                 raise HTTPException(409, HOME_ADDRESS)
             replacing.save(ctx.db, body.app, body.url, body.key, body.on)
@@ -3766,8 +3771,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         try:
             # (What's wrong with them is said first, then the question, DL287.)
             kept = ctx.notify.checked(body.on, body.url, body.format, more)
+            saved = {url for url, _ in ctx.notify.addresses()}
+            for url in (u for u, _ in kept if u not in saved):
+                why = await safefetch.typed_refusal(url)
+                if why:
+                    raise HTTPException(400, NEVER_SENT.format(why=why))
             if not body.homeOk:
-                saved = {url for url, _ in ctx.notify.addresses()}
                 for url in (u for u, _ in kept if u not in saved):
                     if await safefetch.at_home(url):
                         raise HTTPException(409, HOME_ADDRESS)

@@ -27,17 +27,26 @@ class Site:
         return f"app/{self.file}:{self.function} {self.call}"
 
 
-# What an outbound client is: httpx's clients, urllib's urlopen, a raw socket.
-_EGRESS = {
-    ("httpx", "AsyncClient"),
-    ("httpx", "Client"),
-    ("urllib.request", "urlopen"),
-    ("request", "urlopen"),
-    ("socket", "create_connection"),
-    ("asyncio", "open_connection"),
-    ("requests", "get"),
-    ("requests", "post"),
-}
+# What reaches outside the process, by its full name once imports and
+# aliases are followed (the security audit of 1.44.0: "import httpx as hx",
+# "from httpx import AsyncClient", httpx.get and the rest all count).
+_HTTPX_CLIENTS = {"httpx.AsyncClient", "httpx.Client"}
+_EGRESS_NAMES = _HTTPX_CLIENTS | {
+    *(f"httpx.{verb}" for verb in ("get", "post", "put", "patch", "delete", "head", "options", "request", "stream")),
+    "httpx.AsyncHTTPTransport", "httpx.HTTPTransport",
+    "urllib.request.urlopen", "urllib.request.build_opener", "urllib.request.OpenerDirector",
+    "http.client.HTTPConnection", "http.client.HTTPSConnection",
+    "socket.create_connection", "socket.getaddrinfo",
+    "asyncio.open_connection", "asyncio.open_unix_connection",
+    "requests.get", "requests.post", "requests.request", "requests.Session",
+    "aiohttp.ClientSession", "aiohttp.request",
+}  # fmt: skip
+# And these, on whatever they're called on (a socket, an event loop).
+_EGRESS_METHODS = {"connect", "connect_ex", "sock_connect", "create_connection", "create_datagram_endpoint", "getaddrinfo", "sendto"}
+# (sqlite3.connect and the like aren't ways out.)
+_NOT_EGRESS = {"sqlite3.connect"}
+# A keyword that would send a client's requests somewhere the guard didn't choose.
+_ROUTING = {"proxy", "proxies", "mounts"}
 # What starts a program.
 _SPAWN = {
     ("asyncio", "create_subprocess_exec"),
@@ -75,10 +84,43 @@ def _dotted(node: ast.AST) -> str:
     return ""
 
 
+def _aliases(tree: ast.AST) -> dict[str, str]:
+    """What each name a module imports stands for: "hx" for httpx, "AC" for httpx.AsyncClient."""
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                out[a.asname or a.name.split(".")[0]] = a.name if a.asname else a.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for a in node.names:
+                out[a.asname or a.name] = f"{node.module}.{a.name}"
+    return out
+
+
+def _full_name(func: ast.AST, aliases: dict[str, str]) -> str:
+    dotted = _dotted(func)
+    head, _, rest = dotted.partition(".")
+    if head in aliases:
+        return aliases[head] + (f".{rest}" if rest else "")
+    return dotted
+
+
+def _egress_hit(func: ast.AST, aliases: dict[str, str]) -> str:
+    full = _full_name(func, aliases)
+    if full in _NOT_EGRESS:
+        return ""
+    if full in _EGRESS_NAMES:
+        return full
+    if isinstance(func, ast.Attribute) and func.attr in _EGRESS_METHODS:
+        return f".{func.attr}"
+    return ""
+
+
 def _sites(kind: str) -> list[Site]:
     out: list[Site] = []
     for path in sorted(APP.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        aliases = _aliases(tree)
         owner: dict[int, str] = {}
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -99,9 +141,9 @@ def _sites(kind: str) -> list[Site]:
             where = owner.get(id(node), "<module>")
             rel = str(path.relative_to(APP))
             hit = ""
-            if (kind == "egress" and (base, name) in _EGRESS) or (
-                kind == "spawn" and (base, name) in _SPAWN
-            ):
+            if kind == "egress":
+                hit = _egress_hit(func, aliases)
+            elif kind == "spawn" and (base, name) in _SPAWN:
                 hit = f"{base}.{name}"
             elif kind == "write":
                 if (base, name) in _WRITE_OS:
@@ -171,6 +213,9 @@ EGRESS = {
     "app/plex.py:__init__ httpx.AsyncClient": "typed: Plex's address",
     "app/reach.py:_look httpx.AsyncClient": "typed: this tapiOca's own away address, checked from here",
     "app/releases.py:check httpx.AsyncClient": "fixed: GitHub's latest-release address",
+    # (The guard itself: the one real transport, and the one lookup.)
+    "app/safefetch.py:handle_async_request httpx.AsyncHTTPTransport": "guard: the vetted transport's own connections",
+    "app/safefetch.py:_resolve socket.getaddrinfo": "guard: every name's lookup, on its own pool, within a time limit",
 }
 
 # Every program tapiOca starts: an argument list, never a shell (DEP-04,
@@ -268,13 +313,14 @@ def egress_guards() -> dict[str, tuple[str | None, object]]:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for inner in ast.walk(node):
                     owner[id(inner)] = node.name
+        aliases = _aliases(tree)
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            if not isinstance(node, ast.Call):
                 continue
-            if (_dotted(node.func.value), node.func.attr) not in _EGRESS:
+            hit = _egress_hit(node.func, aliases)
+            if not hit:
                 continue
-            site = str(Site(str(path.relative_to(APP)), owner.get(id(node), "<module>"),
-                            f"{_dotted(node.func.value)}.{node.func.attr}"))  # fmt: skip
+            site = str(Site(str(path.relative_to(APP)), owner.get(id(node), "<module>"), hit))
             kinds = {k.arg: k.value for k in node.keywords}
             kind = None
             made = kinds.get("transport")
@@ -291,3 +337,36 @@ def egress_guards() -> dict[str, tuple[str | None, object]]:
                 redirects.value if isinstance(redirects, ast.Constant) else redirects,
             )
     return out
+
+
+def unsafe_options() -> list[Site]:
+    """Every call that could send a request where the guard didn't choose,
+    or follow a redirect (the security audit of 1.44.0): a client given a
+    proxy, proxies, mounts or trust_env=True, and any call with
+    follow_redirects=True, such as a client's own .get or .send."""
+    out: list[Site] = []
+    for path in sorted(APP.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        aliases = _aliases(tree)
+        owner: dict[int, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for inner in ast.walk(node):
+                    owner[id(inner)] = node.name
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            words = {k.arg: k.value for k in node.keywords if k.arg}
+            why = ""
+            follows = words.get("follow_redirects")
+            if follows is not None and not (isinstance(follows, ast.Constant) and follows.value is False):
+                why = "follow_redirects"
+            elif _full_name(node.func, aliases) in _HTTPX_CLIENTS | {"httpx.AsyncHTTPTransport", "httpx.HTTPTransport"}:
+                trust = words.get("trust_env")
+                if _ROUTING & set(words):
+                    why = sorted(_ROUTING & set(words))[0]
+                elif trust is not None and not (isinstance(trust, ast.Constant) and trust.value is False):
+                    why = "trust_env"
+            if why:
+                out.append(Site(str(path.relative_to(APP)), owner.get(id(node), "<module>"), why))
+    return sorted(set(out), key=str)

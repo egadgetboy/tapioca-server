@@ -170,6 +170,70 @@ class RunnerFailureTests(unittest.TestCase):
             self.assertIn("Unregistered security-test source files: test_new_layer.py", output.getvalue())
 
 
+class FullRunTests(unittest.TestCase):
+    # (The cold audit of 1.44.0: the image's test stage can't write docs/, and the report was
+    # written before it was printed, so the CI step failed with no report in its log.)
+    def _run(self, root: Path, argv: list[str], live=(812, 0, "812/812 checks passed")):
+        (root / "tools").mkdir(exist_ok=True)
+        (root / "tools" / "security_corpus.json").write_text('{"checks": 1, "merges": []}')
+        (root / "tools" / "security_exceptions.json").write_text("[]")
+        with (
+            patch.object(runner, "ROOT", root),
+            patch.object(runner, "CORPUS", root / "tools" / "security_corpus.json"),
+            patch.object(runner, "EXCEPTIONS", root / "tools" / "security_exceptions.json"),
+            patch.object(runner, "unit_layer", return_value=(
+                {name: ["case_ok"] for name in runner.LAYERS},
+                {name: [] for name in runner.LAYERS}, "all ran", 0, [],
+            )),
+            patch.object(runner, "live_harness", return_value=live),
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            status = runner.main(argv)
+        return status, output.getvalue()
+
+    def test_a_full_run_writes_its_report_where_its_told_and_prints_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = root / "out" / "report.md"
+            status, said = self._run(root, ["--report", str(target)])
+            self.assertEqual(status, 0, said)
+            self.assertTrue(target.exists())
+            self.assertIn("# Security report", said)
+            self.assertFalse((root / "docs").exists())
+
+    def test_a_report_folder_it_cant_write_still_prints_the_report_and_fails(self):
+        import os
+        import stat
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            locked = root / "locked"
+            locked.mkdir()
+            locked.chmod(stat.S_IRUSR | stat.S_IXUSR)
+            try:
+                if os.access(locked, os.W_OK):
+                    self.skipTest("running as root: a folder can't be made unwritable")
+                status, said = self._run(root, ["--report", str(locked / "report.md")])
+            finally:
+                locked.chmod(stat.S_IRWXU)
+            self.assertEqual(status, 1)
+            self.assertIn("# Security report", said)
+            self.assertIn("couldn't be written", said)
+
+    def test_a_harness_check_that_wasnt_run_blocks_the_gate(self):
+        # (The cold audit of 1.44.0: attack_check says "(not checked: this needs ffmpeg)" and still
+        # counts as passing unless the total drops.)
+        result = subprocess.CompletedProcess(
+            args=["attack_check"], returncode=0,
+            stdout="  ok  something\n  (not checked: this needs ffmpeg) a stream\n812/812 checks passed",
+            stderr="",
+        )
+        with patch.object(runner.subprocess, "run", return_value=result):
+            _, failed, detail = runner.live_harness()
+        self.assertGreaterEqual(failed, 1)
+        self.assertIn("not checked", detail)
+
+
 if __name__ == "__main__":
     unittest.main()
 

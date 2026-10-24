@@ -95,6 +95,10 @@ class Arr:
                 follow_redirects=False,
             ) as client:
                 resp = await client.request(method, path, params=params, json=body)
+        except safefetch.NotFound as e:
+            raise ArrError(f"{self.name} can't be found at that address") from e
+        except safefetch.Refused as e:
+            raise ArrError(f"{self.name} can't be reached: tapiOca won't connect to {e.why}") from e
         except httpx.HTTPError as e:
             raise ArrError(f"{self.name} can't be reached ({type(e).__name__})") from e
         if resp.status_code == 401:

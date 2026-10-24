@@ -412,8 +412,9 @@ async def readable(
             return ResolvedSource(
                 None, item.file_path, error="the media share isn't responding", transient=True
             )
-    if item.part_key and library.configured:
-        return ResolvedSource(library.stream_url(item.rating_key, item.part_key), item.file_path)
+    stream = library.stream_url(item.rating_key, item.part_key) if item.part_key and library.configured else None
+    if stream is not None:
+        return ResolvedSource(stream, item.file_path)
     return ResolvedSource(None, item.file_path, error="file not found")
 
 

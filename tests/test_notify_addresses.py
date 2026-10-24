@@ -639,3 +639,46 @@ def test_whats_wrong_with_an_address_is_said_before_the_home_question(app):
         for bad in ("ftp://192.168.1.9/x", "gopher://127.0.0.1:70/_x", "//127.0.0.1/hook"):
             got = home.put("/api/notify", json={"on": True, "url": bad, "format": "json"})
             assert got.status_code == 400, (bad, got.status_code, got.text)
+
+
+async def test_an_address_with_a_name_and_password_is_still_sent_to_with_its_sign_in(tmp_path):
+    # (The cold audit of 1.44.0: 1.43.0 sent https://alice:s3cret@... with Basic sign-in; the new
+    # outbound guard refused it, so a saved address quietly stopped getting alerts.)
+    from .test_alerts import notifier
+
+    address = Address()
+    sender = notifier(tmp_path, address)
+    url = "https://alice:s3cret@ntfy.example.com/alerts"
+    sender.save(False, url, notify.TEXT)
+    sent = await sender.post(url, notify.TEXT, "tapiOca can't reach Plex.", "plex", "started")
+    assert (sent.ok, sent.status) == (True, "200 OK"), sent
+    (asked,) = address.asked
+    assert asked.headers["authorization"] == "Basic YWxpY2U6czNjcmV0"
+
+
+async def test_a_refused_send_says_why_without_naming_the_address(tmp_path, monkeypatch):
+    # (The cold audit of 1.44.0: a refused send said only "the request failed".)
+    import ipaddress
+
+    from app import safefetch
+
+    from .test_alerts import notifier
+
+    async def resolve(host):
+        return [ipaddress.ip_address("169.254.169.254")]
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+    sender = notifier(tmp_path, Address())
+    sent = await sender.post("http://meta.example/hook", notify.TEXT, "hello", "plex", "started")
+    assert not sent.ok and sent.status == "tapiOca won't send to a cloud metadata address"
+    assert "meta.example" not in sent.status
+
+
+def test_an_address_that_will_never_be_sent_to_isnt_saved_even_when_the_admin_says_yes(app):
+    # (The security audit of 1.44.0: homeOk saved a metadata or link-local address.)
+    with TestClient(app) as home:
+        for bad in ("http://169.254.169.254/latest/meta-data/", "http://[::ffff:169.254.169.254]/x", "http://[fe80::1]/x"):
+            got = home.put("/api/notify", json={"on": True, "url": bad, "format": "json", "homeOk": True})
+            assert got.status_code == 400, (bad, got.status_code, got.text)
+            assert got.json()["detail"].startswith("tapiOca won't connect to that address"), got.text
+        assert home.get("/api/notify").json()["url"] == ""

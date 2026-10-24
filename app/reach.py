@@ -832,15 +832,15 @@ async def _local(host: str) -> bool:
         return True
     try:
         found = await _addresses(host)
-    except OSError:
+    except (OSError, httpx.TransportError):
         return True
     return not any(_global(a) for a in found)
 
 
 async def _addresses(host: str) -> list[str]:
-    """The addresses a name leads to, from here."""
-    found = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    return [str(a[4][0]) for a in found]
+    """The addresses a name leads to, from here (looked up as safefetch looks
+    up every name: on its own pool, with a time limit)."""
+    return [str(ip) for ip in await safefetch.lookup(host)]
 
 
 def _global(address: str) -> bool:

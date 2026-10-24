@@ -1,27 +1,34 @@
 """One vetted way out (the security suite's SSRF-01 to SSRF-08; DL287).
 
-Every request tapiOca makes to another machine goes through a transport
-made here, which decides before it connects, by where the address came from
-(the owner, October 21, 1:37 PM: "The right security principle is
+Every request tapiOca's own code makes to another machine goes through a
+transport made here, which decides before it connects, by where the address
+came from (the owner, October 21, 1:37 PM: "The right security principle is
 provenance"):
 
 - TYPED: an address an Admin typed into a setting (Plex, Sonarr or Radarr,
   an alert address, this tapiOca's own away address). It may be on the home
-  network, loopback included.
+  network, loopback included, and may carry a user name and password (sent
+  to that address only, as the client's Basic sign-in).
 - FIXED: an address in tapiOca's own code (GitHub's releases). It must be
   public.
 - DATA: an address that came from data (a list, a linked server, a picture's
-  address). It must be public.
+  address). It must be public, and may not carry a user name or password.
 
-For all three: http or https only; no name with a user or password in it;
-the cloud metadata addresses and every link-local address refused; the name
-resolved once and checked, and the request sent to that address only (so a
-second answer from the name's DNS can't move it: rebinding); and tapiOca's
-own User-Agent. No client here follows a redirect (each caller sets that,
-and the census checks it).
+For all three: http or https only; the cloud metadata addresses and every
+link-local address refused; the name looked up once, within the request's
+connect timeout, on a lookup pool of its own (never the one disk reads
+use), checked, and the request sent only to the addresses it found and
+allowed, tried in order (so a second answer from the name's DNS can't move
+it: rebinding); TLS checked against the name, on connections kept for that
+name alone; and tapiOca's own User-Agent. No client here follows a redirect
+(each caller sets that, and the census checks it). FFmpeg reads Plex's own
+stream addresses itself: they're built by PlexClient.stream_url, whose host
+is always the typed Plex address.
 
 A refusal is a Refused, an httpx.TransportError, so every caller's existing
-handling of an unreachable address handles it.
+handling of an unreachable address handles it; a name that can't be found
+is a NotFound, also an httpx.ConnectError, as it was before this module;
+a lookup too slow is an httpx.ConnectTimeout.
 """
 
 from __future__ import annotations
@@ -29,7 +36,9 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -42,26 +51,66 @@ USER_AGENT = f"tapiOca/{__version__}"
 
 # The cloud metadata addresses, refused for every kind (SSRF-03).
 _METADATA = (ipaddress.ip_network("169.254.169.254/32"), ipaddress.ip_network("fd00:ec2::254/128"))
+# NAT64's well-known prefix: an address there is the IPv4 address it carries (RFC 6052).
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+# How long a lookup may take when the request names no connect timeout.
+LOOKUP_S = 10.0
+# How long a looked-up name's addresses are kept, for each transport (the
+# request still goes only to them: pinning holds).
+KEEP_S = 30.0
+# Lookups run here, never on the event loop's default pool, which disk reads
+# for playback share: a dead DNS server can't hold up a stream.
+_LOOKUPS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tapioca-lookup")
 
 
 class Refused(httpx.TransportError):
-    """tapiOca won't send this request (its address, by where it came from)."""
+    """tapiOca won't send this request (its address, by where it came from).
+    `why` says what's wrong without naming the address."""
+
+    def __init__(self, message: str, why: str = "") -> None:
+        super().__init__(message)
+        self.why = why or message
+
+
+class NotFound(Refused, httpx.ConnectError):
+    """The name couldn't be found (its message keeps the system's reason, so
+    callers that read it, such as Plex's trouble(), still can)."""
 
 
 Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
+def _as_ipv4(ip: Address) -> Address:
+    """An IPv6 address that carries an IPv4 one (mapped, or NAT64's), as that IPv4 address."""
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return ip.ipv4_mapped
+        if ip in _NAT64:
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
+
+
+def host_of(url: httpx.URL) -> str:
+    """The name to look up and to check TLS against: the URL's host as sent
+    (IDNA-encoded ASCII), never its Unicode form."""
+    return url.raw_host.decode("ascii")
+
+
 async def _resolve(host: str) -> list[Address]:
-    """The addresses a name has (an address is its own)."""
+    """The addresses a name has (an address is its own). NotFound if none."""
     try:
         return [ipaddress.ip_address(host)]
     except ValueError:
         pass
     loop = asyncio.get_running_loop()
     try:
-        found = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except OSError as e:
-        raise Refused(f"Couldn't find {host}") from e
+        found = await loop.run_in_executor(
+            _LOOKUPS, lambda: socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        )
+    except (OSError, UnicodeError) as e:
+        # (UnicodeError: a name with an empty or overlong label, such as a mistyped "192.168.1..5".)
+        raise NotFound(f"tapiOca can't find {host}: {e}", "a name that can't be found") from e
     out: list[Address] = []
     for *_, sockaddr in found:
         ip = ipaddress.ip_address(sockaddr[0].split("%", 1)[0])
@@ -76,8 +125,7 @@ RESOLVE: Callable[[str], Awaitable[list[Address]]] = _resolve
 
 def _home_or_inside(ip: Address) -> bool:
     """Not on the public internet: private, loopback, unique-local, CGNAT, reserved or unspecified."""
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        return _home_or_inside(ip.ipv4_mapped)
+    ip = _as_ipv4(ip)
     return (
         not ip.is_global or ip.is_private or ip.is_loopback or ip.is_unspecified or ip.is_reserved
     )
@@ -85,8 +133,7 @@ def _home_or_inside(ip: Address) -> bool:
 
 def refusal(ip: Address, kind: str) -> str | None:
     """Why an address may not be asked for this kind, or None."""
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    ip = _as_ipv4(ip)
     if any(ip in net for net in _METADATA):
         return "a cloud metadata address"
     if ip.is_link_local:
@@ -98,65 +145,126 @@ def refusal(ip: Address, kind: str) -> str | None:
     return None
 
 
-async def vet(url: httpx.URL, kind: str) -> Address:
-    """The one address a request to `url` may go to, or Refused."""
+async def _lookup(host: str, timeout: float | None) -> list[Address]:
+    try:
+        found = await asyncio.wait_for(RESOLVE(host), timeout or LOOKUP_S)
+    except TimeoutError:
+        raise httpx.ConnectTimeout(f"Looking up {host} took too long") from None
+    if not found:
+        raise NotFound(f"tapiOca can't find {host}", "a name that can't be found")
+    return found
+
+
+async def lookup(host: str, timeout: float | None = None) -> list[Address]:
+    """A name's addresses, looked up as every request's are: on the lookup
+    pool, within `timeout` (LOOKUP_S if None). NotFound or ConnectTimeout."""
+    return await _lookup(host, timeout)
+
+
+def allowed(host: str, found: list[Address], kind: str) -> list[Address]:
+    """The addresses among `found` a request may go to, in order, or Refused.
+    A typed name keeps its allowed answers (a home name that also answers a
+    link-local address still reaches home); a fixed or data name with any
+    answer refused is refused whole, so DNS can't slip an inside address in."""
+    reasons = [(ip, refusal(ip, kind)) for ip in found]
+    ok = [ip for ip, why in reasons if why is None]
+    bad = [why for _, why in reasons if why is not None]
+    if bad and (kind != TYPED or not ok):
+        raise Refused(f"{host} is {bad[0]}", bad[0])
+    return ok
+
+
+def _host_checked(url: httpx.URL, kind: str) -> str:
+    """The name a request to `url` would look up, once its address is one that may be asked."""
     if kind not in KINDS:
         raise ValueError(kind)
     if url.scheme not in ("http", "https"):
-        raise Refused(f"Only web addresses (http or https), not {url.scheme}:")
-    if url.userinfo:
-        raise Refused("An address with a name or password in it")
-    host = url.host
-    if not host:
-        raise Refused("An address with no host")
-    found = await RESOLVE(host)
-    if not found:
-        raise Refused(f"Couldn't find {host}")
-    for ip in found:
-        why = refusal(ip, kind)
-        if why:
-            # (Every answer must be allowed: a name that answers one allowed and one not is refused.)
-            raise Refused(f"{host} is {why}")
-    return found[0]
+        shown = url.scheme or "no kind of address"
+        raise Refused(f"Only web addresses (http or https), not {shown}", "not a web address")
+    if url.userinfo and kind != TYPED:
+        raise Refused("An address with a name or password in it", "an address with a name or password in it")
+    if not url.raw_host:
+        raise Refused("An address with no host", "an address with no host")
+    return host_of(url)
+
+
+async def vet(url: httpx.URL, kind: str, timeout: float | None = None) -> list[Address]:
+    """The addresses a request to `url` may go to, in order, or Refused."""
+    host = _host_checked(url, kind)
+    return allowed(host, await _lookup(host, timeout), kind)
+
+
+def _connect_timeout(request: httpx.Request) -> float | None:
+    timeouts = request.extensions.get("timeout") or {}
+    return timeouts.get("connect") if isinstance(timeouts, dict) else None
 
 
 class GuardedTransport(httpx.AsyncBaseTransport):
     """Vets every request before it's sent. With no `inner` transport (the
-    real network), it sends to the address it vetted and nowhere else; an
-    `inner` one (the tests' stand-ins) gets the request as it was, after
-    the same decision."""
+    real network), it sends to the addresses it vetted and nowhere else,
+    over connections kept for that name alone; an `inner` one (the tests'
+    stand-ins) gets the request as it was, after the same decision."""
 
     def __init__(self, kind: str, inner: httpx.AsyncBaseTransport | None = None) -> None:
         if kind not in KINDS:
             raise ValueError(kind)
         self.kind = kind
         self.inner = inner
-        self._real: httpx.AsyncHTTPTransport | None = None
+        # (One pool of connections for each scheme, name and port: a kept TLS
+        # connection checked for one name is never used for another.)
+        self._real: dict[tuple[str, str, int | None], httpx.AsyncHTTPTransport] = {}
+        self._kept: dict[str, tuple[float, list[Address]]] = {}
+
+    async def _addresses(self, request: httpx.Request) -> list[Address]:
+        url = request.url
+        if self.inner is not None:
+            return await vet(url, self.kind, _connect_timeout(request))
+        host = _host_checked(url, self.kind)
+        kept = self._kept.get(host)
+        if kept and kept[0] > time.monotonic():
+            return kept[1]
+        found = allowed(host, await _lookup(host, _connect_timeout(request)), self.kind)
+        self._kept[host] = (time.monotonic() + KEEP_S, found)
+        return found
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        ip = await vet(request.url, self.kind)
+        ips = await self._addresses(request)
         if "user-agent" not in request.headers or request.headers["user-agent"].startswith(
             "python-httpx"
         ):
             request.headers["User-Agent"] = USER_AGENT
         if self.inner is not None:
             return await self.inner.handle_async_request(request)
-        if self._real is None:
-            self._real = httpx.AsyncHTTPTransport(trust_env=False)
-        host = request.url.host
-        pinned = request.url.copy_with(host=str(ip))
+        original = request.url
+        host = host_of(original)
+        key = (original.scheme, host, original.port)
+        real = self._real.get(key)
+        if real is None:
+            real = self._real[key] = httpx.AsyncHTTPTransport(trust_env=False)
         if "host" not in request.headers:
-            request.headers["Host"] = request.url.netloc.decode("ascii")
-        if request.url.scheme == "https":
+            request.headers["Host"] = original.netloc.decode("ascii")
+        if original.scheme == "https":
             request.extensions = {**request.extensions, "sni_hostname": host}
-        request.url = pinned
-        return await self._real.handle_async_request(request)
+        try:
+            for n, ip in enumerate(ips):
+                # (The user name and password, if typed, already went into the
+                # client's Authorization header; the address carries neither.)
+                request.url = original.copy_with(host=str(ip), username=None, password=None)
+                try:
+                    return await real.handle_async_request(request)
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    if n == len(ips) - 1:
+                        raise
+            raise Refused(f"{host} has no address to go to", "a name with no address to go to")
+        finally:
+            # (What the caller sees, such as a redirect's base, is the name, never the address.)
+            request.url = original
 
     async def aclose(self) -> None:
         if self.inner is not None:
             await self.inner.aclose()
-        if self._real is not None:
-            await self._real.aclose()
+        for real in self._real.values():
+            await real.aclose()
 
 
 def transport(kind: str, inner: httpx.AsyncBaseTransport | None = None) -> GuardedTransport:
@@ -170,9 +278,26 @@ async def at_home(address: str) -> bool:
     then up to the address's own checks."""
     try:
         url = httpx.URL(address.strip())
-        if not url.host:
+        if not url.raw_host:
             return False
-        found = await RESOLVE(url.host)
-    except (httpx.InvalidURL, Refused, ValueError):
+        found = await _lookup(host_of(url), None)
+    except (httpx.InvalidURL, httpx.TransportError, ValueError, UnicodeError):
         return False
     return any(_home_or_inside(ip) for ip in found)
+
+
+async def typed_refusal(address: str) -> str | None:
+    """Why a typed address will never be sent to, said without the address
+    (a cloud metadata or link-local address, or not a web address), or None.
+    Asked before one is saved, so a refused address is never kept (DL287).
+    A name that can't be found now isn't refused: it may be found later."""
+    try:
+        url = httpx.URL(address.strip())
+        await vet(url, TYPED)
+    except NotFound:
+        return None
+    except Refused as e:
+        return e.why
+    except (httpx.InvalidURL, httpx.TransportError, ValueError, UnicodeError):
+        return None
+    return None

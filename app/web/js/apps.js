@@ -420,7 +420,7 @@ async function loadNotify() {
         await api('/api/notify', { method: 'PUT', body: { ...sent, homeOk: true } });
       }
     }
-    catch (e) { if (e.status !== 409) result.textContent = e.message; return; }
+    catch (e) { result.textContent = e.status === 409 ? 'Not saved.' : e.message; return; }
     const to = rows.filter(r => r.url.trim()).length > 1 ? 'those addresses' : 'that address';
     toast(on.checked ? `Saved. Alerts will be sent to ${to}.` : 'Saved. Alerts aren’t sent anywhere.');
     delete body.dataset.editing;

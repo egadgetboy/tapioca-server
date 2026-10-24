@@ -103,6 +103,10 @@ def live_harness() -> tuple[int, int, str]:
     if not found:
         return 0, 1, (ran.stdout + ran.stderr)[-2000:]
     good, total = int(found.group(1)), int(found.group(2))
+    unchecked = [line.strip() for line in ran.stdout.splitlines() if "(not checked" in line]
+    if unchecked:
+        # (A check the harness couldn't run, such as one that needs FFmpeg, is a gap, never a pass.)
+        return good, len(unchecked), ("Not run:\n" + "\n".join(unchecked) + "\n" + ran.stdout)[-2000:]
     if total == 0 or good > total or ran.returncode != 0:
         # A subprocess error is a failing gate even if it printed "all passed"
         # before aborting. Keep its exit code and diagnostic in the report.
@@ -179,6 +183,12 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="the unit layer only (the live harness takes minutes)",
     )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="where the report goes (docs/security/report-<version>.md; in the image's CI, a folder it can write)",
+    )
     args = parser.parse_args(argv)
 
     passed, failed, tail, unit_exit, unexecuted = unit_layer()
@@ -249,16 +259,21 @@ def main(argv: list[str]) -> int:
             lines.append(f"FAILED ({LAYERS.get(name, ('', 'High'))[1]}): {name}::{test}")
     if live[1]:
         lines += ["", "The live harness:", "", "```", live[2], "```"]
-    report = ROOT / "docs" / "security" / f"report-{__version__}.md"
-    if not args.no_live:
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    report = args.report or ROOT / "docs" / "security" / f"report-{__version__}.md"
 
-    unit_failed = unit_exit != 0 or not any(passed.values()) and not any(failed.values())
+    unit_failed = unit_exit != 0 or (not any(passed.values()) and not any(failed.values()))
     bad = sum(len(v) for v in failed.values()) + live[1] + len(unknown) + (1 if shrank else 0)
     bad += int(unit_failed) + len(missing_layers) + len(new_test_files) + len(unexecuted)
+    # (Printed first, so the run's log always has it; then kept where it was asked to go.)
     print("\n".join(lines))
     print(tail)
+    if not args.no_live:
+        try:
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as e:
+            print(f"The report couldn't be written to {report}: {e}")
+            bad += 1
     if shrank:
         print(
             f"The corpus shrank: {checks} checks, {corpus['checks']} recorded, with no exact reviewed merge for this transition."

@@ -546,7 +546,12 @@ class Notify:
             return Sent(at, f"no answer within {WAIT_S:g} seconds", False, test)
         except httpx.HTTPError as e:
             # (Never what the error says itself, which can name the address.)
-            why = "couldn't connect" if isinstance(e, httpx.ConnectError) else "the request failed"
+            if isinstance(e, safefetch.NotFound):
+                why = "couldn't find that address"
+            elif isinstance(e, safefetch.Refused):
+                why = f"tapiOca won't send to {e.why}"
+            else:
+                why = "couldn't connect" if isinstance(e, httpx.ConnectError) else "the request failed"
             return Sent(at, why, False, test)
         said = f"{status} {reason}".strip()
         if 300 <= status < 400:

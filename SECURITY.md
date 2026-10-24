@@ -30,7 +30,7 @@ tapiOca itself: the server, its page and its API, and tapiOca's own apps. Proble
 
 ## How tapiOca is tested
 
-Every release runs tapiOca's security suite before it's published (`python -m tools.security_suite`): every address tapiOca serves, from every kind of visitor; sign-in tokens; every connection tapiOca makes to another machine; file paths; and known ways of chaining small problems together. A release with a serious finding isn't published. Each finding becomes a test that stays, so it can't come back.
+Every release runs tapiOca's security suite before it's published (`python -m tools.security_suite`): every address tapiOca serves, from every kind of visitor; sign-in tokens; every request tapiOca's own code makes to another machine; file paths; and known ways of chaining small problems together. A release with a serious finding isn't published. Each finding becomes a test that stays, so it can't come back.
 
 ## Signs that a tapiOca server was broken into
 

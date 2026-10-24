@@ -534,3 +534,56 @@ def test_a_file_put_back_on_the_air_isnt_named_when_the_list_is_checked_again(tm
         shutil.copy(part_files["cd1"], third)  # (a good file 3 in its place)
         client.portal.call(jobs.look_again, ctx, jobs.ListCheck(running=True), True)
         assert [(e["reason"], e["part"]) for e in ctx.broken.entries()] == []
+
+
+async def test_a_part_key_tapiOca_wont_use_is_a_program_it_cant_play_never_a_crash(tmp_path):
+    # (The cold audit of 1.44.0: the new part-key check raised PlexError out of resolve_source, so a
+    # Station's stream engine crashed and restarted, with a "station failed" alert each time, where
+    # the program should simply be skipped as unplayable.)
+    from app.config import Settings
+    from app.db import Item
+    from app.library import Library
+    from app.plex import PlexClient
+    from app.sources import resolve_source
+
+    from .fakeplex import FakePlex
+    from .helpers import like_plex
+
+    fp = FakePlex()
+    fp.add_show("100", "Show")
+    fp.add_episode("201", "100", 1, 1, "Pilot", "/nowhere/ep.mkv", 60000)
+    odd = "/library/parts/201/1/%2e%2e/%2e%2e/accounts"
+    fp.episodes["201"]["Media"][0]["Part"][0]["key"] = odd
+    library = Library(PlexClient("http://plex.test", "token", transport=like_plex(fp)))
+    item = Item(position=0, start_ms=0, duration_ms=60000, rating_key="201", kind="episode", title="Pilot",
+                file_path="/nowhere/ep.mkv", part_key=odd)  # fmt: skip
+    got = await resolve_source(Settings(data_dir=tmp_path), library, item)
+    assert got.source is None and got.error and not got.transient, got
+
+
+@pytest.mark.parametrize(
+    "part_key",
+    [
+        "/library/%2e%2e/%2e%2e/accounts",
+        "/library/..%2f..%2faccounts",
+        "/library/parts/1/1/file.mkv%3Fx%3D1",
+        "/library/parts/1/x%5c..%5c..",
+        "/library/parts/1/x%00",
+        "/library/parts/1/%252e%252e/%252e%252e/accounts",
+        "/library/parts/1/1/file.mkv%23frag",
+    ],
+)
+def test_an_encoded_way_out_of_a_part_key_is_refused(part_key):
+    # (The security audit of 1.44.0: percent-encoded traversal passed, reaching other Plex
+    # addresses with the owner's token, on Plex's own host.)
+    from app.plex import PlexClient, PlexError
+
+    with pytest.raises(PlexError):
+        PlexClient("http://plex.test:32400", "tok").stream_url(part_key)
+
+
+def test_a_part_key_with_an_encoded_space_still_plays():
+    from app.plex import PlexClient
+
+    got = PlexClient("http://plex.test:32400", "tok").stream_url("/library/parts/1/2/My%20Movie.mkv")
+    assert got == "http://plex.test:32400/library/parts/1/2/My%20Movie.mkv?X-Plex-Token=tok"

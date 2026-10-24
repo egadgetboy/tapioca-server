@@ -52,6 +52,40 @@ def world(tmp_path_factory):
         yield admin, str(planted)
 
 
+def _raw_get(admin: TestClient, address: str) -> tuple[int, bytes]:
+    """Asks the app with the address exactly as written, as a real server
+    passes it on (the security audit of 1.44.0: TestClient, through httpx,
+    drops "../" segments before the app sees them, so those cases asked a
+    different, harmless address)."""
+    from urllib.parse import unquote
+
+    path, _, query = address.partition("?")
+    cookie = "; ".join(f"{k}={v}" for k, v in admin.cookies.items())
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET",
+        "scheme": "http", "path": unquote(path), "raw_path": path.encode("latin-1"),
+        "query_string": query.encode("latin-1"), "root_path": "",
+        "headers": [(b"host", b"testserver"), (b"x-tapioca-page", b"1"), (b"cookie", cookie.encode())],
+        "client": HOME["client"], "server": ("testserver", 80),
+    }  # fmt: skip
+    said: dict = {"status": 0, "body": b""}
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            said["status"] = message["status"]
+        elif message["type"] == "http.response.body":
+            said["body"] += message.get("body", b"")
+
+    async def ask():
+        await admin.app(scope, receive, send)
+
+    admin.portal.call(ask)
+    return said["status"], said["body"]
+
+
 @pytest.mark.parametrize("route", ROUTES)
 def test_no_route_reads_a_file_outside_what_it_serves(world, route):
     admin, planted = world
@@ -69,6 +103,15 @@ def test_no_route_reads_a_file_outside_what_it_serves(world, route):
             assert SECRET not in got.text, (
                 f"INJ-01: {address} answered with a file from outside: {got.status_code}"
             )
+            # (And as written, "../" and all, as a real server would pass it on.)
+            try:
+                status, body = _raw_get(admin, address)
+            except Exception as e:
+                assert "planted" not in str(e)
+                continue
+            assert SECRET.encode() not in body, (
+                f"INJ-01: {address}, as written, answered with a file from outside: {status}"
+            )
 
 
 def test_the_check_reaches_the_handlers_and_would_see_a_leak(world, tmp_path):
@@ -77,3 +120,6 @@ def test_the_check_reaches_the_handlers_and_would_see_a_leak(world, tmp_path):
     admin, planted = world
     assert admin.get(f"/web/page.css?v={__version__}").status_code == 200
     assert SECRET in Path(planted).read_text()
+    # (The raw asker reaches the handlers too: a real file comes back through it.)
+    status, body = _raw_get(admin, f"/web/page.css?v={__version__}")
+    assert status == 200 and body

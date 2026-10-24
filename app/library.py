@@ -22,6 +22,7 @@ refresh, who's watching, blocking, Plex accounts) stays on the Plex client.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any
@@ -33,6 +34,8 @@ if TYPE_CHECKING:
     from .db import Item
     from .folders import FolderSource
     from .plex import Lookups, PlexClient
+
+log = logging.getLogger(__name__)
 
 PLEX_AWAY = "Plex isn't answering"
 
@@ -107,6 +110,7 @@ class Library:
         self._folders: Callable[[], FolderSource | None] = (
             folders if callable(folders) else (lambda: folders)
         )
+        self._refused_keys: set[str] = set()
 
     @property
     def plex(self) -> PlexClient:
@@ -315,7 +319,17 @@ class Library:
         library's files are only ever read from disk)."""
         if is_folder_key(key):
             return None
-        return self.plex.stream_url(part_key)
+        from .plex import PlexError
+
+        try:
+            return self.plex.stream_url(part_key)
+        except PlexError:
+            # (A file address from Plex that tapiOca won't use: that program can't be played from
+            # Plex, never a crash. The cold audit of 1.44.0. Said once, without the address.)
+            if key not in self._refused_keys:
+                self._refused_keys.add(key)
+                log.warning("Plex gave a file address tapiOca won't use, for %s: it can't be played from Plex", key)
+            return None
 
     def resolution(self, key: str) -> str | None:
         """A program's picture size as its library lists it ("4K", "1080p",

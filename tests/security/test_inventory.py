@@ -28,7 +28,7 @@ def test_every_site_in_the_code_is_declared_and_every_declared_one_is_there(foun
 def test_every_outbound_request_says_where_its_address_comes_from():
     # (DL287, the owner's provenance rule: typed by an Admin, fixed in the code, or from data.)
     for site, what in inventory.EGRESS.items():
-        assert what.split(":", 1)[0] in ("typed", "fixed", "data"), site
+        assert what.split(":", 1)[0] in ("typed", "fixed", "data", "guard"), site
 
 
 def test_no_program_is_started_through_a_shell():
@@ -56,6 +56,10 @@ def test_every_outbound_client_goes_through_safefetch_as_its_declared_kind_and_f
     assert set(guards) == set(inventory.EGRESS)
     for site, (kind, redirects) in guards.items():
         declared = inventory.EGRESS[site].split(":", 1)[0]
+        if declared == "guard":
+            # (Only safefetch itself makes a real connection or looks a name up.)
+            assert site.startswith("app/safefetch.py:"), site
+            continue
         assert kind == declared, (
             f"{site}: its transport is {kind!r}, but it's declared {declared!r}"
         )
@@ -73,3 +77,86 @@ def test_this_version_has_its_security_manifest():
     text = manifest.read_text(encoding="utf-8")
     for n in range(1, 7):
         assert f"\n{n}. **" in text, f"{manifest.name} doesn't answer question {n}"
+
+
+# (The security audit of 1.44.0: the census saw only "httpx.AsyncClient(...)" as written, so an
+# aliased import, httpx.get, urllib, http.client or a raw socket would pass as no way out at all.)
+SNEAKY = '''
+import httpx as hx
+import socket
+import urllib.request
+import http.client
+import asyncio
+from httpx import AsyncClient as AC
+from urllib.request import urlopen
+from socket import create_connection
+
+async def one():
+    AC()
+async def two():
+    hx.AsyncClient()
+async def three():
+    httpx_get = hx.get("http://x")
+def four():
+    urlopen("http://x")
+def five():
+    http.client.HTTPSConnection("x").request("GET", "/")
+def six():
+    socket.socket().connect(("x", 1))
+def seven():
+    create_connection(("x", 1))
+async def eight():
+    await asyncio.get_running_loop().create_connection(None, "x", 1)
+def nine():
+    socket.socket().connect_ex(("x", 1))
+async def ten():
+    await asyncio.get_running_loop().getaddrinfo("x", None)
+'''
+
+
+def _census_of(tmp_path, monkeypatch, source: str):
+    folder = tmp_path / "app"
+    folder.mkdir()
+    (folder / "sneaky.py").write_text(source)
+    monkeypatch.setattr(inventory, "APP", folder)
+    return {s.function for s in inventory.egress_sites()}
+
+
+def test_the_census_sees_every_way_out_however_its_written(tmp_path, monkeypatch):
+    found = _census_of(tmp_path, monkeypatch, SNEAKY)
+    assert found == {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}, found
+
+
+def test_a_client_that_could_route_around_the_guard_or_follow_a_redirect_is_named(tmp_path, monkeypatch):
+    folder = tmp_path / "app"
+    folder.mkdir()
+    (folder / "sneaky.py").write_text(
+        "import httpx\n"
+        "from app import safefetch\n"
+        "async def a():\n    httpx.AsyncClient(transport=safefetch.transport(safefetch.TYPED), proxy='http://p')\n"
+        "async def b():\n    httpx.AsyncClient(transport=safefetch.transport(safefetch.TYPED), mounts={})\n"
+        "async def c(client):\n    await client.get('http://x', follow_redirects=True)\n"
+        "async def d():\n    httpx.AsyncClient(transport=safefetch.transport(safefetch.TYPED), trust_env=True)\n"
+    )
+    monkeypatch.setattr(inventory, "APP", folder)
+    assert {s.function for s in inventory.unsafe_options()} == {"a", "b", "c", "d"}
+
+
+def test_no_client_in_tapiOca_routes_around_the_guard_or_follows_a_redirect():
+    assert inventory.unsafe_options() == []
+
+
+@pytest.mark.parametrize("how", ["connect", "connect_ex", "sendto"])
+def test_the_suites_guard_stops_every_way_a_socket_leaves_this_machine(how):
+    # (The security audit of 1.44.0: connect_ex and UDP's sendto weren't stopped.)
+    import socket
+
+    from .conftest import LeftTheMachine
+
+    kind = socket.SOCK_DGRAM if how == "sendto" else socket.SOCK_STREAM
+    with socket.socket(socket.AF_INET, kind) as sock, pytest.raises(LeftTheMachine):
+        sock.setblocking(False)
+        if how == "sendto":
+            sock.sendto(b"x", ("192.0.2.1", 53))
+        else:
+            getattr(sock, how)(("192.0.2.1", 80))

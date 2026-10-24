@@ -123,8 +123,11 @@ def _ask(kind: str, url: str) -> int:
         ("typed", "file:///etc/passwd", False),
         ("typed", "gopher://plex.home/", False),
         ("typed", "ftp://plex.home/", False),
-        # (SSRF-01: a name or password in the address.)
-        ("typed", "http://plex.home@public.example/", False),
+        # (SSRF-01: a name or password in the address. Typed, it's the Admin's sign-in for that
+        # address, as 1.43.0 sent it (the cold audit of 1.44.0); from data or fixed, refused.)
+        ("typed", "http://alice:s3cret@plex.home/", True),
+        ("data", "http://public.example@public.example/", False),
+        ("fixed", "https://u:p@public.example/releases", False),
         # (Fixed and from data: public only.)
         ("fixed", "https://public.example/releases", True),
         ("fixed", "http://plex.home/", False),
@@ -157,7 +160,8 @@ def test_with_no_stand_in_the_request_goes_to_the_address_vetted_and_keeps_its_n
             pass
 
         async def handle_async_request(self, request):
-            sent.append(request)
+            # (As it was when sent: the transport puts the name back on the request afterward.)
+            sent.append((request.url, dict(request.headers), dict(request.extensions)))
             return httpx.Response(200)
 
     monkeypatch.setattr(safefetch.httpx, "AsyncHTTPTransport", Real)
@@ -167,15 +171,260 @@ def test_with_no_stand_in_the_request_goes_to_the_address_vetted_and_keeps_its_n
         async with httpx.AsyncClient(
             transport=safefetch.transport("typed"), follow_redirects=False
         ) as c:
-            await c.get("https://plex.home:32400/identity")
+            return await c.get("https://alice:s3cret@plex.home:32400/identity")
 
-    asyncio.run(go())
-    (request,) = sent
-    assert request.url.host == "192.168.50.2" and request.url.port == 32400
-    assert request.headers["host"] == "plex.home:32400"
-    assert request.extensions["sni_hostname"] == "plex.home"
-    assert request.headers["user-agent"].startswith("tapiOca/")
+    got = asyncio.run(go())
+    ((url, headers, extensions),) = sent
+    assert url.host == "192.168.50.2" and url.port == 32400
+    assert headers["host"] == "plex.home:32400"
+    assert extensions["sni_hostname"] == "plex.home"
+    assert headers["user-agent"].startswith("tapiOca/")
+    # (A typed name and password go only as that request's Basic sign-in, never in the address.)
+    assert not url.userinfo and headers["authorization"].startswith("Basic ")
+    # (What the caller sees afterward is the name, never the address: the cold audit of 1.44.0,
+    # where the away-address check joined a redirect to the bare address.)
+    assert got.request.url.host == "plex.home"
 
 
 def test_a_refusal_is_a_transport_error_every_caller_already_handles():
     assert issubclass(safefetch.Refused, httpx.TransportError)
+
+
+# --- The cold and security audits of 1.44.0: the lookup itself -----------------------------------
+
+import asyncio  # noqa: E402
+import socket  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+
+def _system_names(monkeypatch, answer):
+    """The real lookup (safefetch._resolve), with the system's getaddrinfo answering `answer(host)`."""
+    monkeypatch.setattr(safefetch, "RESOLVE", safefetch._resolve)
+    monkeypatch.setattr(safefetch.socket, "getaddrinfo", lambda host, *a, **k: answer(host))
+
+
+def _info(*ips):
+    return [(socket.AF_INET6 if ":" in ip else socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0))
+            for ip in ips]  # fmt: skip
+
+
+def test_a_slow_lookup_ends_with_the_requests_connect_timeout_and_never_holds_up_disk_reads(monkeypatch):
+    # (Audit finding: the lookup ran outside the client's timeout, on the default pool that playback's
+    # disk reads share, so a dead DNS server for Plex could stall a stream.)
+    gate = threading.Event()
+
+    def hang(host):
+        gate.wait(5)
+        return _info("192.168.1.9")
+
+    _system_names(monkeypatch, hang)
+
+    async def go():
+        began = time.monotonic()
+        client = httpx.AsyncClient(transport=safefetch.transport("typed"), timeout=httpx.Timeout(2, connect=0.3))
+        asks = [asyncio.ensure_future(client.get(f"http://slow{n}.example/")) for n in range(12)]
+        await asyncio.sleep(0.05)
+        read_began = time.monotonic()
+        await asyncio.to_thread(lambda: None)  # (a disk read, on the default pool)
+        disk_wait = time.monotonic() - read_began
+        results = await asyncio.gather(*asks, return_exceptions=True)
+        await client.aclose()
+        return time.monotonic() - began, disk_wait, results
+
+    try:
+        took, disk_wait, results = asyncio.run(go())
+    finally:
+        gate.set()
+    assert all(isinstance(r, httpx.ConnectTimeout) for r in results), results
+    assert took < 1.5, took
+    assert disk_wait < 0.5, disk_wait
+
+
+@pytest.mark.parametrize("address", ["http://192.168.1..5:8989/", "http://" + "a" * 70 + ".example/"])
+def test_a_mistyped_name_is_a_connect_error_callers_handle_never_a_unicode_error(monkeypatch, address):
+    # (Audit finding: an empty or overlong label made the lookup raise UnicodeError, a 500 on Test.)
+    def _idna(host):
+        host.encode("idna")  # (what the system's lookup does first)
+        return _info("192.168.1.9")
+
+    _system_names(monkeypatch, _idna)
+
+    async def go():
+        async with httpx.AsyncClient(transport=safefetch.transport("typed")) as c:
+            return await c.get(address)
+
+    with pytest.raises(httpx.ConnectError) as caught:
+        asyncio.run(go())
+    assert isinstance(caught.value, safefetch.NotFound)
+
+
+def test_a_name_not_found_says_so_in_the_systems_words(monkeypatch):
+    # (Audit finding: Plex's trouble() read "nothing answered" for a mistyped PLEX_URL.)
+    def missing(host):
+        raise socket.gaierror(-2, "Name or service not known")
+
+    _system_names(monkeypatch, missing)
+    from app.plex import _connection_kind
+
+    async def go():
+        async with httpx.AsyncClient(transport=safefetch.transport("typed")) as c:
+            return await c.get("http://plex.example:32400/")
+
+    with pytest.raises(httpx.ConnectError) as caught:
+        asyncio.run(go())
+    assert _connection_kind(caught.value) == "unknown-host"
+
+
+def test_a_name_in_another_script_is_looked_up_as_sent(monkeypatch):
+    # (Audit finding: faß.de was looked up as fass.de, a different domain, while Host said xn--fa-hia.de.)
+    asked: list[str] = []
+
+    def answer(host):
+        asked.append(host)
+        return _info("93.184.216.34")
+
+    _system_names(monkeypatch, answer)
+    found = asyncio.run(safefetch.vet(httpx.URL("https://faß.de/"), "data"))
+    assert asked == ["xn--fa-hia.de"] and found == [ipaddress.ip_address("93.184.216.34")]
+
+
+def _server(host: str):
+    """A plain HTTP answer on host:port, on this machine; its port, and how many it answered."""
+    sock = socket.create_server((host, 0))
+    port, came = sock.getsockname()[1], []
+
+    def run():
+        while True:
+            try:
+                conn, _ = sock.accept()
+            except OSError:
+                return
+            came.append(1)
+            conn.recv(4096)
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            conn.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return sock, port, came
+
+
+def test_every_allowed_address_is_tried_in_order(monkeypatch):
+    # (Audit finding: only the first answer was tried; a name whose first address doesn't answer failed.)
+    sock, port, came = _server("127.0.0.3")
+    try:
+        async def resolve(host):
+            return [ipaddress.ip_address("127.0.0.2"), ipaddress.ip_address("127.0.0.3")]
+
+        monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+
+        async def go():
+            async with httpx.AsyncClient(transport=safefetch.transport("typed"), timeout=3) as c:
+                return await c.get(f"http://plex.home:{port}/")
+
+        assert asyncio.run(go()).text == "ok" and came == [1]
+    finally:
+        sock.close()
+
+
+def test_a_typed_name_keeps_its_allowed_answers_and_a_data_name_is_refused_whole(monkeypatch):
+    # (Audit finding: a home name that also answers fe80:: was refused. Data stays strict: rebinding.)
+    async def resolve(host):
+        return [ipaddress.ip_address("fe80::1"), ipaddress.ip_address("192.168.1.9")]
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+    assert asyncio.run(safefetch.vet(httpx.URL("http://nas.home/"), "typed")) == [ipaddress.ip_address("192.168.1.9")]
+    with pytest.raises(safefetch.Refused):
+        asyncio.run(safefetch.vet(httpx.URL("http://nas.example/"), "data"))
+
+
+@pytest.mark.parametrize(
+    "ip, kind, ok",
+    [
+        ("64:ff9b::5db8:d822", "fixed", True),  # (93.184.216.34, through NAT64: public)
+        ("64:ff9b::a9fe:a9fe", "typed", False),  # (169.254.169.254: the metadata address)
+        ("64:ff9b::c0a8:109", "data", False),  # (192.168.1.9: home)
+    ],
+)
+def test_a_nat64_address_is_judged_by_the_ipv4_address_it_carries(ip, kind, ok):
+    # (Audit finding: on a DNS64 network, GitHub's answers were "reserved", so the update check always failed.)
+    assert (safefetch.refusal(ipaddress.ip_address(ip), kind) is None) is ok
+
+
+def test_each_name_has_its_own_connections_so_tls_is_never_shared(monkeypatch):
+    # (Audit finding: connections were kept by the pinned address, so a TLS connection checked for one
+    # name could carry a request for another name at the same address.)
+    made: list[object] = []
+
+    class Real(httpx.AsyncBaseTransport):
+        def __init__(self, **_):
+            made.append(self)
+
+        async def handle_async_request(self, request):
+            return httpx.Response(200)
+
+    monkeypatch.setattr(safefetch.httpx, "AsyncHTTPTransport", Real)
+
+    async def resolve(host):
+        return [ipaddress.ip_address("93.184.216.34")]
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+
+    async def go():
+        async with httpx.AsyncClient(transport=safefetch.transport("data")) as c:
+            await c.get("https://good.example/")
+            await c.get("https://evil.example/")
+            await c.get("https://good.example/again")
+
+    asyncio.run(go())
+    assert len(made) == 2
+
+
+def test_a_name_is_looked_up_once_while_its_answer_is_kept(monkeypatch):
+    # (Audit finding: every request did a fresh lookup, on browsing's and pictures' hot path.)
+    asked: list[str] = []
+
+    class Real(httpx.AsyncBaseTransport):
+        def __init__(self, **_):
+            pass
+
+        async def handle_async_request(self, request):
+            return httpx.Response(200)
+
+    monkeypatch.setattr(safefetch.httpx, "AsyncHTTPTransport", Real)
+
+    async def resolve(host):
+        asked.append(host)
+        return [ipaddress.ip_address("192.168.1.9")]
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+
+    async def go():
+        async with httpx.AsyncClient(transport=safefetch.transport("typed")) as c:
+            for _ in range(5):
+                await c.get("http://plex.home:32400/library/sections")
+
+    asyncio.run(go())
+    assert asked == ["plex.home"]
+
+
+@pytest.mark.parametrize(
+    "address, why",
+    [
+        ("http://169.254.169.254/latest/meta-data/", "a cloud metadata address"),
+        ("http://[::ffff:169.254.169.254]/x", "a cloud metadata address"),
+        ("http://[fe80::1]/x", "a link-local address"),
+        ("ftp://192.168.1.9/x", "not a web address"),
+        ("http://192.168.1.9:8123/hook", None),
+        ("http://nowhere-yet.example/hook", None),
+    ],
+)
+def test_a_typed_address_that_will_never_be_sent_to_is_named_before_saving(monkeypatch, address, why):
+    # (Audit finding: homeOk saved a metadata or link-local address, which every send then refused.)
+    async def resolve(host):
+        if host == "nowhere-yet.example":
+            raise safefetch.NotFound("tapiOca can't find it", "a name that can't be found")
+        return [ipaddress.ip_address(host)]
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+    assert asyncio.run(safefetch.typed_refusal(address)) == why

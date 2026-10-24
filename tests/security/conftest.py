@@ -19,7 +19,7 @@ class LeftTheMachine(AssertionError):
 def no_network(monkeypatch):
     real = socket.socket.connect
 
-    def connect(self, address):
+    def _check(address):
         host = address[0] if isinstance(address, tuple) else address
         try:
             ip = ipaddress.ip_address(str(host).split("%", 1)[0])
@@ -27,6 +27,23 @@ def no_network(monkeypatch):
             ip = None  # (a Unix socket's path)
         if ip is not None and not ip.is_loopback:
             raise LeftTheMachine(f"A security test tried to reach {host}: the suite never leaves this machine")
+
+    def connect(self, address):
+        _check(address)
         return real(self, address)
 
+    real_ex, real_sendto = socket.socket.connect_ex, socket.socket.sendto
+
+    def connect_ex(self, address):
+        _check(address)
+        return real_ex(self, address)
+
+    def sendto(self, data, *rest):
+        # (sendto(data, address) or sendto(data, flags, address): the address is last.)
+        _check(rest[-1])
+        return real_sendto(self, data, *rest)
+
     monkeypatch.setattr(socket.socket, "connect", connect)
+    # (The security audit of 1.44.0: connect_ex and UDP's sendto went around the guard.)
+    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
+    monkeypatch.setattr(socket.socket, "sendto", sendto)

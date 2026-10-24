@@ -262,7 +262,7 @@ function arrRow(app, a, st) {
         await api('/api/arr', { method: 'PUT', body: { ...body(), homeOk: true } });
       }
     }
-    catch (e) { if (e.status !== 409) result.textContent = e.message; return; }
+    catch (e) { result.textContent = e.status === 409 ? 'Not saved.' : e.message; return; }
     toast(`Saved. ${meta.name} is ${on.checked ? 'on' : 'off'}.`);
     delete $('#arrBody').dataset.editing;
     loadArr(); loadBroken();

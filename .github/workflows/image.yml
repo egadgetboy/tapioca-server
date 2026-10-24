@@ -163,7 +163,7 @@ jobs:
       # printed here, for the release's readiness record.
       - name: Security suite
         timeout-minutes: 30
-        run: docker run --rm --init -e COLUMNS=400 -e GITHUB_SHA -e GITHUB_RUN_ID stationplay:test python -m tools.security_suite
+        run: docker run --rm --init -e COLUMNS=400 -e GITHUB_SHA -e GITHUB_RUN_ID stationplay:test python -m tools.security_suite --report /tmp/security-report.md
       # What the tested image was made of (tools/sbom.py), for release.yml
       # to add to the release: made after the tests, and kept with this run.
       - name: Made of

@@ -882,3 +882,15 @@ def test_a_new_arr_address_at_home_is_saved_only_once_the_admin_says_yes(world):
     # (A public address asks nothing.)
     public = c.put("/api/arr", json={"app": "radarr", "url": "http://radarr.example.com:7878", "key": "abc123", "on": True})
     assert public.status_code == 200, public.text
+
+
+def test_an_arr_address_that_will_never_be_reached_isnt_saved_even_when_the_admin_says_yes(world):
+    # (The security audit of 1.44.0: homeOk saved a metadata or link-local address.)
+    c = world.client
+    for bad in ("http://169.254.169.254:8989", "http://[fe80::1]:8989"):
+        got = c.put("/api/arr", json={"app": "sonarr", "url": bad, "key": world.sonarr.key, "on": True, "homeOk": True})
+        assert got.status_code == 400 and got.json()["detail"].startswith("tapiOca won't connect to that address"), got.text
+    assert c.get("/api/arr").json()["apps"]["sonarr"]["url"] == "http://sonarr.test:8989"
+    # (Testing one says why, never just the error's name: the cold audit of 1.44.0.)
+    tested = c.post("/api/arr/test", json={"app": "sonarr", "url": "http://169.254.169.254:8989", "key": world.sonarr.key})
+    assert tested.status_code == 400 and "cloud metadata address" in tested.json()["detail"], tested.text
