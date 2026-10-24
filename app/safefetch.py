@@ -130,7 +130,13 @@ async def _resolve(host: str) -> list[Address]:
             _LOOKUPS, lambda: socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         )
         _FLYING[key] = flying
-        flying.add_done_callback(lambda _: _FLYING.pop(key, None))
+
+        def done(f: asyncio.Future) -> None:
+            _FLYING.pop(key, None)
+            if not f.cancelled():
+                f.exception()  # (read, so a lookup no one still waits for logs nothing)
+
+        flying.add_done_callback(done)
     try:
         # (Shielded: one asker's time limit never ends the lookup for the others.)
         found = await asyncio.shield(flying)

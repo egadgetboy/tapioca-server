@@ -627,3 +627,24 @@ async def test_a_refused_part_key_says_so_never_file_not_found(tmp_path):
                 file_path="/nowhere/ep.mkv", part_key=odd)  # fmt: skip
     got = await resolve_source(Settings(data_dir=tmp_path), library, item)
     assert got.error == "Plex gave a file address tapiOca won't use", got
+
+
+def test_a_password_with_an_at_sign_is_hidden_whole():
+    from app.ffmpeg import redact
+
+    said = redact("Opening http://u:p@ss@plex.example:32400/x")
+    assert said == "Opening http://plex.example:32400/x", said
+
+
+def test_the_console_log_hides_tokens_and_sign_ins_too(capsys):
+    # (The security audit's last round: only the Logs tab's buffer was redacted, never stdout.)
+    import logging
+
+    from app import main as server
+
+    handler = logging.StreamHandler()
+    server.redact_console(handler)
+    record = logging.LogRecord("t", logging.INFO, __file__, 1, "Opening %s", ("http://u:pw@plex.example/x?X-Plex-Token=abc",), None)
+    handler.handle(record)
+    said = capsys.readouterr().err
+    assert "pw" not in said and "abc" not in said and "plex.example" in said, said

@@ -553,3 +553,29 @@ def test_a_file_address_says_its_not_a_web_address():
     with pytest.raises(safefetch.Refused) as caught:
         asyncio.run(safefetch.vet(httpx.URL("/etc/passwd"), "typed"))
     assert str(caught.value) == "That isn't a web address (http or https)"
+
+
+def test_a_failed_lookup_nobody_waits_for_leaves_no_error_in_the_log(monkeypatch, caplog):
+    # (The security audit's last round: each abandoned failed lookup logged "Future exception was
+    # never retrieved" at ERROR, flooding the Logs tab in an outage.)
+    import gc
+    import logging
+
+    gate = threading.Event()
+
+    def answer(host):
+        gate.wait(2)
+        raise socket.gaierror(-2, "Name or service not known")
+
+    _system_names(monkeypatch, answer)
+
+    async def go():
+        with pytest.raises(httpx.ConnectTimeout):
+            await safefetch.lookup("dead.example", 0.05)
+        gate.set()
+        await asyncio.sleep(0.2)  # (the lookup ends, with no one waiting)
+
+    with caplog.at_level(logging.ERROR, logger="asyncio"):
+        asyncio.run(go())
+        gc.collect()
+    assert not [r for r in caplog.records if "never retrieved" in r.getMessage()], caplog.text

@@ -133,7 +133,7 @@ async def run_to_end(args: list[str], timeout_s: float) -> tuple[int, str]:
     return proc.returncode or 0, err.decode(errors="replace")[-300:].strip()
 
 
-_USERINFO = re.compile(r"(?i)\b(https?://)[^/\s@]+@")
+_USERINFO = re.compile(r"(?i)\b(https?://)[^/\s]*@")
 
 
 def redact(text: str) -> str:
