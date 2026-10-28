@@ -927,3 +927,46 @@ def test_no_workflow_compares_with_a_commit_id():
         for n, line in enumerate(f.read_text().splitlines(), 1):
             if re.search(r"\bgit\b", line) and commit.search(line):
                 raise AssertionError(f"{f.name}:{n} compares with a commit ID: {line.strip()}")
+
+
+def test_the_readme_checks_signatures_with_every_key_a_release_was_signed_with():
+    """release-signing.pub signs from 1.44.3 on; 1.44.2 was signed by the key
+    before it. The README's allowed_signers lines check both."""
+    readme = (ROOT / "README.md").read_text()
+    current = " ".join((ROOT / "release-signing.pub").read_text().split()[:2])
+    for key in (current, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC"):
+        assert f'tapioca-release namespaces="tapioca-release" {key}' in readme, key
+
+
+def test_the_checks_own_tests_print_as_text(tmp_path):
+    """A tool's tests print what the tool prints, ::error:: lines among them:
+    GitHub reads that output as text, never as the run's own errors, and a
+    failing test still fails the step."""
+    text = (ROOT / ".github" / "workflows" / "gates.yml").read_text()
+    lines = text.split("- name: The checks' own tests\n", 1)[1].splitlines()
+    assert lines[0].strip() == "run: |"
+    body = []
+    for line in lines[1:]:
+        if line.strip() and not line.startswith(" " * 10):
+            break
+        body.append(line[10:])
+    script = "\n".join(body)
+    names = sorted(set(re.findall(r"tools/test_\w+\.py", script)))
+    assert names
+    (tmp_path / "tools").mkdir()
+    for n in names:
+        (tmp_path / n).write_text('print("::error::from a test")\n')
+    ran = subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    said = ran.stdout.splitlines()
+    stops = [s for s in said if s.startswith("::stop-commands::")]
+    assert len(stops) == 1
+    token = stops[0].removeprefix("::stop-commands::")
+    assert len(token) >= 32 and f"::{token}::" in said
+    begun, resumed = said.index(stops[0]), said.index(f"::{token}::")
+    printed = [i for i, s in enumerate(said) if s == "::error::from a test"]
+    assert len(printed) == len(names) and all(begun < i < resumed for i in printed)
+    (tmp_path / names[0]).write_text("raise SystemExit(1)\n")
+    failed = subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+    assert failed.returncode != 0
+    assert failed.stdout.splitlines()[-1].startswith("::error::")

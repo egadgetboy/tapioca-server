@@ -40,7 +40,6 @@ Don't rename them.
 ## Code and history
 - The Python package and module names (`app`, `stationplay` in pyproject.toml).
 - Published release notes, docs/releases/v1.33.1.md and earlier: never rewritten.
-- release-signing.pub, the owner's key, with its comment "StationPlay release signing".
 - tests/fakeplex.py: never edited.
 - The long test runs' switches (`STATIONPLAY_SOAK`, `STATIONPLAY_SOAK_MINUTES`, `STATIONPLAY_REALWORLD`): only developers set them.
 

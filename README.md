@@ -1559,10 +1559,11 @@ To update, get the new source, build it under the new version, and change `image
 
 ### Checking a release's signature
 
-Each release's zip comes with an SSH signature, `tapioca-<version>.zip.sig`, made by the key in the repo's `release-signing.pub`. To check one, put this line in a file named `allowed_signers`:
+Each release's zip comes with an SSH signature, `tapioca-<version>.zip.sig`. From 1.44.3 on, it's made by the key in the repo's `release-signing.pub`; 1.44.2 was signed by the key before it. To check any of them, put these two lines in a file named `allowed_signers`:
 
 ```
-tapioca-release namespaces="tapioca-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC StationPlay release signing
+tapioca-release namespaces="tapioca-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN2ZQ/9Bzx2Dle4Q3fkBOpfGuEAZsKHgqAciLMQJ4ahr tapiOca release signing
+tapioca-release namespaces="tapioca-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC
 ```
 
 Then, in the folder with the zip and its signature, run:

@@ -87,7 +87,7 @@ COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py tools/gpl_source.p
 COPY tools/security_suite.py tools/attack_check.py tools/security_corpus.json tools/security_exceptions.json ./tools/
 COPY tools/mutate.py tools/mutation_targets.json tools/mutation_accepted.json ./tools/
 COPY tools/logos/letters.py ./tools/logos/
-COPY .github/workflows/release.yml .github/workflows/image.yml ./.github/workflows/
+COPY .github/workflows ./.github/workflows/
 COPY tests ./tests
 RUN chmod -R a+rX pytest.ini pyproject.toml tapioca-server.yaml docker-compose.yml Dockerfile README.md SECURITY.md .github docs unraid tools tests
 USER 1000:1000
