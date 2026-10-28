@@ -1,6 +1,6 @@
 {
-  "version": "1.44.2",
+  "version": "1.44.3",
   "new": [
-    "Trusted certificates brought up to date"
+    "Sign out always takes you off a device's list"
   ]
 }
