@@ -1,0 +1,23 @@
+{
+  "about": "The key decisions mutation testing checks (the plan's release gate, DL369; tools/mutate.py): each a file, the functions in it that make the decision, and the command that runs its tests. S4's state machine and reply classifier, the selection contract and the play plan are added in the releases that build them.",
+  "targets": {
+    "viewing-decision": {
+      "file": "app/viewing.py",
+      "functions": [
+        "Blocks.hit",
+        "Blocks.meets",
+        "Level.limited",
+        "Level.allows",
+        "Level.allows_reach",
+        "Level.why_not",
+        "blocked_why",
+        "Viewer.unchecked",
+        "Viewer.sees",
+        "Viewing.sees_station",
+        "Viewing.may_watch",
+        "Viewing.allowed_by_hand"
+      ],
+      "tests": "python3 -m pytest -q -x -p no:cacheprovider tests/test_viewing_decision.py tests/test_viewing.py tests/test_limits_by_what.py tests/test_program_check.py tests/test_station_access.py tests/test_access.py"
+    }
+  }
+}

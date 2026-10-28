@@ -1,0 +1,53 @@
+name: gates
+
+# The gates checked by CI, not by hand: each release's manifest, the size
+# ratchet on app/main.py, copied code, the standing rules in CLAUDE.md, the
+# linters on changed lines, strict types on new modules, and the pinned
+# dependencies scanned. Minutes, Ubuntu; the tools are pinned, and never ship.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: The checks' own tests
+        run: for t in tools/test_release_gate.py tools/test_changed_lines.py tools/test_dep_scan.py tools/test_dupes.py tools/test_size_ratchet.py tools/test_claude_rules.py tools/test_mutate.py; do python3 "$t"; done
+      - name: The gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/release_gate.py --fetch-only  # (the history and tags: the checks below compare with them)
+          python3 tools/release_gate.py lint
+          python3 tools/size_ratchet.py
+          python3 tools/dupes.py
+          python3 tools/claude_rules.py
+      - name: The plan can be read
+        env:
+          PLAN_READ_TOKEN: ${{ secrets.PLAN_READ_TOKEN }}
+        run: python3 tools/release_gate.py --check-plan-token
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"  # (the image's)
+      - name: Linters, on changed lines; dead code; strict types on new modules
+        run: |
+          set -o pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          python3 -m venv "$RUNNER_TEMP/lint"
+          "$RUNNER_TEMP/lint/bin/pip" install --quiet ruff==0.14.2 vulture==2.14 mypy==2.4.0 -r requirements.txt || fail "couldn't install the linters"
+          # (ruff's rules and complexity, on lines changed since the last release.)
+          { "$RUNNER_TEMP/lint/bin/ruff" check --output-format concise --extend-select C901 . || true; } | python3 tools/changed_lines.py server || fail "ruff found something on a changed line (above)"
+          # (Dead code, at vulture's high confidence: none, so all of it.)
+          "$RUNNER_TEMP/lint/bin/vulture" app --min-confidence 80 | sed 's/^/::error::/' || fail "vulture found dead code"
+          # (Strict types on each module added since 1.44.2.)
+          new=$(git diff --name-only --diff-filter=A v1.44.2 HEAD -- 'app/*.py' 'app/**/*.py')
+          if [ -n "$new" ]; then "$RUNNER_TEMP/lint/bin/mypy" --strict --follow-imports=silent $new || fail "mypy --strict on new modules (above)"; fi
+      - name: Dependencies scanned
+        run: python3 tools/dep_scan.py pypi requirements.txt "$RUNNER_TEMP/sbom.json"

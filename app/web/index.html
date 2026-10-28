@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="en"__THEME__>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tapiOca Server</title>
+<link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico?v=2" sizes="48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+<!-- As an app (added to a home screen, or installed on a computer): in a
+     window of its own, in the page's colors, below an iPhone's status bar.
+     (The manifest is asked for with this browser's cookies, for a sign-in
+     in front of tapiOca, such as Cloudflare Access.) -->
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="tapiOca">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="stylesheet" href="/web/page.css?v=__VERSION__">
+</head>
+<body>
+<svg class="sprite" aria-hidden="true">
+  <!-- tapiOca's wordmark (the brand kit's, as outlines): its letters and ring in the
+       text color (white on dark, ink on light, as the kit's -on-dark and -on-light
+       files are), and the pearl always Signal Teal. -->
+  <symbol id="tp-word" viewBox="0 0 472.70 99.00"><g transform="translate(-0.600,82.500) scale(1.00000)"><path d="M0.6000000000000001 -42.0V-50.900000000000006L12.200000000000001 -55.6L21.0 -72.5H32.6V-57.1H56.6V-42.0H32.6V-25.200000000000003Q32.6 -19.0 35.1 -16.5Q37.6 -14.0 44.2 -14.0Q48.400000000000006 -14.0 51.650000000000006 -14.75Q54.900000000000006 -15.5 57.6 -16.7V-1.3Q54.6 -0.2 49.7 0.7000000000000001Q44.800000000000004 1.6 39.6 1.6Q30.1 1.6 24.05 -1.3Q18.0 -4.2 15.100000000000001 -9.65Q12.200000000000001 -15.100000000000001 12.200000000000001 -22.400000000000002V-42.0Z M113.10000000000001 0.0 110.5 -20.6 113.20000000000002 -28.5 110.5 -36.4 113.10000000000001 -57.1H134.3L130.7 -28.6L134.3 0.0ZM117.9 -28.5Q116.5 -19.5 112.35000000000001 -12.7Q108.20000000000002 -5.9 101.85000000000001 -2.1500000000000004Q95.5 1.6 87.4 1.6Q79.0 1.6 72.65 -2.1500000000000004Q66.30000000000001 -5.9 62.70000000000001 -12.75Q59.10000000000001 -19.6 59.10000000000001 -28.5Q59.10000000000001 -37.6 62.70000000000001 -44.400000000000006Q66.30000000000001 -51.2 72.65 -55.0Q79.0 -58.800000000000004 87.4 -58.800000000000004Q95.5 -58.800000000000004 101.85000000000001 -55.050000000000004Q108.20000000000002 -51.300000000000004 112.4 -44.550000000000004Q116.60000000000001 -37.800000000000004 117.9 -28.5ZM79.80000000000001 -28.5Q79.80000000000001 -24.3 81.55000000000001 -21.0Q83.30000000000001 -17.7 86.4 -15.85Q89.5 -14.0 93.5 -14.0Q97.70000000000002 -14.0 101.4 -15.85Q105.10000000000001 -17.7 107.9 -21.0Q110.70000000000002 -24.3 112.10000000000001 -28.5Q110.70000000000002 -32.800000000000004 107.9 -36.10000000000001Q105.10000000000001 -39.400000000000006 101.4 -41.300000000000004Q97.70000000000002 -43.2 93.5 -43.2Q89.5 -43.2 86.4 -41.300000000000004Q83.30000000000001 -39.400000000000006 81.55000000000001 -36.10000000000001Q79.80000000000001 -32.800000000000004 79.80000000000001 -28.5Z M141.1 -57.1H161.6V-40.7L160.7 -38.300000000000004V-22.3L161.6 -17.6V16.5H141.1ZM155.1 -28.5Q156.4 -37.800000000000004 160.55 -44.550000000000004Q164.7 -51.300000000000004 171.1 -55.050000000000004Q177.5 -58.800000000000004 185.6 -58.800000000000004Q194.0 -58.800000000000004 200.35 -55.0Q206.7 -51.2 210.25 -44.400000000000006Q213.8 -37.6 213.8 -28.5Q213.8 -19.6 210.25 -12.75Q206.7 -5.9 200.35 -2.1500000000000004Q194.0 1.6 185.6 1.6Q177.5 1.6 171.1 -2.1500000000000004Q164.7 -5.9 160.6 -12.7Q156.5 -19.5 155.1 -28.5ZM193.2 -28.5Q193.2 -32.800000000000004 191.45 -36.10000000000001Q189.7 -39.400000000000006 186.55 -41.300000000000004Q183.4 -43.2 179.4 -43.2Q175.3 -43.2 171.60000000000002 -41.300000000000004Q167.9 -39.400000000000006 165.10000000000002 -36.10000000000001Q162.3 -32.800000000000004 160.8 -28.5Q162.3 -24.3 165.10000000000002 -21.0Q167.9 -17.7 171.60000000000002 -15.85Q175.3 -14.0 179.4 -14.0Q183.4 -14.0 186.55 -15.85Q189.7 -17.7 191.45 -21.0Q193.2 -24.3 193.2 -28.5Z M219.6 -58.0 229.9 -56.0 240.1 -58.0V0.0H219.6ZM229.8 -62.7Q224.5 -62.7 221.2 -65.35Q217.9 -68.0 217.9 -72.60000000000001Q217.9 -77.10000000000001 221.2 -79.80000000000001Q224.5 -82.5 229.8 -82.5Q235.3 -82.5 238.55 -79.80000000000001Q241.8 -77.10000000000001 241.8 -72.60000000000001Q241.8 -68.0 238.55 -65.35Q235.3 -62.7 229.8 -62.7Z" fill="currentColor"/><path d="M246.200,-35.000 a36.000,36.000 0 1,0 72.000,0 a36.000,36.000 0 1,0 -72.000,0 Z M258.700,-35.000 a23.500,23.500 0 1,0 47.000,0 a23.500,23.500 0 1,0 -47.000,0 Z" fill="currentColor" fill-rule="evenodd"/><path d="M269.600,-35.000 a12.600,12.600 0 1,0 25.200,0 a12.600,12.600 0 1,0 -25.200,0 Z" fill="#00BFA6"/><path d="M395.4 -24.1Q394.6 -16.400000000000002 389.8 -10.600000000000001Q385.0 -4.800000000000001 377.35 -1.6000000000000003Q369.7 1.6 360.2 1.6Q349.7 1.6 341.7 -2.2Q333.7 -6.0 329.2 -12.8Q324.7 -19.6 324.7 -28.5Q324.7 -37.5 329.2 -44.3Q333.7 -51.1 341.7 -54.95Q349.7 -58.800000000000004 360.2 -58.800000000000004Q369.7 -58.800000000000004 377.35 -55.550000000000004Q385.0 -52.300000000000004 389.8 -46.550000000000004Q394.6 -40.800000000000004 395.4 -33.0H375.1Q374.0 -38.1 370.0 -40.85Q366.0 -43.6 360.2 -43.6Q355.7 -43.6 352.35 -41.85Q349.0 -40.1 347.15 -36.75Q345.3 -33.4 345.3 -28.5Q345.3 -23.700000000000003 347.15 -20.35Q349.0 -17.0 352.35 -15.25Q355.7 -13.5 360.2 -13.5Q366.0 -13.5 370.05 -16.4Q374.1 -19.3 375.1 -24.1Z M452.09999999999997 0.0 449.5 -20.6 452.2 -28.5 449.5 -36.4 452.09999999999997 -57.1H473.29999999999995L469.7 -28.6L473.29999999999995 0.0ZM456.9 -28.5Q455.5 -19.5 451.35 -12.7Q447.2 -5.9 440.85 -2.1500000000000004Q434.5 1.6 426.4 1.6Q418.0 1.6 411.65 -2.1500000000000004Q405.29999999999995 -5.9 401.69999999999993 -12.75Q398.09999999999997 -19.6 398.09999999999997 -28.5Q398.09999999999997 -37.6 401.69999999999993 -44.400000000000006Q405.29999999999995 -51.2 411.65 -55.0Q418.0 -58.800000000000004 426.4 -58.800000000000004Q434.5 -58.800000000000004 440.85 -55.050000000000004Q447.2 -51.300000000000004 451.4 -44.550000000000004Q455.59999999999997 -37.800000000000004 456.9 -28.5ZM418.79999999999995 -28.5Q418.79999999999995 -24.3 420.54999999999995 -21.0Q422.29999999999995 -17.7 425.4 -15.85Q428.5 -14.0 432.5 -14.0Q436.7 -14.0 440.4 -15.85Q444.09999999999997 -17.7 446.9 -21.0Q449.7 -24.3 451.09999999999997 -28.5Q449.7 -32.800000000000004 446.9 -36.10000000000001Q444.09999999999997 -39.400000000000006 440.4 -41.300000000000004Q436.7 -43.2 432.5 -43.2Q428.5 -43.2 425.4 -41.300000000000004Q422.29999999999995 -39.400000000000006 420.54999999999995 -36.10000000000001Q418.79999999999995 -32.800000000000004 418.79999999999995 -28.5Z" fill="currentColor"/></g></symbol>
+</svg>
+<!-- Hidden until tapiOca has said who's signed in (see firstMe in
+     access.js): nothing only an Admin may use is drawn before then. -->
+<noscript><p class="noscript">tapiOca’s page needs JavaScript. Turn it on for this site, then reload the page.</p></noscript>
+<div class="wrap" hidden>
+  <header class="top">
+    <div class="brand"><svg class="word" viewBox="0 0 472.70 99.00" role="img" aria-label="tapiOca"><use href="#tp-word"/></svg></div>
+    <div class="spacer"></div>
+    <span class="pill" id="plexPill"><span class="dot"></span><span>Checking Plex…</span></span>
+    <span class="pill" id="livePill" hidden><span class="dot live"></span><span></span></span>
+    <button class="pill away" id="awayPill" type="button" hidden><span class="dot"></span><span class="long">Away from home</span><span class="short">Away</span><span class="word"></span></button>
+    <button class="pill alerts" id="alertsPill" type="button" hidden aria-haspopup="dialog"><span class="dot bad"></span><span class="count"></span></button>
+    <button class="pill update" id="updatePill" type="button" hidden><span class="dot accent"></span><span class="long"></span><span class="short">Update</span></button>
+    <button class="pill userpill" id="userPill" type="button" hidden title="Your account"><span></span></button>
+  </header>
+  <!-- A new tapiOca is out (for Admins: see updates.js). -->
+  <div class="panel update-banner" id="updateBanner" hidden role="status"></div>
+  <!-- An Admin signed in for watching (a trusted network's sign-in, or a
+       PIN's away from home): why the Admin tabs are gone, and the way back
+       to them (1.38.0). -->
+  <div class="panel watching-note" id="watchingNote" hidden role="status"><p id="watchingWhy"></p><button class="btn primary" type="button" id="watchingSignIn">Sign in with your password</button></div>
+  <!-- tapiOca couldn't be asked who's signed in, as the page opened. -->
+  <div class="panel me-problem" id="meProblem" hidden role="alert"><p>tapiOca couldn’t check who’s signed in. Check that it’s running, then try again.</p><button class="btn primary" type="button" id="meRetry">Try again</button></div>
+
+  <div class="tabrow">
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="stations" aria-selected="true">Stations</button>
+    <button class="tab admin" hidden role="tab" data-tab="setup">Setup</button>
+    <button class="tab admin" hidden role="tab" data-tab="access">Access</button>
+    <button class="tab" role="tab" data-tab="stats">Stats</button>
+    <button class="tab admin" hidden role="tab" data-tab="logs">Logs</button>
+    <button class="tab admin" hidden role="tab" data-tab="broken">Broken files <span class="count" id="brokenCount" hidden></span></button>
+  </nav>
+  <!-- Buy Me a Coffee's cup, from its brand assets (via Simple Icons). Only a
+       link: nothing is loaded from its site. -->
+  <a class="coffee" href="https://buymeacoffee.com/egadgetboy" target="_blank" rel="noopener noreferrer" title="Support tapiOca on Buy Me a Coffee" aria-label="Buy me a coffee (opens Buy Me a Coffee)"><span class="cup"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.216 6.415l-.132-.666c-.119-.598-.388-1.163-1.001-1.379-.197-.069-.42-.098-.57-.241-.152-.143-.196-.366-.231-.572-.065-.378-.125-.756-.192-1.133-.057-.325-.102-.69-.25-.987-.195-.4-.597-.634-.996-.788a5.723 5.723 0 00-.626-.194c-1-.263-2.05-.36-3.077-.416a25.834 25.834 0 00-3.7.062c-.915.083-1.88.184-2.75.5-.318.116-.646.256-.888.501-.297.302-.393.77-.177 1.146.154.267.415.456.692.58.36.162.737.284 1.123.366 1.075.238 2.189.331 3.287.37 1.218.05 2.437.01 3.65-.118.299-.033.598-.073.896-.119.352-.054.578-.513.474-.834-.124-.383-.457-.531-.834-.473-.466.074-.96.108-1.382.146-1.177.08-2.358.082-3.536.006a22.228 22.228 0 01-1.157-.107c-.086-.01-.18-.025-.258-.036-.243-.036-.484-.08-.724-.13-.111-.027-.111-.185 0-.212h.005c.277-.06.557-.108.838-.147h.002c.131-.009.263-.032.394-.048a25.076 25.076 0 013.426-.12c.674.019 1.347.067 2.017.144l.228.031c.267.04.533.088.798.145.392.085.895.113 1.07.542.055.137.08.288.111.431l.319 1.484a.237.237 0 01-.199.284h-.003c-.037.006-.075.01-.112.015a36.704 36.704 0 01-4.743.295 37.059 37.059 0 01-4.699-.304c-.14-.017-.293-.042-.417-.06-.326-.048-.649-.108-.973-.161-.393-.065-.768-.032-1.123.161-.29.16-.527.404-.675.701-.154.316-.199.66-.267 1-.069.34-.176.707-.135 1.056.087.753.613 1.365 1.37 1.502a39.69 39.69 0 0011.343.376.483.483 0 01.535.53l-.071.697-1.018 9.907c-.041.41-.047.832-.125 1.237-.122.637-.553 1.028-1.182 1.171-.577.131-1.165.2-1.756.205-.656.004-1.31-.025-1.966-.022-.699.004-1.556-.06-2.095-.58-.475-.458-.54-1.174-.605-1.793l-.731-7.013-.322-3.094c-.037-.351-.286-.695-.678-.678-.336.015-.718.3-.678.679l.228 2.185.949 9.112c.147 1.344 1.174 2.068 2.446 2.272.742.12 1.503.144 2.257.156.966.016 1.942.053 2.892-.122 1.408-.258 2.465-1.198 2.616-2.657.34-3.332.683-6.663 1.024-9.995l.215-2.087a.484.484 0 01.39-.426c.402-.078.787-.212 1.074-.518.455-.488.546-1.124.385-1.766zm-1.478.772c-.145.137-.363.201-.578.233-2.416.359-4.866.54-7.308.46-1.748-.06-3.477-.254-5.207-.498-.17-.024-.353-.055-.47-.18-.22-.236-.111-.71-.054-.995.052-.26.152-.609.463-.646.484-.057 1.046.148 1.526.22.577.088 1.156.159 1.737.212 2.48.226 5.002.19 7.472-.14.45-.06.899-.13 1.345-.21.399-.072.84-.206 1.08.206.166.281.188.657.162.974a.544.544 0 01-.169.364zm-6.159 3.9c-.862.37-1.84.788-3.109.788a5.884 5.884 0 01-1.569-.217l.877 9.004c.065.78.717 1.38 1.5 1.38 0 0 1.243.065 1.658.065.447 0 1.786-.065 1.786-.065.783 0 1.434-.6 1.499-1.38l.94-9.95a3.996 3.996 0 00-1.322-.238c-.826 0-1.491.284-2.26.613z"/></svg></span><span class="label">Buy me a coffee</span></a>
+  </div>
+
+  <section id="tab-stations">
+    <div class="section-head">
+      <h2>Your stations</h2>
+      <div class="spacer"></div>
+      <span class="hint" id="roomHint" hidden></span>
+      <button class="btn" id="smartStations" title="Make stations from what’s in your Plex: one station, or one for each decade, genre, studio, and more"><span>Smart stations</span></button>
+      <button class="btn" id="fromCollections" title="Make a station from each Plex collection you pick, named after the collection"><span>From Plex collections</span></button>
+      <button class="btn primary" id="newChannel">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M3 8h10"/></svg>
+        <span>New station</span>
+      </button>
+    </div>
+    <div class="live-list" id="liveList"></div>
+    <div class="channels" id="channels"></div>
+  </section>
+
+  <section id="tab-broken" hidden>
+    <div class="section-head">
+      <h2>Broken files</h2>
+      <div class="spacer"></div>
+      <button class="btn" type="button" id="brokenAgain" title="Go through this list again now. Programs back in Plex, and programs the quick check took off the air, are checked again.">Check the list again</button>
+      <a class="btn" href="/api/broken/download" download>Download list</a>
+    </div>
+    <div class="panel scan">
+      <div class="scan-line" id="scanQuick"></div>
+      <div class="scan-line" id="scanDeep"></div>
+      <div class="scan-line" id="scanMedia" hidden></div>
+      <div class="scan-line" id="scanClips" hidden></div>
+      <div class="scan-line" id="scanList"></div>
+      <div class="scan-set">
+        <label><input type="checkbox" id="scanOn"> Deep scan every night from</label>
+        <input type="time" id="scanStart" aria-label="Start time">
+        <span>to</span>
+        <input type="time" id="scanEnd" aria-label="End time">
+        <button class="btn" id="scanSave" hidden>Save</button>
+      </div>
+    </div>
+    <details class="panel arr" id="arrPanel">
+      <summary><strong>Replacing files with Sonarr and Radarr</strong><span class="muted" id="arrSum"></span></summary>
+      <div class="arr-body" id="arrBody"></div>
+    </details>
+    <details class="panel arr" id="reportsPanel">
+      <summary><strong>Reports from tapiOca’s apps</strong><span class="muted" id="reportsSum"></span></summary>
+      <div class="arr-body" id="reportsBody"></div>
+    </details>
+    <div id="filesEmpty" hidden></div>
+    <div class="panel files" id="needsPanel">
+      <div class="files-head"><h3>Needs you</h3><span class="chip bad" id="needsCount" hidden></span></div>
+      <p class="muted small files-intro">People’s reports, and files tapiOca found, waiting for you to choose what to do.</p>
+      <div id="needsList"></div>
+    </div>
+    <div class="panel files" id="replacingPanel" hidden>
+      <div class="files-head"><h3>Being replaced</h3><span class="chip accent" id="replacingCount"></span></div>
+      <p class="muted small files-intro">What Sonarr or Radarr is fetching now. A new file is checked like any other, and goes back on the air once it passes.</p>
+      <div id="replacingList"></div>
+    </div>
+    <div class="panel files" id="foundPanel" hidden>
+      <div class="files-head"><h3>Found by tapiOca</h3><span class="chip plain" id="foundCount"></span></div>
+      <p class="muted small files-intro">The rest of what tapiOca found: files you’re handling yourself, files no station or Media plays now, and files that can’t be shown correctly on the stations.</p>
+      <div id="brokenPanel"></div>
+    </div>
+    <p class="muted small">
+      What’s on this list is off the air on every station, and other programs play in their place. In Media, in tapiOca’s apps, a broken file doesn’t play (another version of it does, if there is one) and a damaged one still does.
+      <strong>Missing</strong> files are gone from disk or from Plex while a station or Media still has them. <strong>Broken</strong> files won’t play. <strong>Damaged</strong> files play, but the picture or sound breaks up. <strong>Unsupported</strong> files play but can’t be shown correctly (Dolby Vision profile 5). Replace them with another version.
+      Fix or replace the file, then choose <strong>Retry</strong>. Or let the list clear itself: a program comes off the list when Plex has it again under a new ID (after a file is renamed, for example), or when it’s missing and neither a station nor Media has it anymore. (Removed it on purpose? Take it off the stations its entry lists.) A program with a new file, or one the quick check took off the air, comes off once it passes the quick check.
+      Problems found by the deep scan or during playback stay until the file changes. Retry also tells the checks to leave that file on the air.
+    </p>
+  </section>
+
+  <section id="tab-logs" hidden>
+    <div class="section-head">
+      <h2>Logs</h2>
+      <div class="spacer"></div>
+      <input type="search" id="logFind" class="log-find" placeholder="Search the log" aria-label="Search the log" maxlength="100" autocomplete="off">
+      <div class="checks">
+        <label><input type="checkbox" id="logWarn"> Warnings</label>
+        <label><input type="checkbox" id="logErr"> Errors</label>
+        <label title="Sign-ins, sign-outs, and changes to who can sign in"><input type="checkbox" id="logAccess"> Access</label>
+      </div>
+      <button class="btn" id="copyLogs">Copy</button>
+    </div>
+    <details class="panel arr" id="notifyPanel">
+      <summary><strong>Alert notifications</strong><span class="muted" id="notifySum"></span></summary>
+      <div class="arr-body" id="notifyBody"></div>
+    </details>
+    <div class="panel problems" id="problemsPanel">
+      <div class="problems-head">
+        <h3>Problems in the apps</h3>
+        <div class="spacer"></div>
+        <div class="seg" role="group" aria-label="Time period" id="problemDays">
+          <button type="button" data-days="1" aria-pressed="false">Today</button>
+          <button type="button" data-days="7" aria-pressed="true">7 days</button>
+          <button type="button" data-days="30" aria-pressed="false">30 days</button>
+        </div>
+        <button class="btn" id="clearProblems">Clear</button>
+      </div>
+      <p class="muted small">tapiOca’s apps say here when something goes wrong as they play: a station that doesn’t start or stops, something from Media that doesn’t play, playing that can’t keep up, the app closing unexpectedly, or the app not reaching tapiOca for a minute or more (told once it’s back). Each says which app, and on what kind of device, so you can tell whether a problem is one device’s or everyone’s, what the app said, and what it did just before.</p>
+      <div id="problemList"></div>
+    </div>
+    <p class="muted small">The latest 200 entries, newest at the bottom. Select Warnings, Errors, or both to see only those. Select Access to see who signed in and from where. The access history is kept when tapiOca restarts.</p>
+    <div class="panel logs" id="logList"></div>
+  </section>
+
+  <section id="tab-stats" hidden>
+    <div id="statLive" hidden>
+      <div class="section-head">
+        <h2>Server</h2>
+        <span class="pill"><span class="dot live"></span><span>Live</span></span>
+        <div class="spacer"></div>
+        <span class="muted small" id="serverNote">The last 10 minutes, updated every 5 seconds while this tab is open</span>
+      </div>
+      <div class="health" id="healthTiles"></div>
+      <div class="panel now-panel">
+        <div class="now-head"><h3>Watching now</h3><span class="muted small" id="nowCount"></span></div>
+        <div id="statNow"></div>
+      </div>
+    </div>
+    <div class="section-head">
+      <h2>Stats</h2>
+      <div class="spacer"></div>
+      <div class="seg" role="group" aria-label="Time period">
+        <button type="button" data-days="1" aria-pressed="false">Today</button>
+        <button type="button" data-days="7" aria-pressed="true">7 days</button>
+        <button type="button" data-days="30" aria-pressed="false">30 days</button>
+        <button type="button" data-days="0" aria-pressed="false">All</button>
+      </div>
+    </div>
+    <div class="tiles" id="statTiles"></div>
+    <div class="panel"><table class="stats" id="statTable"></table></div>
+    <div class="stats-cols" id="statTop" hidden>
+      <div class="panel">
+        <h3>Top people</h3>
+        <div class="toplist" id="statPeople"></div>
+        <p class="muted small" style="margin:10px 0 0">Only Admins see this. tapiOca’s apps count for whoever is signed in on them, stations and Media alike. For Plex, tapiOca asks Plex every 30 seconds who’s watching which station, and counts the time for each Plex user. Viewing in other apps (through the M3U playlist) isn’t counted by person, and neither is time when two stations air the same program at once.</p>
+      </div>
+      <div class="panel"><h3>Top Media</h3><div class="toplist" id="statMedia"></div></div>
+    </div>
+    <div class="stats-cols">
+      <div class="panel"><h3>Most watched shows &amp; movies</h3><div class="toplist" id="statPrograms"></div></div>
+      <div class="panel"><h3>When people watch</h3><div id="statHours"></div></div>
+    </div>
+    <p class="muted small">A viewing counts once it lasts a minute, so flipping past a station doesn’t count. tapiOca counts the streams Plex asks it for, so several people watching one station together in Plex (or Plex recording it) may count as one viewing; each of tapiOca’s apps counts on its own. Stats are kept for 400 days. Today means since midnight.</p>
+  </section>
+
+  <section id="tab-access" hidden>
+    <div class="section-head"><h2>Access</h2></div>
+    <div class="panel setup">
+      <p id="accessState" style="margin:0"></p>
+      <dl class="roles">
+        <dt>Admin</dt>
+        <dd>Can do everything: manage every station and use Stats, Setup (including backups), Broken files, Logs, and Access (who can sign in).</dd>
+        <dt>User</dt>
+        <dd>Can watch the stations and Media their Viewing Level allows (Unrestricted, with no limits, to start), and see Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s logo from Plex) and Intro Bumper videos, but only Admins can delete them. On a Viewing Level with limits, they only watch. Can’t open Setup, Broken files, Logs, or Access.</dd>
+      </dl>
+    </div>
+    <div class="panel" style="margin-top:16px" id="userPanel" hidden><table class="users" id="userTable"></table></div>
+    <div class="panel" style="margin-top:16px" id="appsPanel" hidden>
+      <div class="panel-pad"><strong>Signed-in apps</strong>
+      <p class="hint" style="margin:4px 0 0">tapiOca’s apps that are signed in, and as whom. Signing one out ends its sign-in at once; one unused for 30 days ends by itself.</p></div>
+      <table class="users" id="appsTable"></table>
+    </div>
+    <div class="panel" style="margin-top:16px" id="devicesPanel" hidden>
+      <div class="panel-pad"><strong>Linked devices</strong>
+      <p class="hint" style="margin:4px 0 0">Devices where people pick who’s watching. Unlinking one signs it out.</p></div>
+      <table class="users" id="devicesTable"></table>
+      <p class="panel-pad hint" style="margin:0">Someone is on a device’s list once they sign in on it themselves: with their password, an invite code from Devices, or Link an app. No one else is listed there.</p>
+    </div>
+    <form class="panel setup" style="margin-top:16px" id="addUserForm">
+      <strong id="addUserTitle">Add a user</strong>
+      <div class="adduser">
+        <div class="field"><label for="newUserName">Name</label><input type="text" id="newUserName" maxlength="40" autocomplete="off" required></div>
+        <div class="field"><label for="newUserPassword">Password</label><input type="password" id="newUserPassword" minlength="__PASSWORD_MIN__" maxlength="__PASSWORD_MAX__" autocomplete="new-password" required></div>
+        <div class="field" id="newUserPinField"><label for="newUserPin">PIN (optional)</label><input type="text" id="newUserPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" placeholder="4 digits"></div>
+        <div class="field"><label for="newUserRole">Role</label><select id="newUserRole"><option value="user">User</option><option value="admin">Admin</option></select></div>
+        <div class="field" id="newUserLevelField" hidden><label for="newUserLevel">Viewing Level</label><select id="newUserLevel"></select></div>
+        <div class="field" id="newUserStationsField"><label for="newUserStations">Stations they can make</label><select id="newUserStations"></select></div>
+        <button class="btn primary" type="submit">Add</button>
+      </div>
+      <span class="hint" id="addUserHint"></span>
+    </form>
+    <details class="panel arr" id="trustedPanel">
+      <summary><strong>Trusted networks</strong><span class="muted" id="trustedSum"></span></summary>
+      <div class="arr-body" id="trustedBody"></div>
+    </details>
+    <details class="panel arr" id="proxiesPanel">
+      <summary><strong>Trusted proxies</strong><span class="muted" id="proxiesSum"></span></summary>
+      <div class="arr-body" id="proxiesBody"></div>
+    </details>
+    <details class="panel arr" id="homeNamesPanel">
+      <summary><strong>Names for tapiOca at home</strong><span class="muted" id="homeNamesSum"></span></summary>
+      <div class="arr-body" id="homeNamesBody"></div>
+    </details>
+    <details class="panel arr" id="viewingPanel" hidden>
+      <summary><strong>Viewing Levels</strong><span class="muted" id="viewingSum"></span></summary>
+      <div class="arr-body" id="viewingBody"></div>
+    </details>
+    <details class="panel arr" id="tunerPanel">
+      <summary><strong>Tuner access</strong><span class="muted" id="tunerSum"></span></summary>
+      <div class="arr-body" id="tunerBody"></div>
+    </details>
+    <details class="panel arr" id="limitsPanel">
+      <summary><strong>Block stations for some Plex users</strong><span class="muted" id="limitsSum"></span></summary>
+      <div class="arr-body" id="limitsBody"></div>
+    </details>
+    <details class="panel arr" id="awayPanel">
+      <summary><strong>tapiOca’s apps away from home</strong><span class="muted" id="awaySum" data-away-sum></span></summary>
+      <div class="arr-body" id="awayBody"></div>
+    </details>
+    <details class="panel arr" id="appLimitsPanel">
+      <summary><strong>How many can watch at once in tapiOca’s apps</strong><span class="muted" id="appLimitsSum"></span></summary>
+      <div class="arr-body" id="appLimitsBody"></div>
+    </details>
+    <details class="panel arr" id="appLibrariesPanel">
+      <summary><strong>Media in tapiOca’s apps</strong><span class="muted" id="appLibrariesSum"></span></summary>
+      <div class="arr-body" id="appLibrariesBody"></div>
+    </details>
+    <details class="panel arr" id="apiTokensPanel">
+      <summary><strong>API tokens</strong><span class="muted" id="apiTokensSum"></span></summary>
+      <div class="arr-body" id="apiTokensBody"></div>
+    </details>
+    <p class="muted small">Plex, Jellyfin and other apps never sign in, so the tuner, guide, and stream addresses on the Setup tab are open to every device on your network, unless you choose Only these devices under Tuner access. Locked out? Create an empty file named <code>reset-access</code> in tapiOca’s data folder, then restart tapiOca. This removes every user and turns off sign-in, so anyone on your network can use tapiOca again.</p>
+  </section>
+
+  <section id="tab-setup" hidden>
+    <!-- (Named for what it does, for every app: once Add to Plex, the
+         owner's choice, October 13.) -->
+    <div class="section-head"><h2>Tuner integration</h2></div>
+    <p class="muted small">The addresses Plex, Jellyfin, Emby, Kodi and other apps use to watch your stations, and how to add them.</p>
+    <div class="panel setup">
+      <div class="copyrow"><span class="what">Tuner address</span><code id="tunerUrl">…</code><button class="btn" data-copy="tunerUrl">Copy</button></div>
+      <div class="copyrow"><span class="what">Guide (XMLTV) for Plex</span><code id="xmltvUrl">…</code><button class="btn" data-copy="xmltvUrl">Copy</button></div>
+      <div class="copyrow"><span class="what">Playlist (M3U) for other apps</span><code id="m3uUrl">…</code><button class="btn" data-copy="m3uUrl">Copy</button></div>
+      <div class="copyrow"><span class="what">Guide for other apps</span><code id="guideUrl">…</code><button class="btn" data-copy="guideUrl">Copy</button></div>
+      <div class="copyrow"><span class="what">Media files</span><span id="mediaAccess" class="small">…</span></div>
+      <div class="copyrow"><span class="what">Video encoding</span><span id="encoding" class="small">…</span></div>
+      <div class="copyrow"><span class="what">Guide updates</span><span id="guideState" class="small">…</span></div>
+      <div>
+        <strong>Adding tapiOca to Plex</strong>
+        <ol class="steps">
+          <li>In Plex, open <em>Settings → Live TV &amp; DVR → Set Up Plex DVR</em>.</li>
+          <li>Choose <em>Don’t see your HDHomeRun device? Enter its network address manually</em> (Plex can’t find tapiOca on its own) and enter the tuner address above.</li>
+          <li>When Plex asks for guide data, choose <em>Have an XMLTV guide on your server? Click here to use it</em> and enter the guide address for Plex, shown above.</li>
+          <li>Plex matches your stations automatically (it calls them channels). Continue, and they appear in the <em>Live TV</em> guide in Plex.</li>
+        </ol>
+        <p class="hint">tapiOca keeps the Plex guide up to date on its own: when a station changes, it asks Plex to refresh the guide. If it can’t (see <em>Guide updates</em> above), refresh the guide in Plex after you change a station: <em>Settings → Live TV &amp; DVR → your tuner → Refresh Guide</em>. For a new station, also choose <em>Scan for channels</em> there so Plex adds it.</p>
+      </div>
+      <div>
+        <strong>Watching in Jellyfin, Emby, Kodi, or another app</strong>
+        <ul class="steps">
+          <li><em>Jellyfin:</em> Dashboard → <em>Live TV</em> → <em>Tuner Devices</em> + → <em>M3U Tuner</em>, with the playlist address above. Then <em>TV Guide Data Providers</em> + → <em>XMLTV</em>, with the guide address for other apps.</li>
+          <li><em>Emby</em> (needs Emby Premiere): Settings → <em>Live TV</em> → add a TV source → <em>M3U Tuner</em>, with the playlist address. Then add a guide data provider → <em>XMLTV</em>, with the guide address for other apps.</li>
+          <li><em>Kodi:</em> Install its PVR Simple Client add-on (under PVR clients). In its settings, set <em>M3U play list URL</em> to the playlist address and <em>XMLTV URL</em> to the guide address for other apps.</li>
+          <li><em>Other apps</em> (Channels DVR, VLC…): Give them the playlist address. It tells them where to find the guide.</li>
+        </ul>
+        <p class="hint">These apps refresh their guide on their own schedule (about once a day). After you change a station, refresh the guide in the app to see the change right away.</p>
+      </div>
+    </div>
+    <div class="section-head" style="margin-top:22px"><h2>Media folders</h2><div class="spacer"></div><button type="button" class="btn primary" id="addFolderLibrary">Add a Media folder</button></div>
+    <p class="muted small">Every Media folder tapiOca has. Switch one off to keep it out of tapiOca’s apps; stations can still use it. Add a Media folder to have tapiOca read shows or movies itself, from the folders it can see. It takes each title’s details from the NFO files beside it, the file itself and its name, and its pictures from beside it, and reads them again every 6 hours, when you choose Read again, and when Sonarr or Radarr brings a replacement tapiOca asked for.</p>
+    <div class="panel" id="foldersPanel"></div>
+    <div class="section-head" style="margin-top:22px"><h2>Picture and tuners</h2><div class="spacer"></div><button type="button" class="btn" id="runSetup">Run setup again</button></div>
+    <div class="panel setup" id="playbackPanel"></div>
+    <div class="section-head" style="margin-top:22px">
+      <h2>Backups</h2>
+      <div class="spacer"></div>
+      <button class="btn" id="backupNow">Download a backup</button>
+      <button type="button" class="btn" data-choose-file="restoreFile">Restore a backup…</button>
+      <input type="file" id="restoreFile" accept=".zip,application/zip" hidden>
+    </div>
+    <p class="muted small">Every night, tapiOca backs up your stations, settings, the Broken files list, your logos (uploaded or from Plex), who can sign in, and the viewing stats. It keeps the last 7 backups in the <code>backups</code> folder inside its data folder. To keep backups small, Intro Bumper videos aren’t included; they stay in the <code>bumpers</code> folder. Restoring a backup replaces all of this with the backup’s copy, and tapiOca restarts to finish.</p>
+    <div class="panel" id="backupList"></div>
+    <div class="section-head" style="margin-top:22px"><h2>New versions</h2></div>
+    <div class="panel setup" id="updatesPanel"></div>
+    <div class="section-head" style="margin-top:22px"><h2>The INFO station</h2></div>
+    <div class="panel setup" id="infoPanel"></div>
+  </section>
+
+  <footer class="foot"><span id="appVersion"></span><span id="footSetupWrap" hidden><button type="button" class="linkish" id="footSetup">Setup</button> · </span>© 2026 egadgetboy · Open source under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a> · <a href="https://github.com/egadgetboy/tapioca-server" target="_blank" rel="noopener noreferrer">Source</a> · <a href="/open-source-notices" target="_blank" rel="noopener noreferrer">Open-source notices</a> · No warranty · <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy</a><br><span class="appearance"><label for="appearance">Appearance</label><select id="appearance"><option value="">Automatic</option><option value="light">Light</option><option value="dark">Dark</option></select></span></footer>
+</div>
+
+<div id="signinView" hidden>
+  <!-- Two forms: a name and password, and a PIN on its own, so a browser's
+       password keeper sees the PIN as no password (1.38.0). -->
+  <div class="panel signin">
+    <div class="brand stacked"><svg class="word" viewBox="0 0 472.70 99.00" role="img" aria-label="tapiOca"><use href="#tp-word"/></svg></div>
+    <p class="hint" id="signinWhere" hidden>At this address, tapiOca always asks for your password, even at home. An Admin’s PIN works at its home-network address, in Light sign-in, once you’ve signed in there with your password.</p>
+    <p class="hint" id="signinHome" hidden>An Admin with Light sign-in can use their PIN here after signing in once on this browser with their password.</p>
+    <!-- Who's signing in?: the Admins who signed in on this browser (see
+         showPeople in access.js), or the person a trusted network signs in as. -->
+    <div id="signinTrusted" hidden>
+      <h2 class="signin-who" id="signinTrustedTitle">Who’s signing in?</h2>
+      <div class="who-list" id="signinPeople" role="list"></div>
+      <button class="btn primary" type="button" id="signinContinue" hidden style="justify-content:center"></button>
+    </div>
+    <form class="signin-form" id="signinForm">
+      <div id="signinByPassword">
+        <div class="field"><label for="signinName">Name</label><input type="text" id="signinName" autocomplete="username" required></div>
+        <div class="field"><label for="signinPassword">Password</label><input type="password" id="signinPassword" autocomplete="current-password" required></div>
+      </div>
+      <button class="btn primary" type="submit" id="signinGo" style="justify-content:center">Sign in</button>
+    </form>
+    <form class="signin-form" id="pinForm" hidden>
+      <div id="signinByPin">
+        <div class="field"><label for="signinPin" id="signinPinLabel">PIN</label><input type="password" id="signinPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off"></div>
+      </div>
+      <button class="btn primary" type="submit" id="pinGo" style="justify-content:center">Sign in</button>
+    </form>
+    <button class="linkish" type="button" id="signinSomeoneElse" hidden>Sign in with a password</button>
+    <button class="linkish" type="button" id="signinOther" hidden>Use your password instead</button>
+    <button class="linkish" type="button" id="signinForget" hidden>Remove from this browser</button>
+    <span class="hint" id="signinStatus" role="alert"></span>
+    <p class="hint" id="signinNote" hidden></p>
+  </div>
+  <p class="foot">© 2026 egadgetboy · Open source under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a> · <a href="https://github.com/egadgetboy/tapioca-server" target="_blank" rel="noopener noreferrer">Source</a> · <a href="/open-source-notices" target="_blank" rel="noopener noreferrer">Open-source notices</a> · No warranty · <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy</a></p>
+</div>
+
+<dialog id="userDevices">
+  <div class="dlg-head"><h3 id="userDevicesTitle">Devices</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeUserDevices" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="userDevicesBody"></div>
+  <div class="dlg-foot"><span class="hint" id="userDevicesStatus" role="alert" style="margin-right:auto"></span><button class="btn" type="button" id="doneUserDevices">Done</button></div>
+</dialog>
+
+<dialog id="userStations">
+  <div class="dlg-head"><h3 id="userStationsTitle">Stations</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeUserStations" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="userStationsBody"></div>
+  <div class="dlg-foot"><span class="hint" id="userStationsStatus" role="alert" style="margin-right:auto"></span><button class="btn" type="button" id="cancelUserStations">Cancel</button><button class="btn primary" type="button" id="saveUserStations">Save</button></div>
+</dialog>
+
+<dialog id="account">
+  <div class="dlg-head"><h3 id="accountTitle">Your account</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeAccount" aria-label="Close">✕</button></div>
+  <div class="dlg-body account-body">
+    <form id="accountForm" class="account-part">
+      <strong>Change your password</strong>
+      <div class="field"><label for="pwCurrent">Current password</label><input type="password" id="pwCurrent" autocomplete="current-password" required></div>
+      <div class="field"><label for="pwNew">New password</label><input type="password" id="pwNew" minlength="__PASSWORD_MIN__" maxlength="__PASSWORD_MAX__" autocomplete="new-password" required></div>
+      <span class="hint" id="accountStatus" role="alert"></span>
+    </form>
+    <!-- An Admin's own choice (1.38.0): Full or Light sign-in. -->
+    <form id="signinModeForm" class="account-part" hidden>
+      <strong>How you sign in</strong>
+      <label class="choice"><input type="radio" name="adminSignIn" value="full"><span><b>Full</b>: your password every time you sign in.</span></label>
+      <label class="choice"><input type="radio" name="adminSignIn" value="light"><span><b>Light</b>: your password once on each browser or device, then your PIN there, at home. Away from home, it’s your password.</span></label>
+      <div class="field"><label for="modePassword">Your password, to change this</label><input type="password" id="modePassword" autocomplete="current-password" required></div>
+      <div class="mode-save"><button class="btn" type="submit" id="modeSave">Save</button><span class="hint" id="modeStatus" role="alert"></span></div>
+    </form>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" type="button" id="signOut">Sign out</button>
+    <button class="btn" type="button" id="openLink" style="margin-right:auto">Link an app</button>
+    <button class="btn primary" type="submit" form="accountForm" id="pwChange">Change password</button>
+  </div>
+</dialog>
+
+<dialog id="alertsDlg" aria-labelledby="alertsTitle">
+  <div class="dlg-head"><h3 id="alertsTitle">Alerts</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeAlerts" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="alertsBody"></div>
+  <div class="dlg-foot"><button class="btn" type="button" id="alertsNotify" style="margin-right:auto">Alert notifications…</button><button class="btn" type="button" id="alertsDone">Done</button></div>
+</dialog>
+
+<dialog id="linkApp" aria-labelledby="linkTitle">
+  <form id="linkForm">
+    <div class="dlg-head"><h3 id="linkTitle">Link an app</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeLink" aria-label="Close">✕</button></div>
+    <div class="dlg-body">
+      <p class="hint" style="margin:0">Enter the code tapiOca’s app shows on your TV (or other device). It signs in as you, with no password typed on the remote.</p>
+      <div class="field"><label for="linkCode">Code</label><input type="text" id="linkCode" maxlength="40" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" placeholder="K7QM-4DPX" required style="font-size:20px;letter-spacing:2px;text-transform:uppercase;width:12em"></div>
+      <p id="linkWho" hidden style="margin:0"></p>
+      <span class="hint" id="linkStatus" role="alert"></span>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" type="button" id="cancelLink" style="margin-right:auto">Cancel</button>
+      <button class="btn primary" type="submit" id="linkGo">Next</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="editor">
+  <form method="dialog" id="editorForm">
+    <div class="dlg-head"><h3 id="editorTitle">New station</h3><div class="spacer"></div><button class="btn ghost" value="cancel" aria-label="Close">✕</button></div>
+    <div class="dlg-body editor-body">
+      <div class="editor-basics">
+        <div class="row">
+          <div class="field"><label for="fNumber">Number</label><input type="number" id="fNumber" min="1" max="9999" required></div>
+          <div class="field"><label for="fName">Name</label><input type="text" id="fName" maxlength="60" placeholder="Station 1"></div>
+        </div>
+        <div class="field">
+          <label>Logo</label>
+          <div class="logo-choice">
+            <span id="logoPreview"></span>
+            <span class="hint" id="logoName"></span>
+            <button type="button" class="btn" id="chooseLogo"><span>Choose…</span></button>
+            <button type="button" class="btn ghost" id="randomLogo"><span>Surprise me</span></button>
+            <button type="button" class="btn ghost plex-logo" id="plexLogo" hidden><img id="plexLogoImg" alt=""><span>Use the logo from Plex</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="field editor-content" id="contentField">
+        <label id="contentLabel">What’s on this station</label>
+        <div class="picking" id="pickingBanner" hidden>
+          <span id="pickingText"></span>
+          <button type="button" class="btn primary" id="pickingDone">Done</button>
+        </div>
+        <div class="seg" role="group" aria-label="How to choose">
+          <button type="button" data-pick="titles" aria-pressed="true">Pick shows &amp; movies</button>
+          <button type="button" data-pick="filter" aria-pressed="false">Use a filter</button>
+        </div>
+        <div class="picker" id="titlePicker">
+          <div class="picker-tools">
+            <select id="libSelect" aria-label="Media folder"><option>Loading Media folders…</option></select>
+            <input type="search" id="libSearch" placeholder="Filter by title, genre, or year" aria-label="Filter by title, genre, or year">
+            <div class="seg zoom" role="group" aria-label="Poster size">
+              <button type="button" data-zoom="1" aria-pressed="true" title="Small posters" aria-label="Small posters"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="5.5" y="4.5" width="5" height="7" rx="1" fill="currentColor"/></svg></button>
+              <button type="button" data-zoom="2" aria-pressed="false" title="Medium posters" aria-label="Medium posters"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="4.5" y="3" width="7" height="10" rx="1" fill="currentColor"/></svg></button>
+              <button type="button" data-zoom="3" aria-pressed="false" title="Large posters" aria-label="Large posters"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="3" y="1" width="10" height="14" rx="1.2" fill="currentColor"/></svg></button>
+            </div>
+          </div>
+          <div class="picker-list" id="libItems"></div>
+        </div>
+        <div class="picker" id="filterPicker" hidden>
+          <div class="fbox">
+            <div class="field">
+              <label>Type</label>
+              <div class="seg" role="group" aria-label="Movies or TV">
+                <button type="button" data-fkind="movie" aria-pressed="true">Movies</button>
+                <button type="button" data-fkind="show" aria-pressed="false">TV shows</button>
+              </div>
+            </div>
+            <div class="field"><label>From these Media folders</label><div class="chips" id="fLibs"></div></div>
+            <div id="fFields" class="ffields"></div>
+            <div class="field"><label>Decade <span class="hint">— for TV shows, the year they started</span></label><div class="chips" id="fDecade"></div></div>
+            <div class="frow">
+              <div class="field"><label for="fAdded">Added in the last</label>
+                <div class="inline-add"><input type="number" id="fAdded" min="1" max="3650" placeholder="Any"><span class="hint">days</span></div>
+                <span class="hint" id="fAddedHint"></span></div>
+              <div class="field"><label for="fRating">Minimum audience rating</label>
+                <select id="fRating"><option value="0">Any</option><option>5</option><option>6</option><option>6.5</option><option>7</option><option>7.5</option><option>8</option><option>8.5</option><option>9</option></select>
+                <span class="hint">With a minimum set, programs without an audience rating in Plex are left out.</span></div>
+            </div>
+            <div class="field"><label for="fTitle">Title contains</label><input type="text" id="fTitle" placeholder="e.g., Christmas"></div>
+          </div>
+          <div class="fresult">
+            <span class="hint" id="fCount">Choose what to include.</span>
+            <button type="button" class="btn" id="fReviewOpen" hidden>Choose which…</button>
+            <button type="button" class="btn primary" id="addFilter">Add this filter</button>
+          </div>
+          <div id="fReview" hidden>
+            <div class="freview-tools">
+              <span class="hint">Uncheck any you want to leave out. They stay out, and new matches are still added.</span>
+              <span class="spacer"></span>
+              <button type="button" class="linkbtn" id="fReviewAll">Select all</button>
+              <button type="button" class="linkbtn" id="fReviewNone">Clear all</button>
+            </div>
+            <div id="fMatches"></div>
+          </div>
+        </div>
+        <span class="hint" id="pickedCount"></span>
+        <div class="selected" id="selected"></div>
+      </div>
+      <div class="editor-groups">
+        <details class="group" id="groupPlay">
+          <summary><span class="g-title">How it plays</span><span class="g-sum" id="sumPlay"></span></summary>
+          <div class="g-body">
+            <div class="opt">
+              <span class="opt-label">Picture</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Picture size">
+                  <button type="button" data-picture="480p" aria-pressed="false">480p</button>
+                  <button type="button" data-picture="720p" aria-pressed="true">720p</button>
+                  <button type="button" data-picture="1080p" aria-pressed="false">1080p</button>
+                </div>
+                <span class="hint" id="pictureHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Order</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Order">
+                  <button type="button" data-order="rotate" aria-pressed="true">Episode order</button>
+                  <button type="button" data-order="shuffle" aria-pressed="false">Shuffle</button>
+                </div>
+                <span class="hint" id="orderHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">4:3 shows</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="4:3 shows">
+                  <button type="button" data-aspect="fit" aria-pressed="true">Black bars</button>
+                  <button type="button" data-aspect="stretch" aria-pressed="false">Stretch</button>
+                  <button type="button" data-aspect="zoom" aria-pressed="false">Zoom</button>
+                </div>
+                <span class="hint" id="aspectHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Intros &amp; credits</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Intros and credits">
+                  <button type="button" data-skip="off" aria-pressed="true">Play them</button>
+                  <button type="button" data-skip="on" aria-pressed="false">Skip them</button>
+                </div>
+                <span class="hint" id="skipHint"></span>
+              </div>
+            </div>
+          </div>
+        </details>
+        <details class="group" id="groupSpecials">
+          <summary><span class="g-title">Specials</span><span class="g-sum" id="sumSpecials"></span></summary>
+          <div class="g-body">
+            <p class="hint">Each special takes over the station for a while, then the station picks up where it left off. If two would overlap, only one plays: a block wins over the Feature Presentation, and both win over a marathon. When a block starts soon after the Feature Presentation, tapiOca picks a movie that ends in time.</p>
+            <div class="opt">
+              <span class="opt-label">Marathons</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Marathons">
+                  <button type="button" data-marathon="off" aria-pressed="true">Off</button>
+                  <button type="button" data-marathon="random" aria-pressed="false">Random times</button>
+                  <button type="button" data-marathon="set" aria-pressed="false">Set times</button>
+                </div>
+                <div class="marathon-row" id="marathonRandom" hidden>
+                  <div class="seg" role="group" aria-label="Marathons per week">
+                    <button type="button" data-mweek="1" aria-pressed="false">1</button>
+                    <button type="button" data-mweek="2" aria-pressed="true">2</button>
+                    <button type="button" data-mweek="3" aria-pressed="false">3</button>
+                    <button type="button" data-mweek="4" aria-pressed="false">4</button>
+                  </div>
+                  <span class="hint">per week</span>
+                </div>
+                <div class="marathon-row" id="marathonSet" hidden>
+                  <div class="chips" role="group" aria-label="Marathon days" id="marathonDays"></div>
+                  <input type="time" id="marathonTime" value="20:00" aria-label="Marathon time">
+                </div>
+                <div class="seg" role="group" aria-label="Which episodes" id="marathonPick" hidden>
+                  <button type="button" data-mepisodes="next" aria-pressed="true">Next in order</button>
+                  <button type="button" data-mepisodes="random" aria-pressed="false">Random starting point</button>
+                </div>
+                <span class="hint" id="marathonHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Feature Presentation</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Feature Presentation">
+                  <button type="button" data-feature="off" aria-pressed="true">Off</button>
+                  <button type="button" data-feature="on" aria-pressed="false">On</button>
+                </div>
+                <div class="marathon-row" id="featureSet" hidden>
+                  <div class="chips" role="group" aria-label="Feature Presentation days" id="featureDays"></div>
+                  <input type="time" id="featureTime" value="20:00" aria-label="Feature Presentation time">
+                </div>
+                <div class="marathon-row" id="featureFrom" hidden>
+                  <label class="hint" for="featureSource">Movies from</label>
+                  <select id="featureSource"></select>
+                </div>
+                <span class="hint" id="featureHint"></span>
+                <div class="intro-preview" id="featurePreviewRow" hidden>
+                  <button type="button" class="btn" id="featurePreview">Preview the card</button>
+                  <span class="hint" id="featurePreviewStatus"></span>
+                </div>
+                <video id="featureVideo" controls playsinline hidden></video>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Blocks</span>
+              <div class="opt-ctl">
+                <div class="blocks" id="blockList"></div>
+                <div class="intro-preview"><button type="button" class="btn" id="addBlock">Add a block</button></div>
+                <span class="hint" id="blocksHint"></span>
+              </div>
+            </div>
+          </div>
+        </details>
+        <details class="group" id="groupBreaks">
+          <summary><span class="g-title">Between programs</span><span class="g-sum" id="sumBreaks"></span></summary>
+          <div class="g-body">
+            <div class="opt">
+              <span class="opt-label">Commercials &amp; trailers</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Commercials and trailers after each program">
+                  <button type="button" data-breaks="0" aria-pressed="true">None</button>
+                  <button type="button" data-breaks="1" aria-pressed="false">1</button>
+                  <button type="button" data-breaks="2" aria-pressed="false">2</button>
+                  <button type="button" data-breaks="3" aria-pressed="false">3</button>
+                </div>
+                <span class="hint" id="breaksHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Station ID card</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Station ID card">
+                  <button type="button" data-sid="0" aria-pressed="true">Off</button>
+                  <button type="button" data-sid="3" aria-pressed="false">3 sec</button>
+                  <button type="button" data-sid="5" aria-pressed="false">5 sec</button>
+                  <button type="button" data-sid="10" aria-pressed="false">10 sec</button>
+                </div>
+                <span class="hint" id="sidHint"></span>
+              </div>
+            </div>
+            <div class="opt-sub" id="sidSet">
+              <div class="opt">
+                <span class="opt-label">Jingle</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Station ID card jingle">
+                    <button type="button" data-sidsound="on" aria-pressed="true">On</button>
+                    <button type="button" data-sidsound="off" aria-pressed="false">Off</button>
+                  </div>
+                </div>
+              </div>
+              <div class="intro-preview">
+                <button type="button" class="btn" id="sidPreview">Preview</button>
+                <span class="hint" id="sidPreviewStatus"></span>
+              </div>
+              <video id="sidVideo" controls playsinline hidden></video>
+            </div>
+          </div>
+        </details>
+        <details class="group" id="groupScreen">
+          <summary><span class="g-title">On screen</span><span class="g-sum" id="sumScreen"></span></summary>
+          <div class="g-body">
+            <div class="opt">
+              <span class="opt-label">In the corner</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="In the corner">
+                  <button type="button" data-mark="off" aria-pressed="true">Nothing</button>
+                  <button type="button" data-mark="logo" aria-pressed="false">Logo</button>
+                  <button type="button" data-mark="name" aria-pressed="false">Name</button>
+                  <button type="button" data-mark="clock" aria-pressed="false">Clock</button>
+                </div>
+                <span class="hint" id="markHint"></span>
+              </div>
+            </div>
+            <div class="opt-sub" id="markSet">
+              <div class="mark-preview" id="markPreview" aria-label="How it looks on screen"></div>
+              <span class="hint">Click a corner of the picture to move it there.</span>
+              <div class="opt">
+                <span class="opt-label">Size</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Size of what’s in the corner">
+                    <button type="button" data-msize="small" aria-pressed="false">Small</button>
+                    <button type="button" data-msize="medium" aria-pressed="false">Medium</button>
+                    <button type="button" data-msize="large" aria-pressed="true">Large</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <span class="opt-label">Transparency</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Transparency of what’s in the corner">
+                    <button type="button" data-mtrans="high" aria-pressed="false">High</button>
+                    <button type="button" data-mtrans="medium" aria-pressed="false">Medium</button>
+                    <button type="button" data-mtrans="low" aria-pressed="true">Low</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <span class="opt-label">Corner</span>
+                <div class="opt-ctl">
+                  <div class="seg corners" role="group" aria-label="Which corner">
+                    <button type="button" data-mpos="top-left" aria-pressed="false">Top left</button>
+                    <button type="button" data-mpos="top-right" aria-pressed="false">Top right</button>
+                    <button type="button" data-mpos="bottom-left" aria-pressed="true">Bottom left</button>
+                    <button type="button" data-mpos="bottom-right" aria-pressed="false">Bottom right</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt" id="clockFormatField">
+                <span class="opt-label">Clock</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Clock format">
+                    <button type="button" data-clock="12" aria-pressed="true">12-hour</button>
+                    <button type="button" data-clock="24" aria-pressed="false">24-hour</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt" id="markStyleField">
+                <span class="opt-label">Look</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Logo color in the corner">
+                    <button type="button" data-mstyle="color" aria-pressed="true">In color</button>
+                    <button type="button" data-mstyle="white" aria-pressed="false">All white</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <span class="opt-label">When</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="When it’s shown">
+                    <button type="button" data-mtime="always" aria-pressed="true">Always</button>
+                    <button type="button" data-mtime="start" aria-pressed="false">At the start</button>
+                  </div>
+                  <span class="hint" id="markTimeHint"></span>
+                </div>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Up Next Banner</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Up Next Banner">
+                  <button type="button" data-upnext="0" aria-pressed="false">Off</button>
+                  <button type="button" data-upnext="3" aria-pressed="false">3 sec</button>
+                  <button type="button" data-upnext="5" aria-pressed="false">5 sec</button>
+                  <button type="button" data-upnext="10" aria-pressed="true">10 sec</button>
+                </div>
+                <span class="hint" id="upNextHint"></span>
+              </div>
+            </div>
+            <div class="opt-sub" id="upNextSet">
+              <div class="opt">
+                <span class="opt-label">Size</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Up Next Banner size">
+                    <button type="button" data-upnextsize="small" aria-pressed="false">Small</button>
+                    <button type="button" data-upnextsize="medium" aria-pressed="false">Medium</button>
+                    <button type="button" data-upnextsize="large" aria-pressed="true">Large</button>
+                  </div>
+                </div>
+              </div>
+              <div class="intro-preview">
+                <button type="button" class="btn" id="upNextPreview">Preview</button>
+                <span class="hint" id="upNextPreviewStatus"></span>
+              </div>
+              <!-- Silent, so it plays on a loop with nothing over the picture
+                   (a player's controls would cover the banner). -->
+              <video id="upNextVideo" muted loop playsinline hidden title="Click to pause or play"></video>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Subtitles</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Subtitles">
+                  <button type="button" data-subs="off" aria-pressed="true">Off</button>
+                  <button type="button" data-subs="forced" aria-pressed="false">Forced only</button>
+                  <button type="button" data-subs="always" aria-pressed="false">Always</button>
+                </div>
+                <span class="hint" id="subsHint"></span>
+              </div>
+            </div>
+          </div>
+        </details>
+        <details class="group" id="groupTune">
+          <summary><span class="g-title">When someone tunes in</span><span class="g-sum" id="sumTune"></span></summary>
+          <div class="g-body">
+            <div class="opt">
+              <span class="opt-label">Viewers join</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Where viewers join">
+                  <button type="button" data-tunein="now" aria-pressed="true">In progress</button>
+                  <button type="button" data-tunein="start" aria-pressed="false">From the beginning</button>
+                </div>
+                <span class="hint" id="tuneInHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Intro Bumper</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Intro Bumper">
+                  <button type="button" data-introkind="off" aria-pressed="false">Off</button>
+                  <button type="button" data-introkind="card" aria-pressed="false">Built-in card</button>
+                  <button type="button" data-introkind="video" aria-pressed="false">Your video</button>
+                </div>
+                <span class="hint" id="introHint"></span>
+              </div>
+            </div>
+            <div class="opt-sub" id="bumperSet" hidden>
+              <div class="opt">
+                <label class="opt-label" for="fBumper">Video</label>
+                <div class="opt-ctl">
+                  <div class="intro-preview">
+                    <select id="fBumper"></select>
+                    <button type="button" class="btn" data-choose-file="bumperUpload">Upload a video…</button>
+                    <input type="file" id="bumperUpload" accept="video/*,.mkv,.mov,.mp4,.m4v,.webm,.avi,.ts" hidden>
+                    <button type="button" class="btn" id="bumperDelete">Delete</button>
+                  </div>
+                  <span class="hint" id="bumperStatus"></span>
+                </div>
+              </div>
+              <video id="bumperVideo" controls playsinline preload="metadata" hidden></video>
+            </div>
+            <div class="opt-sub" id="introSet">
+              <div class="opt">
+                <span class="opt-label">Length</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Intro Bumper length">
+                    <button type="button" data-intro="3" aria-pressed="false">3 sec</button>
+                    <button type="button" data-intro="5" aria-pressed="false">5 sec</button>
+                    <button type="button" data-intro="10" aria-pressed="false">10 sec</button>
+                    <button type="button" data-intro="15" aria-pressed="false">15 sec</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <span class="opt-label">Sound</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Intro Bumper sound">
+                    <button type="button" data-introsound="on" aria-pressed="true">On</button>
+                    <button type="button" data-introsound="off" aria-pressed="false">Off</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <label class="opt-label" for="fDescription">Description</label>
+                <div class="opt-ctl">
+                  <input type="text" id="fDescription" maxlength="140" placeholder="The sitcoms you grew up with, all day and all night.">
+                  <span class="hint" id="descCount"></span>
+                </div>
+              </div>
+              <div class="intro-preview">
+                <button type="button" class="btn" id="introPreview">Preview</button>
+                <span class="hint" id="introPreviewStatus"></span>
+              </div>
+              <video id="introVideo" controls playsinline hidden></video>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="hint" id="editorStatus" style="margin-right:auto"></span>
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn primary" id="saveChannel" value="default">Save station</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="collections">
+  <div class="dlg-head"><h3>Stations from Plex collections</h3><div class="spacer"></div><button class="btn ghost" id="closeCollections" aria-label="Close">✕</button></div>
+  <div class="dlg-body">
+    <p class="hint">Each collection you pick becomes a shuffled station named after the collection, with the Collection logo. You can change any of this later. Each station stays in sync with its collection: anything added to the collection in Plex joins the station within an hour. Collections with the same name in different Media folders each get their own station, numbered like Sunshine1 and Sunshine2.</p>
+    <input type="search" id="colSearch" placeholder="Search collections" aria-label="Search collections" autocomplete="off">
+    <div class="picker"><div class="picker-list" id="colList"></div></div>
+  </div>
+  <div class="dlg-foot">
+    <span class="hint" id="colStatus"></span>
+    <div class="spacer"></div>
+    <button class="btn" type="button" id="colCancel">Cancel</button>
+    <button class="btn primary" type="button" id="colMake" disabled>Make station</button>
+  </div>
+</dialog>
+
+<dialog id="folderLib" aria-labelledby="folderLibTitle">
+  <div class="dlg-head"><h3 id="folderLibTitle">Add a Media folder</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeFolderLib" aria-label="Close">✕</button></div>
+  <div class="dlg-body">
+    <div class="field"><label for="flName">Name</label><input type="text" id="flName" maxlength="60" placeholder="Such as Home Movies" autocomplete="off"></div>
+    <div class="field" id="flKindField"><span class="field-label">It holds</span>
+      <div class="seg" role="group" aria-label="It holds"><button type="button" data-flkind="show" aria-pressed="true">Shows</button><button type="button" data-flkind="movie" aria-pressed="false">Movies</button></div></div>
+    <div class="field"><span class="field-label">Its folders</span><div class="fl-chosen" id="flChosen"></div></div>
+    <div class="fl-browse">
+      <div class="folder-path" id="flPath"></div>
+      <div class="picker-list" id="flFolders"></div>
+    </div>
+    <p class="hint" id="flNote" hidden></p>
+  </div>
+  <div class="dlg-foot">
+    <span class="hint" id="flResult" role="alert"></span>
+    <div class="spacer"></div>
+    <button class="btn" type="button" id="flCancel">Cancel</button>
+    <button class="btn primary" type="button" id="flSave">Add</button>
+  </div>
+</dialog>
+
+<dialog id="smart" aria-labelledby="smartTitle">
+  <div class="dlg-head"><h3 id="smartTitle">Smart stations</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeSmart" aria-label="Close">✕</button></div>
+  <div class="dlg-body">
+    <p class="hint" style="margin:0">Make stations from what’s in your Plex. Choose what they play, then make one station, or one for each decade, genre, studio, and more. Like any filter, each station stays in sync with Plex: new matches are added automatically.</p>
+    <div id="smartFilter"></div>
+    <div class="opt">
+      <span class="opt-label">Make</span>
+      <div class="opt-ctl">
+        <div class="marathon-row">
+          <div class="seg" role="group" aria-label="How many stations">
+            <button type="button" data-smart="one" aria-pressed="true">One station</button>
+            <button type="button" data-smart="split" aria-pressed="false">One for each…</button>
+          </div>
+          <select id="smartSplit" aria-label="One station for each" hidden></select>
+        </div>
+        <span class="hint" id="smartHint"></span>
+      </div>
+    </div>
+    <div class="smart-groups" id="smartGroups"></div>
+    <div class="opt">
+      <label class="opt-label" for="smartFrom">First number</label>
+      <div class="opt-ctl">
+        <input type="number" id="smartFrom" min="1" max="9999" style="width:7em">
+        <span class="hint">Each new station gets the next free number, starting from this one.</span>
+      </div>
+    </div>
+  </div>
+  <div class="dlg-foot">
+    <span class="hint" id="smartStatus"></span>
+    <div class="spacer"></div>
+    <button class="btn" type="button" id="smartCancel">Cancel</button>
+    <button class="btn primary" type="button" id="smartMake" disabled>Make station</button>
+  </div>
+</dialog>
+
+<dialog id="setupDlg" aria-labelledby="setupTitle">
+  <div class="dlg-head"><h3 id="setupTitle">Welcome to tapiOca</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeSetup" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="setupBody"></div>
+  <div class="dlg-foot" id="setupFoot"></div>
+</dialog>
+
+<dialog id="notice" aria-labelledby="noticeTitle">
+  <div class="dlg-head"><h3 id="noticeTitle"></h3></div>
+  <div class="dlg-body" id="noticeBody"></div>
+  <div class="dlg-foot"><button class="btn primary" type="button" id="noticeOk">OK</button></div>
+</dialog>
+
+<dialog id="guide">
+  <div class="dlg-head"><h3 id="guideTitle">Guide</h3><div class="spacer"></div><button class="btn ghost" id="closeGuide" aria-label="Close">✕</button></div>
+  <div class="dlg-body"><div class="guide-list" id="guideList"></div></div>
+</dialog>
+
+<dialog id="logoPicker">
+  <div class="dlg-head"><h3>Choose a logo</h3><div class="spacer"></div><button class="btn ghost" id="closeLogos" aria-label="Close">✕</button></div>
+  <div class="dlg-body">
+    <div class="logo-tools">
+      <input type="search" id="logoSearch" placeholder="Search logos" aria-label="Search logos" autocomplete="off">
+      <button type="button" class="btn" data-choose-file="logoUpload">Upload your own…</button>
+      <input type="file" id="logoUpload" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden>
+    </div>
+    <div class="chips" id="logoCats"></div>
+    <div class="logo-grid" id="logoGrid"></div>
+    <p class="hint" id="logoNone" hidden>No matching logos.</p>
+    <p class="hint">Faded logos are already used by another station. You can upload your own logo as a PNG, JPEG, WebP, GIF, or BMP. Square images look best; other shapes are fitted onto a transparent background.</p>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<!-- The corner logo "all white": light parts solid, dark parts faint, with a
+     soft dark edge (a close match for how the server draws it). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <filter id="whiteMark" color-interpolation-filters="sRGB">
+    <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.215 0.422 0.082 0 0.28" result="lum"/>
+    <feComposite in="lum" in2="SourceAlpha" operator="in" result="face"/>
+    <feGaussianBlur in="SourceAlpha" stdDeviation="1.2" result="blur"/>
+    <feOffset in="blur" dx="1" dy="1" result="off"/>
+    <feColorMatrix in="off" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .45 0" result="edge"/>
+    <feMerge><feMergeNode in="edge"/><feMergeNode in="face"/></feMerge>
+  </filter>
+</defs></svg>
+
+<!-- What the server fills in; then the page's scripts, in order (app/web/js). -->
+<script>
+const LOGO_V = '__LOGO_VERSION__';  // the library's version (filled in by the server)
+const COLLECTION_LOGO = '__COLLECTION_LOGO__';  // for stations made from Plex collections only
+// What a new station starts with (filled in by the server).
+const NEW_STATION = __NEW_STATION__;
+const FEATURE_CARD_S = __FEATURE_CARD_S__;  // the Feature Presentation card's length
+// Who may sign in and what Users may make (see access.py; filled in by the server).
+const ACCESS = __ACCESS__;
+</script>
+<script src="/web/js/core.js?v=__VERSION__"></script>
+<script src="/web/js/status.js?v=__VERSION__"></script>
+<script src="/web/js/setup.js?v=__VERSION__"></script>
+<script src="/web/js/addtoplex.js?v=__VERSION__"></script>
+<script src="/web/js/logs.js?v=__VERSION__"></script>
+<script src="/web/js/stations.js?v=__VERSION__"></script>
+<script src="/web/js/editor.js?v=__VERSION__"></script>
+<script src="/web/js/logos.js?v=__VERSION__"></script>
+<script src="/web/js/smart.js?v=__VERSION__"></script>
+<script src="/web/js/backups.js?v=__VERSION__"></script>
+<script src="/web/js/filter.js?v=__VERSION__"></script>
+<script src="/web/js/broken.js?v=__VERSION__"></script>
+<script src="/web/js/apps.js?v=__VERSION__"></script>
+<script src="/web/js/checking.js?v=__VERSION__"></script>
+<script src="/web/js/access.js?v=__VERSION__"></script>
+<script src="/web/js/trusted.js?v=__VERSION__"></script>
+<script src="/web/js/viewing.js?v=__VERSION__"></script>
+<script src="/web/js/stats.js?v=__VERSION__"></script>
+<script src="/web/js/updates.js?v=__VERSION__"></script>
+<script src="/web/js/folders.js?v=__VERSION__"></script>
+<script src="/web/js/boot.js?v=__VERSION__"></script>
+</body>
+</html>

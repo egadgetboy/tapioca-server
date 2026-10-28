@@ -1,0 +1,132 @@
+"""Fixtures shared between test files."""
+
+import httpx
+import pytest
+
+from app import alerts, db, infostation, jobs, reach, releases, scanner
+
+from .test_e2e import media  # noqa: F401  (the test media files the end-to-end tests play)
+
+
+@pytest.fixture(autouse=True)
+def test_clients_at_home(monkeypatch):
+    """(1.36.0) A request whose peer isn't an address is from the internet
+    (fail closed: see networks.py), and Starlette's test client's own peer
+    is "testclient": so the tests' clients are a device at home,
+    192.168.1.50, unless a test says where they are."""
+    from starlette.testclient import TestClient
+
+    real = TestClient.__init__
+
+    def at_home(self, *args, client=("192.168.1.50", 50000), headers=None, **kw):
+        # (And as tapiOca's own page asks, with its header: see
+        # access.PAGE_HEADER, 1.36.2. Tests of what's refused without it
+        # send their own requests.)
+        headers = {"X-Tapioca-Page": "1", **(headers or {})}
+        real(self, *args, client=client, headers=headers, **kw)
+
+    monkeypatch.setattr(TestClient, "__init__", at_home)
+
+
+@pytest.fixture(autouse=True)
+def fixed_relays(monkeypatch):
+    """(1.36.0) What's a relay (see relays.py) is the same on every machine
+    the tests run on: Docker's gateway, 172.17.0.1, and tapiOca's own
+    address, 172.17.0.2 (and loopback), not this machine's own tables."""
+    import ipaddress
+
+    from app import relays
+
+    fake = {ipaddress.ip_address("172.17.0.1"), ipaddress.ip_address("172.17.0.2")}
+    monkeypatch.setattr(relays, "from_proc", lambda: set(fake))
+
+
+@pytest.fixture(autouse=True)
+def no_background_scans(monkeypatch):
+    """Checking files in the background would get in the way of other tests;
+    the scanner's own tests run it by hand, and the tests of checking a new
+    station's files turn that on."""
+    monkeypatch.setattr(scanner, "STARTUP_DELAY_S", 10**6)
+    monkeypatch.setattr(jobs, "CHECK_NEW_STATIONS", False)
+
+
+@pytest.fixture(autouse=True)
+def no_background_alert_checks(monkeypatch):
+    """The checks for Admin alerts don't run by themselves in tests (they'd
+    ask Plex, and write to the data folder, in the middle of other tests):
+    the alerts' own tests look when they mean to."""
+    monkeypatch.setattr(alerts, "FIRST_S", 10**6)
+
+
+@pytest.fixture(autouse=True)
+def no_checks_over_the_internet(monkeypatch):
+    """tapiOca's checks of the address its apps use from outside (see
+    reach.py) never leave the machine in tests: nothing answers them, unless
+    a test says what does (Reach.transport)."""
+
+    def nothing_answers(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("No network in the tests", request=request)
+
+    monkeypatch.setattr(reach.Reach, "transport", httpx.MockTransport(nothing_answers))
+    # (Nor does the update check reach GitHub, and it doesn't look by itself.)
+    monkeypatch.setattr(releases.Releases, "transport", httpx.MockTransport(nothing_answers))
+    monkeypatch.setattr(releases, "FIRST_S", 10**6)
+
+
+@pytest.fixture(autouse=True)
+def daytime(monkeypatch):
+    """The tests run outside the overnight checks' hours, whatever the time
+    is where they run (a test of those hours passes the time it means, and
+    the tests of the overnight checks say when it's night)."""
+    real = scanner.Scanner.in_window
+    monkeypatch.setattr(
+        scanner.Scanner, "in_window", lambda self, now=None: now is not None and real(self, now)
+    )
+
+
+@pytest.fixture(autouse=True)
+def plain_new_stations(monkeypatch):
+    """New stations start plain in tests (no Intro Bumper, nothing in the
+    corner, no Up Next Banner, episode order), so streams start with their
+    programs and nothing is drawn over them; the tests of those features
+    turn them on, and test_intro checks what new stations really start with."""
+    for setting, value in (
+        ("intro_seconds", 0),
+        ("watermark", "off"),
+        ("up_next_seconds", 0),
+        ("order_mode", "rotate"),
+    ):
+        monkeypatch.setitem(db.NEW_STATION, setting, value)
+
+
+@pytest.fixture(autouse=True)
+def no_info_station(request, monkeypatch):
+    """A new tapiOca starts with the INFO station (see infostation.py), but
+    the tests' new tapiOcas don't, so each test's stations are its own: the
+    INFO station's own tests (marked info_station) leave it be."""
+    if request.node.get_closest_marker("info_station") is None:
+        monkeypatch.setattr(infostation, "wanted", lambda db, new: False)
+
+
+@pytest.fixture(autouse=True)
+def names_without_dns(monkeypatch):
+    """(The security suite, DL287) safefetch resolves every name before a
+    request goes out; the tests never ask the real DNS. A test name (.test,
+    .invalid, .local, .lan, localhost) is at home; any other name is a
+    public address. An address is its own. tests/security/test_ssrf.py sets
+    its own names to check each refusal."""
+    import ipaddress
+
+    from app import safefetch
+
+    async def resolve(host: str):
+        try:
+            return [ipaddress.ip_address(host)]
+        except ValueError:
+            pass
+        if host == "localhost" or host.endswith((".test", ".invalid", ".local", ".lan", ".home")):
+            return [ipaddress.ip_address("192.168.1.20")]
+        return [ipaddress.ip_address("93.184.216.34")]
+
+    monkeypatch.setattr(safefetch, "RESOLVE", resolve)
+

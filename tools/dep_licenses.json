@@ -1,0 +1,5 @@
+{
+  "about": "The licenses a shipped dependency may have (tools/dep_scan.py, DL369), and each package allowed apart from them, with why.",
+  "allowed": ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "Unlicense", "CC0-1.0", "Zlib", "PSF-2.0", "Python-2.0", "MPL-2.0"],
+  "packages": {}
+}

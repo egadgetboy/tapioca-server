@@ -1,0 +1,167 @@
+# Open-source notices
+
+tapiOca is built on the open-source work of others. This file lists the
+parts in tapiOca's Docker image that come from others, and their
+licenses. Each part keeps its own license.
+
+## tapiOca
+
+Copyright © 2026 egadgetboy. tapiOca is licensed under the GNU Affero
+General Public License, version 3 (AGPL-3.0). See the [LICENSE](LICENSE)
+file. Its source is at <https://github.com/egadgetboy/tapioca-server>.
+
+Everything in the image that isn't listed below is tapiOca's own,
+under the AGPL.
+
+## Where to find the exact versions
+
+The image records every Debian package installed in it, with its exact
+version and the source package it's built from, in
+`/opt/stationplay/third-party-packages.txt` (one line each, such as
+`libavcodec61 <version> (source: ffmpeg <version>)`). Each Debian
+package's own copyright and license notice is in the image at
+`/usr/share/doc/<package>/copyright`.
+
+To get the source of a Debian package at the exact version installed, use
+the source package and version in that file:
+
+- <https://sources.debian.org/src/ffmpeg/> (choose the version), or
+- <https://snapshot.debian.org/package/ffmpeg/> (choose the version), or
+- `apt-get source ffmpeg=<version>` on a Debian system with source
+  packages turned on.
+
+The same works for every package in the list: replace `ffmpeg` with its
+source package.
+
+## FFmpeg
+
+- **What:** Debian's `ffmpeg` package (the `ffmpeg` and `ffprobe` programs)
+  and the FFmpeg libraries it installs (`libavcodec`, `libavformat`,
+  `libavfilter`, `libavutil`, `libswscale`, `libswresample` and others).
+  tapiOca runs these programs to do all its video work. It doesn't
+  change them.
+- **License:** Most of FFmpeg's code is under the GNU Lesser General Public
+  License, version 2.1 or later (LGPL-2.1-or-later). Debian builds FFmpeg
+  with its GPL parts turned on, so FFmpeg as installed in the image is
+  under the GNU General Public License, version 2 or later
+  (GPL-2.0-or-later). Some files carry other licenses, all listed in
+  `/usr/share/doc/ffmpeg/copyright`. In the running container,
+  `ffmpeg -L` prints the license of the build.
+- **Libraries FFmpeg uses:** Debian installs the libraries FFmpeg needs
+  (for example x264, x265, libvpx, dav1d and opus). Each is under its own
+  license, in its own `/usr/share/doc/<package>/copyright`, and listed in
+  `third-party-packages.txt`.
+- **Source:** Debian's `ffmpeg` source package, at the version listed in
+  `third-party-packages.txt` (see above). From 1.34.0, tapiOca's
+  image is published (`ghcr.io/egadgetboy/tapioca-server`), and each release
+  carries `tapioca-<version>-source.tar`: the source of every GPL and
+  LGPL package in its images, FFmpeg's among them, at the exact versions
+  in them, as Debian publishes it. Each release also comes with
+  `tapioca-<version>-packages.txt` (and `-packages-arm64.txt`), the
+  packages in each image, each with a link to its source. An image you
+  build yourself gets Debian's packages from Debian on the day it's built,
+  and `third-party-packages.txt` in it lists them. FFmpeg's upstream
+  project is at <https://ffmpeg.org>.
+
+## Fonts
+
+- **DejaVu fonts** (Debian's `fonts-dejavu-core`), used to draw the
+  "We'll be right back" card and station number badges. Copyright © 2003
+  Bitstream, Inc. (Bitstream Vera); DejaVu's changes are in the public
+  domain. License: the Bitstream Vera Fonts license, in
+  `/usr/share/doc/fonts-dejavu-core/copyright`.
+- **Montserrat** (in `app/assets/fonts/`), used to draw the Intro Bumper,
+  Station ID card and corner clock. Copyright 2024 The Montserrat.Git
+  Project Authors (<https://github.com/JulietaUla/Montserrat>). License:
+  SIL Open Font License, version 1.1, in `app/assets/fonts/OFL.txt`.
+- **Space Grotesk** (Medium) and **Unbounded** (Regular), in
+  `app/assets/fonts/SpaceGrotesk/` and `app/assets/fonts/Unbounded/`,
+  used to draw the INFO station's time, date and panels. Each is a single
+  weight taken from the page's copy of the font (below), unchanged
+  otherwise, under the same copyright and the same license: the SIL Open
+  Font License, version 1.1, in the `OFL.txt` beside it.
+
+- **Space Grotesk** (in `app/web/fonts/SpaceGrotesk/`), the page's text.
+  Copyright 2020 The Space Grotesk Project Authors
+  (<https://github.com/floriankarsten/space-grotesk>). License: SIL Open
+  Font License, version 1.1, in `app/web/fonts/SpaceGrotesk/OFL.txt`.
+- **Space Mono** (in `app/web/fonts/SpaceMono/`), the page's Station
+  numbers, times and logs. Copyright 2016 The Space Mono Project Authors
+  (<https://github.com/googlefonts/spacemono>). License: SIL Open Font
+  License, version 1.1, in `app/web/fonts/SpaceMono/OFL.txt`.
+- **Unbounded** (in `app/web/fonts/Unbounded/`), the page's big numbers;
+  tapiOca's logo is drawn from it, as outlines. Copyright 2022 The
+  Unbounded Project Authors (<https://github.com/googlefonts/unbounded>).
+  License: SIL Open Font License, version 1.1, in
+  `app/web/fonts/Unbounded/OFL.txt`.
+
+The page's three fonts come with tapiOca and are served by it: the page
+never fetches a font from anywhere else.
+
+## Common passwords
+
+`app/assets/passwords/common.txt` (from 1.36.2) holds the passwords of 8
+characters or more (12 in 1.36.2 and 1.36.3) from the UK National Cyber Security Centre's list of the
+100,000 most used passwords (drawn from Have I Been Pwned), lowercased, as
+SecLists keeps it
+(<https://github.com/danielmiessler/SecLists>, `Passwords/Common-Credentials/100k-most-used-passwords-NCSC.txt`).
+SecLists is under the MIT License, Copyright (c) 2018 Daniel Miessler.
+tapiOca only checks new passwords against it, on the server.
+
+## Video drivers
+
+These are installed so tapiOca can use a GPU. They're optional: if one
+can't be installed, the image still builds.
+
+- **Mesa VA-API drivers** (Debian's `mesa-va-drivers`), for AMD GPUs.
+  Mostly under the MIT license, with some parts under other licenses. See
+  `/usr/share/doc/mesa-va-drivers/copyright`.
+- **vainfo** (Debian's `vainfo`, from libva-utils), for troubleshooting.
+  MIT license. See `/usr/share/doc/vainfo/copyright`.
+- **Intel Media Driver** (Debian's `intel-media-va-driver-non-free`, on
+  x86-64 only), for Intel GPUs. Its source is under the MIT and BSD-3-Clause
+  licenses. Debian places it in its "non-free" section because it includes
+  some parts that come without source code. See
+  `/usr/share/doc/intel-media-va-driver-non-free/copyright` for its terms.
+- **The libraries they need** (such as libva, libdrm and LLVM) are each
+  under their own license, in their own `/usr/share/doc/<package>/copyright`.
+
+## Debian and Python
+
+- **Debian GNU/Linux 13 (trixie)**, the base of the image
+  (`python:3.13-slim-trixie`). Each package is under its own license, in
+  `/usr/share/doc/<package>/copyright`.
+- **Python 3.13**, from the official Python image. License: Python
+  Software Foundation License, version 2 (PSF-2.0). See
+  `/usr/local/lib/python3.13/LICENSE.txt` in the image, or
+  <https://docs.python.org/3/license.html>.
+- **pip**, installed with Python. MIT license.
+
+## Python packages
+
+Installed from `requirements.txt` at these exact versions. Each package's
+license file is in the image, in its `.dist-info` folder under
+`/usr/local/lib/python3.13/site-packages/`.
+
+| Package | Version | License |
+|---|---|---|
+| annotated-doc | 0.0.5 | MIT |
+| annotated-types | 0.8.0 | MIT |
+| anyio | 4.15.1 | MIT |
+| certifi | 2026.10.18 | MPL-2.0 |
+| click | 8.5.0 | BSD-3-Clause |
+| fastapi | 0.141.1 | MIT |
+| h11 | 0.16.0 | MIT |
+| httpcore | 1.0.9 | BSD-3-Clause |
+| httpx | 0.28.1 | BSD-3-Clause |
+| idna | 3.20 | BSD-3-Clause |
+| pydantic | 2.13.5 | MIT |
+| pydantic-core | 2.46.5 | MIT |
+| starlette | 1.7.0 | BSD-3-Clause |
+| typing-extensions | 4.16.0 | PSF-2.0 |
+| typing-inspection | 0.4.4 | MIT |
+| uvicorn | 0.46.0 | BSD-3-Clause |
+
+certifi's MPL-2.0 covers its own files: its source is at
+<https://github.com/certifi/python-certifi>, and the copy in the image is
+unchanged.

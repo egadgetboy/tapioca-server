@@ -1,0 +1,15 @@
+release = "A security patch: trusted certificates"
+row = 173
+class = "B"
+features = []
+
+[[review]]
+kind = "self-review"
+report = "docs/reviews/1.44.2-self-review.md"
+commit = "f002d11"
+
+[modularity]
+component = "requirements.txt (certifi)"
+contract = "THIRD_PARTY_NOTICES.md"
+off = "not optional"
+deleted = []

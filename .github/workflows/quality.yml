@@ -1,0 +1,105 @@
+# The plan's quality gates too long for every change, weekly and when asked:
+# the soak tests (stations played for hours, one with bad files among its
+# programs, two with everything on, and headless clients playing Stations and
+# Media as tapiOca's apps do, through a restart: the soak a Class D release
+# names), the real-world files (rips, 4K HDR, old AVIs, styled subtitles),
+# with the HDR tests, and mutation testing on the key decisions
+# (tools/mutation_targets.json; DL369). They run in the image as
+# built (the Dockerfile's test stage), each on its own runner, and never
+# publish anything.
+name: quality
+
+on:
+  schedule:
+    - cron: "17 7 * * 1" # Mondays at 7:17 UTC (2:17 AM in Missouri)
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "One gate by its name (a Class D candidate's soak: Soak: headless clients), or all"
+        required: false
+        default: ""
+      minutes:
+        description: "How long each soak plays, in minutes"
+        required: false
+        default: "270"
+
+permissions:
+  contents: read
+
+env:
+  # How long each soak plays, in minutes. GitHub stops a job at 6 hours; the
+  # soak's job stops at 5 hours 45 (timeout-minutes), which leaves over an
+  # hour to build the image, make the test files and check every minute
+  # recorded.
+  STATIONPLAY_SOAK_MINUTES: ${{ inputs.minutes || 270 }}
+
+jobs:
+  gate:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ (matrix.soak || matrix.mutation) && 345 || 45 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Soak: a station with bad files"
+            tests: tests/test_e2e.py::test_soak_many_program_changes
+            soak: true
+          - name: "Soak: two stations with everything on"
+            tests: tests/test_e2e_specials.py::test_soak_with_everything_on
+            soak: true
+          - name: "Soak: headless clients"
+            tests: tests/test_soak_clients.py
+            soak: true
+          - name: Real-world files and HDR
+            tests: tests/test_e2e_realworld.py tests/test_hdr.py
+            soak: false
+          - name: Mutation testing
+            mutation: true
+            soak: false
+    steps:
+      # (Asked for by name, only that one runs: a matrix can't be chosen
+      # from before it's expanded.)
+      - id: ask
+        run: echo "run=${{ inputs.only == '' || inputs.only == matrix.name }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+        if: steps.ask.outputs.run == 'true'
+        with:
+          persist-credentials: false
+      - name: Build
+        if: steps.ask.outputs.run == 'true'
+        run: docker build --target test --tag stationplay:test .
+      # (In the image as built, as root only so it can change the file it
+      # mutates, which its finally puts back; it publishes nothing.)
+      - name: Mutation testing
+        if: steps.ask.outputs.run == 'true' && matrix.mutation
+        run: |
+          set -o pipefail
+          docker run --rm --init --user 0 stationplay:test python tools/mutate.py run | tee "$RUNNER_TEMP/mutation.txt"
+      - name: Test
+        if: steps.ask.outputs.run == 'true' && !matrix.mutation
+        run: |
+          docker run --rm stationplay:test sh -c 'echo "::notice::$(ffmpeg -version | head -1)"'
+          # (A soak is one long test: it names itself if it's still going
+          # well after it should have ended.)
+          stuck=()
+          if [ "${{ matrix.soak }}" = true ]; then
+            stuck=(-o "faulthandler_timeout=$(( (STATIONPLAY_SOAK_MINUTES + 45) * 60 ))")
+          fi
+          set -o pipefail
+          docker run --rm --init -e STATIONPLAY_SOAK=1 -e STATIONPLAY_SOAK_MINUTES \
+            -e STATIONPLAY_REALWORLD=1 stationplay:test \
+            python -m pytest -v -p no:cacheprovider -rfEsP "${stuck[@]}" ${{ matrix.tests }} \
+            2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
+            grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -20 | cut -c1-1600 | sed 's/^/::error::/'
+            # (And why: the failed assertion's own lines, as the soak's faults are.)
+            grep -E "^E  " "$RUNNER_TEMP/tests.txt" | head -40 | cut -c1-400 | sed 's/^/::error::/'
+            exit 1
+          }
+          # (What a soak measured, for the release's manifest: its counts and its limits.)
+          grep -E "^(soak|limits): " "$RUNNER_TEMP/tests.txt" | sed 's/^/::notice::/' || true
+          # (Each runs here or nowhere: one skipped is a gate not passed.)
+          if grep -qE "^SKIPPED " "$RUNNER_TEMP/tests.txt"; then
+            grep -E "^SKIPPED " "$RUNNER_TEMP/tests.txt" | head -20 | sed 's/^/::error::/'
+            exit 1
+          fi

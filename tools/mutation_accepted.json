@@ -1,0 +1,4 @@
+{
+  "about": "Mutants that survive and mean the same as the code (tools/mutate.py): each by its ID, with why it can't be a bug. Anything else that survives is a missing test.",
+  "accepted": {}
+}

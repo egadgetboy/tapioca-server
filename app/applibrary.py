@@ -1,0 +1,2676 @@
+"""Media in tapiOca's apps: the apps' own addresses for browsing
+and playing it (under /api/internal; see docs/on-demand.md, and
+docs/internal-api.md for the contract), the play sessions' own addresses,
+and the Access tab's setting.
+
+At home (and through a VPN, which looks like home), and through the public
+port while watching away from home is on (see away.py): there, a signed-in
+app does what it may at home, within the same Viewing Levels and limits, and
+a program it starts plays at the Admin's quality away from home. A program's
+own addresses (/play/<session>/...) are offered on the public port only for
+a program an app started there, and only while it and that app's sign-in
+last (see access.Access.play_outside, and session_or_404); one started at
+home is never offered there.
+
+The deciding is in ondemand.py; this is the asking and answering.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import contextvars
+import hashlib
+import itertools
+import logging
+import random
+import shutil
+import time
+from collections.abc import AsyncIterator
+from dataclasses import replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import anyio
+import httpx
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+
+from . import (
+    access,
+    away,
+    capacity,
+    catalog,
+    converting,
+    keyframes,
+    languages,
+    ondemand,
+    playing,
+    problems,
+    ratings,
+    safefetch,
+    setup,
+    subtitles,
+    viewing,
+)
+from . import scanner as sc
+from . import titles as titles_module
+from .appapi import APP_MAX, LanguagesIn, app_label, in_sentence, slot_program
+from .broadcaster import now_ms
+from .broken import version_key
+from .catalog import Entry, Media, Track
+from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
+from .library import LibraryError, NoPicture, is_folder_key
+from .ondemand import NotShared
+from .plex import NOT_ANSWERING
+from .sources import find_file, learn_mapping, part_starts
+from .text import plain, possessive
+
+if TYPE_CHECKING:
+    from .db import User
+    from .main import AppContext
+
+log = logging.getLogger(__name__)
+
+NONE_SHARED = "No Media folders are shared with tapiOca's apps"
+AWAY_OFF = "Media on this tapiOca server can only be watched at home right now."
+PLAY_ENDED = "That program's address has ended. Choose it again to play it."
+# Said as a title's limits stop it while it plays (1.40.0), as a Station's
+# restricted program is (403, code "restricted").
+RESTRICTED_TITLE = "This title is restricted."
+# Even sound for a show's episodes, as a copy's `why` says it (the apps show
+# it in their player).
+EVEN_WHY = "even sound for the show's episodes"
+# A converted copy an app asked for, as its `why` says it; and what an app
+# that doesn't take copies is told when it asks for one.
+ASKED_WHY = "a converted copy, as the app asked"
+CANT_TAKE_COPY = "This app can't take a converted copy. Update the app to play this here."
+NOT_PLAYABLE = "Choose an episode or a movie to play"
+NO_SUCH_PICTURE = "There's no such picture"
+PAST_END = "That's past the end of this program"
+# A place reported this far past the end of what plays is refused (a little
+# past it is the end: watched).
+PAST_END_MS = 10 * 60_000
+UNREACHABLE_SAID_S = 60.0  # (the log says the library can't be reached once a minute, at most)
+NO_FILE = "tapiOca can't reach this program's file right now. Try again in a moment."
+COPY_FAILED = "tapiOca couldn't make this ready to play here. Try again, or choose another."
+# A program whose every version tapiOca found broken (see broken.py):
+# what the app is told. (The Broken files tab has it, for an Admin.)
+ON_THE_LIST = "This one can't play right now. An Admin has been told."
+KEYFRAMES_WAIT_S = 20.0  # reading a file's index, at most
+# A smaller version or copy of what a device was playing this soon after is
+# a step down in quality (said in the log), and a reason an app sent this
+# soon before it (a "kept-up" problem: see problems.py) is why.
+STEP_S = 120.0
+# Copies with their picture converted at once, at most (each takes a share of
+# the server's processor; repackaging takes next to nothing). A few more
+# while the stations' GPU is in use, which converts them (see converting.py):
+# a copy converted there is light on the processor.
+CONVERTING_MOST = 3
+CONVERTING_MOST_GPU = 6
+BUSY_CONVERTING = (
+    "tapiOca is already converting as much as it can for other devices. Try again in a "
+    "little while."
+)
+
+# A file's type, for players that go by it.
+_TYPES = {
+    "mkv": "video/x-matroska", "mp4": "video/mp4", "mov": "video/quicktime", "ts": "video/mp2t",
+    "avi": "video/x-msvideo", "webm": "video/webm", "m2ts": "video/mp2t", "wmv": "video/x-ms-wmv",
+}  # fmt: skip
+_SUBTITLE_TYPES = {
+    "srt": "application/x-subrip", "vtt": "text/vtt", "ass": "text/x-ssa", "ssa": "text/x-ssa",
+}  # fmt: skip
+# Asking Plex for a file on a player's behalf: how long to wait.
+PROXY_TIMEOUT = httpx.Timeout(30.0, read=120.0)
+SUBTITLES_MOST = 20 << 20  # a subtitle file's size, at most
+PROXIED_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges",
+                   "last-modified", "etag")  # fmt: skip
+
+
+class VideoAbility(BaseModel):
+    codec: str = Field(max_length=20)
+    width: int = Field(default=1920, ge=0, le=16384)
+    height: int = Field(default=1080, ge=0, le=16384)
+    bitDepth: int = Field(default=8, ge=8, le=16)
+
+
+class Abilities(BaseModel):
+    containers: list[str] = Field(default_factory=list, max_length=40)
+    video: list[VideoAbility] = Field(default_factory=list, max_length=40)
+    hdr: list[str] = Field(default_factory=list, max_length=10)
+    audio: list[str] = Field(default_factory=list, max_length=40)
+    hls: list[str] = Field(
+        default_factory=list, max_length=10
+    )  # (copies it takes: see converting.py)
+    # The subtitle formats its player shows itself (from 1.29.0: see
+    # languages.py; without them, a subtitle chosen for someone is drawn in).
+    subtitles: list[str] = Field(default_factory=list, max_length=20)
+
+
+class PlayAsk(BaseModel):
+    key: str = Field(max_length=20)
+    device: Abilities
+    version: str | None = Field(default=None, max_length=40)
+    maxKbps: int | None = Field(default=None, ge=100, le=10_000_000)
+    app: str = Field(default="", max_length=APP_MAX)
+    deviceName: str = Field(default="", max_length=APP_MAX)
+    startMs: int | None = Field(default=None, ge=0, le=7 * 86_400_000)
+    audio: str | None = Field(default=None, max_length=40)
+    subtitle: str | None = Field(default=None, max_length=40)
+    fit: bool = False
+    night: bool = False
+    # A converted copy, whatever the device says it plays (from 1.29.1: its
+    # decoder failed at the file; see play_copy).
+    convert: bool = False
+    # The device's language ("en-US"), for Automatic subtitles (from 1.34.0:
+    # see languages.py). One tapiOca doesn't know is none.
+    language: str | None = Field(default=None, max_length=languages.LONGEST)
+
+
+class ProgressReport(BaseModel):
+    key: str = Field(max_length=20)
+    positionMs: int | None = Field(default=None, ge=0, le=7 * 86_400_000)
+    watched: bool | None = None
+    session: str | None = Field(default=None, max_length=64)
+    # Each report's place in its playing (1, 2, 3...), so one sent before
+    # another but arriving after it is known (from 1.30.0).
+    sequence: int | None = Field(default=None, ge=1, le=2**31)
+
+
+class ShowMarked(BaseModel):
+    """A whole show, or one of its seasons, marked watched or not from a
+    menu (from 1.36.3: POST /api/internal/watched)."""
+
+    show: str = Field(max_length=20)
+    season: int | None = Field(default=None, ge=0, le=10_000)
+    watched: bool
+
+
+# Shuffle (1.37.0): the most episodes in one shuffled order, and its
+# randomness (the system's, so no two orders are alike by design).
+SHUFFLE_MOST = 500
+SHUFFLED = random.SystemRandom()
+
+# The most episodes marked at once. Half of what's kept for each person
+# (db.PROGRESS_KEPT), so one marking never pushes out what it marked. (Marked
+# watched, they count among the newest kept, as playing them would.)
+MARK_MOST = 2500
+TOO_MANY_TO_MARK = "That's too many episodes to mark at once."
+
+
+class WhenSlow(BaseModel):
+    home: str | None = Field(default=None, max_length=10)
+    away: str | None = Field(default=None, max_length=10)
+
+
+class SharedLibraries(BaseModel):
+    # (None: as they are. The page leaves them out while Plex can't list them.)
+    libraries: list[str] | None = Field(default=None, max_length=ondemand.LIBRARIES_MOST)
+    whenSlow: WhenSlow | None = None
+    evenSound: bool | None = None  # (None: as it is)
+
+
+# What the apps are told ----------------------------------------------------------------
+
+
+def art(key: str, kind: str) -> str:
+    return f"/api/internal/art/{key}?kind={kind}"
+
+
+def rating_of(e: Entry, show: Entry | None = None) -> str | None:
+    """The content rating shown beside a title's year (VR10): a show's or
+    movie's own; an episode's as limits judge it, its show's or its own if
+    that's stricter (viewing.judge_entry), its own when its show isn't known."""
+    if e.kind != catalog.EPISODE or show is None:
+        return ratings.shown(e.content_rating)
+    own, theirs = ratings.age(e.content_rating), ratings.age(show.content_rating)
+    if own is not None and (theirs is None or own > theirs):
+        return ratings.shown(e.content_rating)
+    return ratings.shown(show.content_rating) or ratings.shown(e.content_rating)
+
+
+def card(
+    e: Entry,
+    progress: dict[str, tuple[int, bool]],
+    unwatched: int | None = None,
+    show: Entry | None = None,
+) -> dict:
+    """A show, movie or episode in a list (see "A card" in docs/internal-api.md):
+    `show`, an episode's, for its rating."""
+    out: dict[str, Any] = {
+        "key": e.key,
+        "kind": e.kind,
+        "title": plain(e.show_title or e.title) if e.kind == catalog.EPISODE else plain(e.title),
+        "year": e.year,
+        "contentRating": rating_of(e, show),
+        "poster": art(e.show_key or e.key, "poster")
+        if e.kind == catalog.EPISODE and e.show_key
+        else (art(e.key, "poster") if e.has_thumb else None),
+    }
+    if e.kind == catalog.SHOW:
+        out["episodes"] = e.episodes
+        out["unwatched"] = unwatched
+        return out
+    row = progress.get(e.key)
+    out.update(
+        durationMs=e.duration_ms,
+        positionMs=ondemand.resume_at(row),
+        watched=bool(row and row[1]),
+    )
+    if e.kind == catalog.EPISODE:
+        out.update(
+            episodeTitle=plain(e.title) or None,
+            season=e.season,
+            episode=e.episode,
+            showKey=e.show_key,
+            thumb=art(e.key, "thumb") if e.has_thumb else None,
+        )
+    return out
+
+
+def details(e: Entry) -> dict:
+    """What a details page adds to a card."""
+    return {
+        "summary": plain(e.summary),
+        "tagline": plain(e.tagline) or None,
+        "genres": [plain(g) for g in e.genres],
+        "studio": plain(e.studio) or None,
+        "released": e.released or None,
+        "backdrop": art(e.key, "backdrop") if e.has_art else None,
+        "cast": [
+            {"name": name, "role": plain(role)} for who, role in e.cast if (name := plain(who))
+        ],
+        "directors": [name for who in e.directors if (name := plain(who))],
+        "writers": [name for who in e.writers if (name := plain(who))],
+    }
+
+
+def versions(e: Entry, problems: dict[str, str] | None = None) -> list[dict]:
+    """An episode's or movie's versions, the best first (see `versions` in
+    docs/internal-api.md); `problems`: what tapiOca found wrong with
+    each one's file, if anything ("broken" or "damaged", by its ID)."""
+    best = ondemand.best_first(e.media)
+    names = ondemand.version_labels(best)
+    return [
+        {
+            "id": m.id,
+            "name": names[i],
+            "size": m.size_label or None,
+            "hdr": ondemand.hdr_label(m),
+            "bitrateKbps": m.bitrate_kbps,
+            "problem": (problems or {}).get(m.id),
+        }
+        for i, m in enumerate(best)
+        if m.id
+    ]
+
+
+def playable_versions(
+    e: Entry,
+    dev: ondemand.Device,
+    max_kbps: int | None,
+    problems: dict[str, str] | None = None,
+    joins: bool = True,
+) -> list[dict]:
+    """Its versions, each saying whether this device can play it as it is,
+    and whether the connection keeps up with it (`joins`: whether the app
+    takes a copy that joins a version's several files)."""
+    out = []
+    best = [m for m in ondemand.best_first(e.media) if m.id]
+    for v, m in zip(versions(e, problems), best, strict=True):
+        why = ondemand.unplayable(m, dev, joins)
+        out.append(
+            {**v, "playable": not why, "why": why or None, "fits": ondemand.fits(m, max_kbps)}
+        )
+    return out
+
+
+def tracks(found: tuple[Track, ...], audio: bool) -> list[dict]:
+    return [
+        {
+            "id": t.id,
+            "name": ondemand.track_name(t, audio),
+            "language": plain(t.language) or None,
+            "languageCode": languages.track_code(t),
+            "codec": t.codec,
+            "default": t.default,
+            **({} if audio else {"forced": t.forced, "external": t.external}),
+            "index": t.index,
+        }
+        for t in found
+        if t.id
+    ]
+
+
+def describe(e: Entry) -> str:
+    """A program, as the log names it: "Northbound · S2 E4", "Tidewater Night (1975)"."""
+    return playing.title(e)
+
+
+def sound_of(media: Media, track: Track | None) -> str:
+    """A version's picture and sound, with the sound track playing: "1080p
+    HEVC HDR10, 5.1 E-AC-3"."""
+    return playing.picture_and_sound(
+        media.width, media.height, media.video, ondemand.hdr_label(media) or "",
+        track.channels if track else None, track.codec if track else "",
+    )  # fmt: skip
+
+
+def drawn_words(track: Track, asked: bool, shows: frozenset[str]) -> str:
+    """Which subtitles were drawn into a copy, and why, for the log (1.36.4,
+    the owner: an episode was converted "with subtitles drawn in", and the
+    log didn't say why): "English SRT, chosen in the app: a copy can't carry
+    them" (`asked`: the app asked, as one does when they're chosen while a
+    copy plays); "French PGS, which this device can't show"."""
+    what = " ".join(x for x in (track.language, ondemand.label(track.codec)) if x)
+    if track.codec in shows:
+        return (
+            f"{what}, chosen in the app: a copy can't carry them"
+            if asked
+            else (f"{what}: a copy can't carry them")
+        )
+    return f"{what}, which this device can't show"
+
+
+def how_copied(
+    plan: converting.Plan,
+    cant: list[str],
+    smaller: bool,
+    encoder: Encoder,
+    cap_kbps: int | None = None,
+    asked: str | None = None,
+    drawn: str | None = None,
+) -> str:
+    """How a copy plays, for the log: "repackaged, its sound made AAC
+    stereo, because this device can't play its sound's format (DTS)";
+    "converted to 1080p H.264 at 8 Mbps on the Intel/AMD GPU, because...";
+    "converted smaller to fit the connection: 720p H.264 at 4 Mbps on the
+    CPU, with subtitles drawn in"; away from home, a file over the Admin's
+    cap (`cap_kbps`): "converted smaller to fit the 10 Mbps allowed away from
+    home: 1080p H.264 at 8 Mbps on the CPU". A converted copy the app asked
+    for (`asked`: what it said went wrong just before, "" if nothing):
+    "converted to 1080p H.264 at 8 Mbps on the CPU, its sound made AAC 5.1,
+    as the app asked; it said: ERROR_CODE_DECODING_FAILED (...)"."""
+    if plan.copies_picture:
+        text = "repackaged"
+        if plan.parts:
+            text += f", joining its {len(plan.parts)} files"
+        if plan.audio_codec != "copy" and not plan.night:
+            text += (
+                f", its sound made {playing.sound_name(plan.audio_codec)} "
+                f"{playing.channels(plan.audio_channels)}"
+            )
+    else:
+        made = (
+            f"{playing.size(plan.height)} H.264 at {playing.mbps(plan.kbps)} on "
+            f"{playing.encoder_name(encoder)}"
+        )
+        if smaller:
+            text = f"converted smaller to fit the connection: {made}"
+        elif cap_kbps:
+            allowed = f"the {playing.mbps(cap_kbps)} allowed away from home"
+            text = f"converted smaller to fit {allowed}: {made}"
+        else:
+            text = f"converted to {made}"
+        if plan.parts:
+            text += f", joining its {len(plan.parts)} files"
+        if asked is not None:
+            text += (
+                f", its sound made {playing.sound_name(plan.audio_codec)} "
+                f"{playing.channels(plan.audio_channels)}"
+            )
+    extras = [
+        what
+        for what, on in (
+            (f"subtitles drawn in{f' ({drawn})' if drawn else ''}", plan.drawn is not None),
+            ("even sound", plan.even),
+            ("night mode's sound", plan.night),
+        )
+        if on
+    ]
+    if extras:
+        text += f", with {ondemand.and_list(extras)}"
+    if asked is not None:
+        text += f", as the app asked{f'; it said: {asked}' if asked else ''}"
+    elif cant:
+        text += f", because this device can't play {ondemand.and_list(cant)}"
+    return text
+
+
+def quality(session: ondemand.PlaySession) -> tuple[int, int, str]:
+    """What a session sends, to compare with another: (its picture's
+    height, its kilobits a second, in words: "1080p at 12 Mbps"). A
+    converted copy holds no more than the file it's made from, so it's
+    compared as no bigger than that file (an 8 Mbps copy of a 2.6 Mbps
+    file is a 2.6 Mbps picture), though it's said as made."""
+    copy = session.copy
+    m = session.media
+    if copy is not None and not copy.plan.copies_picture:
+        plan = copy.plan
+        words = f"{playing.size(plan.height)} H.264 at {playing.mbps(plan.kbps)}"
+        height = min(plan.height, m.height) if m.height else plan.height
+        kbps = min(plan.kbps, m.bitrate_kbps) if m.bitrate_kbps else plan.kbps
+        return height, kbps, words + f" on {playing.encoder_name(copy.encoder)}"
+    named = m.size_label or "its picture"
+    words = f"{named} at {playing.mbps(m.bitrate_kbps)}" if m.bitrate_kbps else named
+    return m.height, m.bitrate_kbps or 0, words
+
+
+def sends_kbps(session: ondemand.PlaySession) -> int:
+    """The kilobits a second a session sends over the connection: a converted
+    copy's as it's made, whatever its file holds (1.36.4's second audit: an
+    8 Mbps copy of a 2.6 Mbps file sends 8); otherwise its file's."""
+    copy = session.copy
+    if copy is not None and not copy.plan.copies_picture:
+        return copy.plan.kbps
+    return session.media.bitrate_kbps or 0
+
+
+def stepped_down(before: ondemand.PlaySession, after: ondemand.PlaySession) -> bool:
+    """Whether `after` sends less than `before` did: a smaller picture, or
+    the same with clearly less detail."""
+    was, now = quality(before), quality(after)
+    return now[0] < was[0] or (now[0] == was[0] and 0 < now[1] < was[1] * 0.85)
+
+
+# What each person can see (see viewing.py) ---------------------------------------------
+
+
+async def shows_of(cat: ondemand.Catalog, entries: list[Entry]) -> dict[str, Entry]:
+    """The shows of the episodes among `entries` (each asked about once, and
+    kept a while: see Catalog.entry)."""
+    keys = sorted({e.show_key for e in entries if e.kind == catalog.EPISODE and e.show_key})
+
+    async def one(key: str) -> Entry | None:
+        try:
+            return await cat.entry(key)
+        except NotShared:
+            return None
+
+    found = await asyncio.gather(*(one(k) for k in keys))
+    return {e.key: e for e in found if e is not None}
+
+
+def tags_wanted(entries: list[Entry]) -> dict[str, str]:
+    """The shows and movies whose tags limits judge `entries` by (an
+    episode's show's), key: kind, in the order shown."""
+    wanted: dict[str, str] = {}
+    for e in entries:
+        key = (e.show_key or "") if e.kind == catalog.EPISODE else e.key
+        if key:
+            wanted.setdefault(key, catalog.SHOW if e.kind == catalog.EPISODE else e.kind)
+    return wanted
+
+
+async def seen_only(
+    cat: ondemand.Catalog, viewer: viewing.Viewer, entries: list[Entry]
+) -> list[Entry]:
+    """Those of `entries` that `viewer` can see: shows and movies by their
+    own rating and library, episodes by their show's; and by what each is
+    (its show's, for an episode), whole, when their limits go by that (Plex
+    is asked for what isn't known yet, as Titles.ensure says: lists carry
+    only a few genres)."""
+    if viewer.unchecked or not entries:
+        return entries
+    shows = await shows_of(cat, entries)
+    titles = cat.titles
+    if viewer.by_tags and titles is not None:
+        # (Waiting a few seconds at most: what's not known by then stays
+        # hidden, and is known a moment later.)
+        await titles.ensure(tags_wanted(entries))
+
+    def tags(e: Entry) -> catalog.Tags | None:
+        if titles is None:
+            return None
+        return titles.tags((e.show_key or "") if e.kind == catalog.EPISODE else e.key)
+
+    return [
+        e for e in entries
+        if viewer.sees(viewing.judge_entry(e, shows.get(e.show_key or ""), tags(e)))
+    ]  # fmt: skip
+
+
+class TitleRestricted(Exception):
+    """What's playing is no longer allowed for its person (1.40.0)."""
+
+
+def restricted_answer() -> JSONResponse:
+    """What an app is told of a title its person's limits stopped: as for a
+    Station's restricted program (1.39.0), without when it's back."""
+    return JSONResponse({"detail": RESTRICTED_TITLE, "code": "restricted"}, status_code=403)
+
+
+# A byte answer cut partway (Guarded) leaves its response unfinished, and the
+# web server says so in the log as an error. That's no error here: it's said
+# once, as "stopped: their limits no longer allow it".
+_cut = contextvars.ContextVar("tapioca_cut", default=False)
+UNFINISHED = "ASGI callable returned without completing response."
+
+
+class _QuietCut(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not (_cut.get() and record.getMessage() == UNFINISHED)
+
+
+def quiet_cuts() -> None:
+    """Keeps the web server's log free of the cuts (once)."""
+    found = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _QuietCut) for f in found.filters):
+        found.addFilter(_QuietCut())
+
+
+quiet_cuts()
+
+
+class Guarded(Response):
+    """A play session's bytes (its file, from Plex or the disk, or a piece of
+    its copy), cut the moment its person's limits stop it (1.40.0), however
+    long the request: a player that asks for the whole file at once, and
+    reads it as it plays, would otherwise get the rest of it. Asked for after
+    it was stopped, or stopped before its first byte, it answers as
+    restricted."""
+
+    def __init__(self, inner: Response, session: ondemand.PlaySession) -> None:
+        # (Not Response.__init__: `inner` makes the answer.)
+        self.inner = inner
+        self.session = session
+        self.background = None
+        self.status_code = inner.status_code
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        started = False
+
+        async def sending(message: dict) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+            self.session.sending = time.monotonic()  # (in use: see PlaySessions.idle)
+
+        if self.session.restricted:
+            await self._close_inner()
+            await restricted_answer()(scope, receive, send)
+            return
+        if self.session.ended:
+            # (Ended after its address was checked, while Plex or a sleeping
+            # disk was answering: nothing is sent. The final-diff audit. No
+            # await between this and the scope's being kept below, so an end
+            # after it cuts the scope.)
+            await self._close_inner()
+            await JSONResponse({"detail": PLAY_ENDED}, status_code=404)(scope, receive, send)
+            return
+        with anyio.CancelScope() as cut:
+            self.session.streams.add(cut)
+            try:
+                await self.inner(scope, receive, sending)
+            finally:
+                self.session.streams.discard(cut)
+        if cut.cancel_called:
+            await self._close_inner()
+            if not started and self.session.restricted:
+                await restricted_answer()(scope, receive, send)
+            elif not started:  # (its play ended otherwise: see PlaySessions.end)
+                await JSONResponse({"detail": PLAY_ENDED}, status_code=404)(scope, receive, send)
+            else:
+                _cut.set(True)  # (and the connection closes: see _QuietCut)
+            return
+        if self.background is not None:
+            await self.background()
+
+    async def _close_inner(self) -> None:
+        """What the answer was passing on (Plex's, for a file from Plex) is
+        closed, so nothing is left open."""
+        with anyio.CancelScope(shield=True):
+            got = getattr(self.inner, "got", None)
+            if got is not None:
+                await got.aclose()
+            closing = getattr(getattr(self.inner, "body_iterator", None), "aclose", None)
+            if closing is not None:
+                await closing()
+
+
+async def watch_limits_forever(ctx: Any) -> None:
+    """Judges what's playing in Media by its person's limits, again and
+    again (every LIMITS_WATCH_S), from what tapiOca knows: an Admin's change
+    stops a title within a few seconds, and playing never waits on it."""
+    while True:
+        await asyncio.sleep(ondemand.LIMITS_WATCH_S)
+        try:
+            ctx.stop_restricted()
+        except Exception:
+            log.exception("Checking what's playing in the apps against limits failed")
+
+
+async def must_see(cat: ondemand.Catalog, viewer: viewing.Viewer, entry: Entry) -> None:
+    """NotShared (the same answer as for what isn't shared, or doesn't
+    exist) unless `viewer` can see `entry`."""
+    if not await seen_only(cat, viewer, [entry]):
+        raise NotShared(entry.key)
+
+
+def routes(app: FastAPI, ctx: AppContext) -> None:
+    """The library's addresses for the apps, the play sessions' and the
+    Access tab's."""
+    cat = ctx.catalog
+    settings = ctx.settings
+
+    def proxy() -> httpx.AsyncClient:
+        """The one client that fetches files and subtitles from Plex for
+        players (made when first needed; closed as tapiOca stops)."""
+        if ctx.play_client is None:
+            ctx.play_client = httpx.AsyncClient(
+                timeout=PROXY_TIMEOUT,
+                transport=safefetch.transport(safefetch.TYPED, ctx.play_transport),
+                follow_redirects=False,
+            )
+        return ctx.play_client
+
+    def person(request: Request) -> tuple[int, str]:
+        """Who's asking: (their tapiOca user id, name); (0, "") while
+        signing in is off."""
+        user = access.signed_in(request)
+        return (user.id, user.name) if user else (0, "")
+
+    def shared_here(request: Request) -> None:
+        if access.outside(request.scope) and not ctx.away.on:
+            raise HTTPException(403, AWAY_OFF)
+        if not ctx.shared.on:
+            raise HTTPException(404, NONE_SHARED)
+
+    def device_of(request: Request) -> tuple[str, str]:
+        """Which device is playing, among those watching (see capacity.py),
+        and its tag (see PlaySession.tag): at home, its address; through the
+        public port, its app's own key, as for its stations (see away.py)."""
+        if not access.outside(request.scope):
+            return (request.client.host if request.client else "?"), ""
+        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
+        user = access.signed_in(request)
+        key = ctx.away.key_for(access.session_hash(token), user) if token and user else None
+        if key is None:
+            raise HTTPException(403, AWAY_OFF)
+        return away.client(key), key[:6]
+
+    def plays_outside(session_id: str) -> bool:
+        """Whether a program's own addresses may be asked for on the public
+        port (see access.Access.play_outside): it's going, a signed-in app
+        started it there, and watching away from home is still on. (Its
+        sign-in is checked as it's asked for: see session_or_404.)"""
+        session = ctx.plays.find(session_id)
+        return session is not None and session.away and session.sign_in is not None and ctx.away.on
+
+    ctx.access.play_outside = plays_outside
+    said_unreachable = [0.0]  # (when the log last said so: see unreachable)
+    picture_turns = asyncio.Semaphore(ondemand.PICTURES_AT_ONCE)
+
+    def unreachable(why: str) -> HTTPException:
+        """The library can't be reached (503): said in the log, once a
+        minute at most, however many apps ask meanwhile."""
+        now = time.monotonic()
+        if now - said_unreachable[0] >= UNREACHABLE_SAID_S:
+            said_unreachable[0] = now
+            log.warning("A tapiOca app couldn't be shown Media (%s)", why)
+        return HTTPException(503, ondemand.UNREACHABLE)
+
+    @contextlib.asynccontextmanager
+    async def asking(request: Request) -> AsyncIterator[None]:
+        """Asking the library for what a request needs, within
+        LIBRARY_WAIT_S of its first ask, however many things it asks, so no
+        request hangs on Plex. What isn't shared (or seen), or the library
+        says isn't there, answers 404; the library slow, away or saying what
+        can't be read, 503."""
+        deadline = getattr(request.state, "library_by", None)
+        if deadline is None:
+            loop_now = asyncio.get_running_loop().time()
+            deadline = request.state.library_by = loop_now + ondemand.LIBRARY_WAIT_S
+            # (What it waits for Plex about tags, in all: see Titles.ensure.)
+            request.state.tags_by = min(loop_now + titles_module.ENSURE_S, deadline - 1.0)
+        waiting = asyncio.timeout_at(deadline)
+        until = titles_module.ensure_until.set(request.state.tags_by)
+        try:
+            async with waiting:
+                yield
+        except NotShared:
+            raise HTTPException(404, ondemand.NOT_SHARED) from None
+        except LibraryError as e:
+            if e.status == 404:  # (Plex's "no such thing" is ours)
+                raise HTTPException(404, ondemand.NOT_SHARED) from None
+            raise unreachable(str(e)) from None
+        except TimeoutError:
+            if not waiting.expired():
+                raise
+            raise unreachable(
+                f"Plex or a Media folder didn't answer within {ondemand.LIBRARY_WAIT_S:g} seconds"
+            ) from None
+        except (KeyError, TypeError, AttributeError, ValueError):
+            # (What the library said couldn't be read: as though it were
+            # away, rather than a stack trace for the app.)
+            log.exception("What Media said for a tapiOca app couldn't be read")
+            raise HTTPException(503, ondemand.UNREACHABLE) from None
+        finally:
+            titles_module.ensure_until.reset(until)
+
+    # What each person can see (see viewing.py) ------------------------------
+
+    def viewer_of(request: Request) -> viewing.Viewer:
+        return ctx.viewing.viewer(access.signed_in(request))
+
+    def library_seen(viewer: viewing.Viewer, key: str) -> bool:
+        libraries = viewer.level.libraries
+        return viewer.everything or libraries is None or key in libraries
+
+    def unwatched_of(user_id: int, shows: list[Entry]) -> dict[str, int]:
+        done = ctx.db.watched_in_shows(user_id, [s.key for s in shows])
+        return {s.key: max(0, (s.episodes or 0) - len(done.get(s.key, ()))) for s in shows}
+
+    async def shows_known(entries: list[Entry]) -> dict[str, Entry]:
+        """The shows of the episodes among `entries`, for their ratings (kept
+        a while, and mostly just asked about by seen_only); none, if the
+        library can't say just now: each episode then shows its own."""
+        try:
+            return await shows_of(cat, entries)
+        except LibraryError:
+            return {}
+
+    async def cards(user_id: int, entries: list[Entry]) -> list[dict]:
+        progress = ctx.db.progress_of(user_id, [e.key for e in entries if e.kind != catalog.SHOW])
+        unwatched = unwatched_of(user_id, [e for e in entries if e.kind == catalog.SHOW])
+        shows = await shows_known(entries)
+        return [
+            card(e, progress, unwatched.get(e.key), shows.get(e.show_key or "")) for e in entries
+        ]
+
+    # Browsing --------------------------------------------------------------
+
+    @app.get("/api/internal/libraries")
+    async def libraries(request: Request):
+        shared_here(request)
+        viewer = viewer_of(request)
+        async with asking(request):
+            found = await cat.libraries()
+        return {"libraries": [lib for lib in found if library_seen(viewer, lib["key"])]}
+
+    def unwatched_only(user_id: int, entries: list[Entry]) -> list[Entry]:
+        """Those of `entries` this person hasn't finished: movies not watched,
+        and shows with episodes not watched."""
+        shows = [e for e in entries if e.kind == catalog.SHOW]
+        left = unwatched_of(user_id, shows)
+        done = ctx.db.progress_of(user_id, [e.key for e in entries if e.kind != catalog.SHOW])
+        return [
+            e
+            for e in entries
+            if (
+                left.get(e.key, 1) > 0 if e.kind == catalog.SHOW else not done.get(e.key, (0, 0))[1]
+            )
+        ]
+
+    @app.get("/api/internal/libraries/{key}")
+    async def library_page(key: str, request: Request):
+        shared_here(request)
+        q = request.query_params
+        sort = q.get("sort", "title")
+        if sort not in ("title", "added", "released"):
+            raise HTTPException(400, "sort must be title, added or released")
+        start = _whole(q.get("start"), 0, "start", 0, 1_000_000)
+        size = _whole(q.get("size"), ondemand.PAGE_DEFAULT, "size", 1, ondemand.PAGE_MOST)
+        genre = " ".join(plain(q.get("genre", "")).split())
+        if len(genre) > ondemand.GENRE_LONGEST:
+            raise HTTPException(400, "That isn't one of this Media folder's genres")
+        unwatched = q.get("unwatched", "") in ("1", "true")
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        async with asking(request):
+            if not library_seen(viewer, key):
+                raise NotShared(key)
+            title, kind, entries = await cat.whole(key, sort, genre)
+            genres = await cat.genres(key)
+            entries = await seen_only(cat, viewer, entries)
+        if unwatched:
+            entries = unwatched_only(user_id, entries)
+        # (Where each group of the sort starts, for the apps' dial: 1.37.0. By
+        # title, its marks are the letters, as apps before it ask for them:
+        # one pass, not two.)
+        marks = ondemand.marks(entries, sort, int(time.time() * 1000))
+        return {
+            "key": key,
+            "title": title,
+            "kind": kind,
+            "total": len(entries),
+            "start": start,
+            "items": await cards(user_id, entries[start : start + size]),
+            "genres": [g["title"] for g in genres],
+            "letters": [{"letter": m["value"], "start": m["start"]} for m in marks]
+            if sort == "title"
+            else [],
+            "marks": marks,
+        }
+
+    @app.get("/api/internal/home")
+    async def home(request: Request):
+        shared_here(request)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        async with asking(request):
+            going = await ondemand.continue_watching(cat, ctx.db, user_id)
+            added = await cat.recently_added()
+            if not viewer.unchecked:
+                if viewer.by_tags and cat.titles is not None:
+                    # (One ask for all Home shows, in the order it shows it.)
+                    shown = [e for e, _ in going] + [
+                        e for lib, es in added if library_seen(viewer, lib["key"]) for e in es
+                    ]
+                    await cat.titles.ensure(tags_wanted(shown))
+                seen = {e.key for e in await seen_only(cat, viewer, [e for e, _ in going])}
+                going = [(e, start) for e, start in going if e.key in seen]
+                added = [
+                    (lib, await seen_only(cat, viewer, entries))
+                    for lib, entries in added
+                    if library_seen(viewer, lib["key"])
+                ]
+        going = going[: ondemand.CONTINUE_MOST]
+        progress = dict(ctx.db.progress_of(user_id, [e.key for e, _ in going]))
+        for e, start in going:  # (where to start, as worked out)
+            progress[e.key] = (start, progress.get(e.key, (0, False))[1])
+        shows = await shows_known([e for e, _ in going])
+        return {
+            "continue": [card(e, progress, show=shows.get(e.show_key or "")) for e, _ in going],
+            "added": [
+                {
+                    "library": lib["key"],
+                    "title": lib["title"],
+                    "items": await cards(user_id, entries),
+                }
+                for lib, entries in added
+                if entries
+            ],
+        }
+
+    def on_now(words: str, user: User | None) -> list[dict]:
+        """The stations (that `user` can see) airing a show or movie whose
+        title has `words` in it right now (as search finds titles: see
+        ondemand.match), with what's on."""
+        wanted, now = ondemand.searchable(words), now_ms()
+        out: list[dict] = []
+        if not wanted:
+            return out
+        viewer = ctx.viewing.viewer(user)
+        for channel in ctx.stations_for(user):
+            station = ctx.guide(channel)  # (INFO in its blocks: 1.36.2)
+            slot = station.locate(now)
+            if slot is None:
+                continue
+            item = slot.item
+            # (Never found by the title of a program they may not watch: 1.39.0.)
+            if not ctx.viewing.may_watch(viewer, item):
+                continue
+            title = (
+                item.show_title if item.kind == catalog.EPISODE and item.show_title else item.title
+            )
+            if ondemand.match(wanted, ondemand.searchable(plain(title or ""))) is not None:
+                out.append(
+                    {
+                        "number": channel.number,
+                        "name": plain(channel.name),
+                        "now": slot_program(station, slot),
+                    }
+                )
+        return out
+
+    @app.get("/api/internal/search")
+    async def search(request: Request):
+        """The one place your library and the stations meet: what's in the
+        library, and which stations are airing it now."""
+        words = " ".join(plain(request.query_params.get("q", "")).split())
+        if not words:
+            raise HTTPException(400, "Type something to search for")
+        if len(words) > ondemand.SEARCH_LONGEST:
+            raise HTTPException(400, "That's too long to search for")
+        user_id, _ = person(request)
+        user = access.signed_in(request)
+        viewer = viewer_of(request)
+        found: list[Entry] = []
+        if ctx.media_here(access.outside(request.scope)):
+            async with asking(request):
+                found = await seen_only(cat, viewer, await cat.search(words))
+            found = [e for e in found if library_seen(viewer, e.library)][: ondemand.SEARCH_MOST]
+        return {
+            "items": await cards(user_id, found),
+            "onNow": await asyncio.to_thread(on_now, words, user),
+        }
+
+    @app.get("/api/internal/items/{key}")
+    async def item(key: str, request: Request):
+        shared_here(request)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        async with asking(request):
+            e = await cat.entry(key)
+            await must_see(cat, viewer, e)
+            if e.kind == catalog.SHOW:
+                episodes = await seen_only(cat, viewer, await cat.episodes(key))
+                upcoming = await ondemand.up_next(cat, ctx.db, user_id, key)
+                if upcoming is not None and not await seen_only(cat, viewer, [upcoming[0]]):
+                    upcoming = None
+        if e.kind == catalog.SHOW:
+            done = ctx.db.watched_in_shows(user_id, [key]).get(key, set())
+            seasons: dict[int, list[Entry]] = {}
+            for ep in episodes:
+                seasons.setdefault(ep.season if ep.season is not None else -1, []).append(ep)
+            nxt = None
+            if upcoming is not None:
+                ep, start, _why = upcoming
+                nxt = card(ep, {ep.key: (start, ep.key in done)}, show=e)
+            return {
+                **card(e, {}, max(0, (e.episodes or len(episodes)) - len(done))),
+                **details(e),
+                "languages": ctx.languages.for_item(user_id, e),
+                "seasons": [
+                    {
+                        "season": n if n >= 0 else None,
+                        "title": "Specials" if n == 0 else f"Season {n}" if n > 0 else "Episodes",
+                        "episodes": len(eps),
+                        "unwatched": sum(1 for x in eps if x.key not in done),
+                    }
+                    for n, eps in seasons.items()
+                ],
+                "next": nxt,
+            }
+        progress = ctx.db.progress_of(user_id, [key])
+        media = next(iter(ondemand.best_first(e.media)), None)
+        shows = await shows_known([e])
+        out = {**card(e, progress, show=shows.get(e.show_key or "")), **details(e)}
+        if e.kind == catalog.EPISODE and e.show_key and not e.has_art:
+            out["backdrop"] = art(e.show_key, "backdrop")
+        out.update(
+            markers=_markers(e),
+            picture={"size": media.size_label or None, "hdr": ondemand.hdr_label(media)}
+            if media
+            else None,
+            audio=tracks(media.audio, True) if media else [],
+            subtitles=tracks(media.subtitles, False) if media else [],
+            versions=versions(e, on_the_list(e)),
+            languages=ctx.languages.for_item(user_id, e),
+        )
+        return out
+
+    # Languages chosen for a show, an episode or a movie (see languages.py) ----
+
+    async def chosen_for(key: str, request: Request) -> Entry:
+        """A show, an episode or a movie someone may choose languages for:
+        one in a shared library that they can see."""
+        shared_here(request)
+        async with asking(request):
+            e = await cat.entry(key)
+            await must_see(cat, viewer_of(request), e)
+        if e.kind not in languages.KINDS:
+            raise HTTPException(400, "Choose languages for a show, an episode or a movie")
+        return e
+
+    @app.put("/api/internal/items/{key}/languages")
+    async def set_item_languages(key: str, body: LanguagesIn, request: Request):
+        """From the player: languages for a whole show, or an episode or a
+        movie alone, for whoever's signed in (null clears one; what isn't
+        sent stays)."""
+        e = await chosen_for(key, request)
+        user_id, _ = person(request)
+        try:
+            changes = languages.changes(body.given(), own=False)
+        except ValueError as ex:
+            raise HTTPException(400, str(ex)) from None
+        ctx.languages.change(user_id, e.key, changes)
+        return ctx.languages.for_item(user_id, e)
+
+    @app.delete("/api/internal/items/{key}/languages")
+    async def clear_item_languages(key: str, request: Request):
+        e = await chosen_for(key, request)
+        user_id, _ = person(request)
+        ctx.languages.clear(user_id, e.key)
+        return ctx.languages.for_item(user_id, e)
+
+    @app.get("/api/internal/items/{key}/related")
+    async def related_to(key: str, request: Request):
+        """Others like a show or movie, from its own library (an episode's:
+        its show's)."""
+        shared_here(request)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        async with asking(request):
+            e = await cat.entry(key)
+            await must_see(cat, viewer, e)
+            if e.kind == catalog.EPISODE and e.show_key:
+                e = await cat.entry(e.show_key)
+            found: list[Entry] = []
+            if e.library and library_seen(viewer, e.library) and e.genres:
+                _, _, pool = await cat.whole(e.library, "title")
+                found = ondemand.related(e, await seen_only(cat, viewer, pool))
+        return {"items": await cards(user_id, found)}
+
+    @app.get("/api/internal/items/{key}/shuffle")
+    async def shuffled(key: str, request: Request):
+        """A show's episodes in a random order, for Shuffle (1.37.0, the owner,
+        October 14: "Shuffle all", and "Shuffle unwatched" with unwatched=1):
+        those this person may see, specials aside, each file once (episodes in
+        one file play it once), up to SHUFFLE_MOST. Each asking is a new order;
+        the app plays them one after another."""
+        shared_here(request)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        unwatched = request.query_params.get("unwatched", "") in ("1", "true")
+        async with asking(request):
+            e = await cat.entry(key)
+            if not cat.shared_library(e):
+                raise NotShared(e.key)
+            await must_see(cat, viewer, e)
+            if e.kind != catalog.SHOW:
+                raise HTTPException(400, "That isn't a show")
+            found = await seen_only(cat, viewer, await cat.episodes(e.key))
+        found = [x for x in found if x.season != 0]
+        if unwatched:
+            # (Before each file is taken once: a file with one episode
+            # watched and another not still has one to watch.)
+            done = ctx.db.progress_of(user_id, [x.key for x in found])
+            found = [x for x in found if not done.get(x.key, (0, False))[1]]
+        files: set[str] = set()
+        pool: list[Entry] = []
+        for x in found:
+            if x.file and x.file in files:
+                continue
+            if x.file:
+                files.add(x.file)
+            pool.append(x)
+        SHUFFLED.shuffle(pool)
+        pool = pool[:SHUFFLE_MOST]
+        return {
+            "show": e.key,
+            "unwatched": unwatched,
+            "total": len(pool),
+            "items": await cards(user_id, pool),
+        }
+
+    @app.get("/api/internal/items/{key}/episodes")
+    async def episodes_of(key: str, request: Request):
+        shared_here(request)
+        q = request.query_params
+        season_text = q.get("season")
+        season = _whole(season_text, -1, "season", 0, 100_000) if season_text else None
+        start = _whole(q.get("start"), 0, "start", 0, 1_000_000)
+        size = _whole(q.get("size"), ondemand.EPISODES_MOST, "size", 1, ondemand.EPISODES_MOST)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        async with asking(request):
+            e = await cat.entry(key)
+            await must_see(cat, viewer, e)
+            if e.kind != catalog.SHOW:
+                raise HTTPException(400, "That isn't a show")
+            found = await seen_only(cat, viewer, await cat.episodes(key))
+        chosen = [x for x in found if season is None or x.season == season]
+        return {
+            "show": key,
+            "season": season,
+            "total": len(chosen),
+            "start": start,
+            "episodes": await cards(user_id, chosen[start : start + size]),
+        }
+
+    async def shown_of(key: str, kind: str, viewer: viewing.Viewer) -> tuple[str, bool]:
+        """Whose picture an app's `kind` of `key` is (an episode's poster and
+        backdrop are its show's), and whether it has one: from the list it
+        came from, for a viewer with no limits (1.43.0: no details asked of
+        the library just for a picture), otherwise from its details."""
+        which = "art" if kind == "backdrop" else "thumb"
+        f = cat.facts(key) if viewer.unchecked else None
+        if f is not None:
+            target = (
+                f.show_key if f.kind == catalog.EPISODE and kind != "thumb" and f.show_key else key
+            )
+            known = f if target == key else cat.facts(target)
+            if known is not None:
+                return target, known.has_art if which == "art" else known.has_thumb
+        e = await cat.entry(key)
+        target = e.show_key if e.kind == catalog.EPISODE and kind != "thumb" else e.key
+        shown = e if not target or target == e.key else await cat.entry(target)
+        return shown.key, shown.has_art if which == "art" else shown.has_thumb
+
+    @app.get("/api/internal/art/{key}")
+    async def picture(key: str, request: Request):
+        """A title's picture, as Plex (or a Media folder) makes it at one of
+        six widths, kept in memory with its version (1.43.0: as 1.41.0, with
+        changed art made again and art removed since no longer served). Any
+        `format` is ignored: the answer is JPEG, or the picture as it is."""
+        shared_here(request)
+        kind = request.query_params.get("kind", "poster")
+        if kind not in ondemand.PICTURE_KINDS:
+            raise HTTPException(400, "kind must be poster, backdrop or thumb")
+        width = ondemand.width_for(_whole(request.query_params.get("w"), 320, "w", 1, 10_000))
+        viewer = viewer_of(request)
+        async with asking(request):
+            await cat.check(key)  # (shared now, even if its picture was kept from before)
+            if not viewer.unchecked:
+                await must_see(cat, viewer, await cat.entry(key))
+        here = (key, kind, width)
+        kept = ctx.app_pictures.get(here)
+        version = cat.picture_version(key, kind)
+        if version == catalog.NO_PICTURE:
+            ctx.app_pictures.drop(here)  # (removed since: no longer served)
+            raise HTTPException(404, NO_SUCH_PICTURE)
+        stale = kept if kept is not None and version is not None and kept[3] != version else None
+        if stale is not None:
+            kept = None  # (made from another version: made again)
+        if kept is None:
+            which = "art" if kind == "backdrop" else "thumb"
+            try:
+                async with asking(request):
+                    target, has = await shown_of(key, kind, viewer)
+                if not has:
+                    ctx.app_pictures.drop(here)
+                    raise HTTPException(
+                        404, NO_SUCH_PICTURE
+                    )  # (the library has none: no need to ask)
+                height = width * 3 // 2 if kind == "poster" else width * 9 // 16
+                missing = gone = False
+                async with asking(request), picture_turns:
+                    asked = ctx.alerts.pictures_asked()
+                    # (The app scrolled past while it waited for a turn: nothing asked of the
+                    # library for it. Uvicorn never cancels a handler whose client has gone.)
+                    gone = await request.is_disconnected()
+                    if not gone:
+                        try:
+                            got = await ctx.library.picture(target, which, width, height)
+                        except NoPicture:
+                            missing = True  # (caught here: asking would say it isn't shared)
+                if gone:
+                    return Response(status_code=499)  # (no one's there to read it)
+                if missing:
+                    ctx.app_pictures.drop(here)
+                    raise HTTPException(404, NO_SUCH_PICTURE)
+            except httpx.HTTPStatusError as ex:
+                code = ex.response.status_code
+                if (
+                    code in (404, 410) or code < 400
+                ):  # (removed, or not a picture: the kept copy goes too)
+                    ctx.app_pictures.drop(here)
+                    raise HTTPException(404, NO_SUCH_PICTURE) from None
+                if code == 401:
+                    ctx.alerts.plex_refused_pictures()  # (its sign-in to Plex: the Admin's to fix)
+                if stale is None:
+                    # (Plex unwell or refusing for now: never "gone", which the apps take as missing
+                    # for good, forgetting their copy and asking for bigger art. The owner, DL283.)
+                    raise unreachable(f"Plex answered {code} for a picture") from None
+                kept = stale  # (changed, but can't be made now: the one kept)
+            except httpx.HTTPError as ex:
+                if stale is None:
+                    raise unreachable(f"a picture didn't come: {type(ex).__name__}") from None
+                kept = stale
+            except HTTPException as ex:
+                if ex.status_code != 503 or stale is None:
+                    raise
+                kept = stale
+            else:
+                if not is_folder_key(target):
+                    ctx.alerts.plex_made_a_picture(asked)
+                kept = ctx.app_pictures.put(here, got, version or "")
+        data, content_type, tag = kept[0], kept[1], kept[2]
+        headers = {
+            "Cache-Control": "private, max-age=86400",
+            "ETag": tag,
+            "X-Content-Type-Options": "nosniff",
+        }
+        if {tag, "*"} & _tags(request.headers.get("if-none-match", "")):
+            return Response(status_code=304, headers=headers)  # (the app has it already)
+        return Response(data, media_type=content_type, headers=headers)
+
+    # Playing ---------------------------------------------------------------
+
+    def found_in(e: Entry) -> list[tuple[Media, str]]:
+        """The versions of a program whose files tapiOca found broken
+        (it can't play) or damaged (it plays, but breaks up in places): see
+        broken.py. (Unsupported is the stations' alone: the apps play by
+        what each device shows.)"""
+        out = []
+        for m in e.media:
+            found = ctx.broken.entry(version_key(e.key, sc.version_of(e, m)))
+            if found is not None and found.get("problem") in ("broken", "damaged"):
+                out.append((m, str(found["problem"])))
+        return out
+
+    def on_the_list(e: Entry) -> dict[str, str]:
+        """What found_in says, by version ID."""
+        return {m.id: problem for m, problem in found_in(e) if m.id}
+
+    def trouble(session: ondemand.PlaySession, at_s: float, why: str) -> None:
+        """Making a copy failed: the file's checked there (see
+        scanner.trouble), in case it's the file's fault."""
+        who = session.user or "someone"
+        sc.trouble(
+            ctx, session.entry, session.media, at_s, f"making a copy for {who} stopped ({why})"
+        )
+
+    async def source_of(e: Entry, media: Media) -> tuple[str | None, str | None]:
+        """Where a version's file is read from: (its path, where tapiOca
+        can read it itself; otherwise Plex's address for it)."""
+        path = None
+        if media.file:
+            found, _timed_out = await find_file(settings, ctx.media_access, e.key, media.file)
+            if found is not None:
+                learn_mapping(ctx.media_access, found)
+                path = found.path
+        stream = (
+            ctx.library.stream_url(e.key, media.part_key)
+            if path is None and media.part_key and ctx.library.configured
+            else None
+        )
+        return path, stream
+
+    def reader(path: str | None, stream: str | None) -> keyframes.Reader:
+        """Reads part of a file: from disk, or from Plex a range at a time."""
+
+        async def from_disk(offset: int, size: int) -> bytes:
+            def read() -> bytes:
+                with open(path or "", "rb") as f:
+                    f.seek(offset)
+                    return f.read(size)
+
+            try:
+                return await asyncio.to_thread(read)
+            except OSError:
+                return b""
+
+        async def from_plex(offset: int, size: int) -> bytes:
+            asked = {"range": f"bytes={offset}-{offset + size - 1}", "accept-encoding": "identity"}
+            client = proxy()
+            try:
+                got = await client.send(
+                    client.build_request("GET", stream or "", headers=asked), stream=True
+                )
+            except httpx.HTTPError:
+                return b""
+            try:
+                if got.status_code != 206:  # (never the whole file, for a part of it)
+                    return b""
+                data = bytearray()
+                async for part in got.aiter_bytes():
+                    data += part
+                    if len(data) >= size:
+                        break
+                return bytes(data[:size])
+            except httpx.HTTPError:
+                return b""
+            finally:
+                await got.aclose()
+
+        return from_disk if path else from_plex
+
+    async def fetch_subtitles(url: str, target: Path) -> bool:
+        """A subtitle file of its own, fetched from Plex to be drawn in."""
+        try:
+            got = await proxy().get(url)
+            got.raise_for_status()
+            if len(got.content) > SUBTITLES_MOST:
+                return False
+            await asyncio.to_thread(target.write_bytes, got.content)
+        except (httpx.HTTPError, OSError) as e:
+            log.warning("Couldn't fetch a subtitle file to draw in (%s)", type(e).__name__)
+            return False
+        return True
+
+    def app_of(body: PlayAsk, request: Request) -> str:
+        """Which app on which device is playing: as it says, or else as its
+        sign-in says."""
+        if body.app or body.deviceName:
+            return app_label(body.app, body.deviceName)
+        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
+        known = ctx.db.session_app(access.session_hash(token)) if token else None
+        return known or app_label("", "")
+
+    def said_stop(session: ondemand.PlaySession) -> None:
+        """The log's line for something stopping in an app: who, what, where
+        they stopped, and for how long they watched. Played into its credits,
+        or as far as counts as watched, it "finished" (1.36.4, the owner: the
+        log said he stopped an episode that played to its end, as Up next
+        went on to the next one); before that, it "stopped"."""
+        at = session.position_ms
+        # (By how long the version playing is, as its progress goes: 1.36.4's audit.)
+        length = ondemand.length_of(session.entry, session.media)
+        done = at is not None and ondemand.is_watched(at, session.entry, length)
+        log.info(
+            "%s %s %s%s%s (watched %s)",
+            session.user or "Someone",
+            "finished" if done else "stopped",
+            describe(session.entry),
+            " away from home" if session.away else "",
+            f" at {playing.clock(at / 1000)}" if at is not None else "",
+            playing.minutes(session.watched_s),
+        )
+
+    def one_at_a_time(sign_in: str | None, client: str, e: Entry) -> None:
+        """A device plays one program at a time: starting one ends what it
+        was playing (said in the log as leaving it says it, unless it's the
+        same program again: another sound track, or a smaller version), and
+        the copy being made for it, if any."""
+        for old in ctx.plays.on_device(sign_in, client):
+            ctx.plays.end(old.id)
+            if old.entry.key != e.key:
+                said_stop(old)
+
+    def said_start(
+        session: ondemand.PlaySession, sound: Track | None, how: str, from_plex: bool
+    ) -> None:
+        """The log's line for something starting to play in an app: who,
+        in which app, what, its file, and how it plays."""
+        media = session.media
+        more = len(media.parts) - 1 if media.joined else 0
+        log.info(
+            "%s started %s in %s, %s: %s (%s)%s, %s",
+            session.user or "Someone",
+            describe(session.entry),
+            in_sentence(session.app or app_label("", "")),
+            "away from home" if session.away else "at home",
+            playing.file_name(media.file or "") + (f" and {more} more" if more else ""),
+            sound_of(session.media, sound),
+            " from Plex" if from_plex else "",
+            how,
+        )
+
+    def noted_away(session: ondemand.PlaySession, request: Request) -> None:
+        """Something started playing through the public port: in the access
+        log too, as a station watched away from home is (once a play: not
+        again for another sound track, or a smaller version)."""
+        if session.away:
+            ctx.access.record(
+                logging.INFO,
+                f"{session.user or 'Someone'} is playing {describe(session.entry)} away from "
+                f"home, from {access.where(request.scope)}",
+            )
+
+    def over_the_limit(
+        over: tuple[str, int], body: PlayAsk, request: Request, e: Entry, tag: str
+    ) -> JSONResponse:
+        """One more device than an Admin's limits allow (see capacity.py):
+        said in the log, and told why."""
+        limit, most = over
+        user_id, name = person(request)
+        away_ = access.outside(request.scope)
+        home = request.client.host if request.client else "?"
+        where = access.address(request.scope) if away_ else home
+        who = playing.Watcher(where, away_, name, user_id or None, app_of(body, request), tag)
+        log.warning(
+            "The limit of %s watching%s at once (set on the Access tab) was reached, so %s "
+            "couldn't play %s",
+            capacity.devices(most),
+            " away from home" if limit == "away" else "",
+            who.subject(start=False),
+            describe(e),
+        )
+        return JSONResponse(
+            {"detail": capacity.refused_because(limit, most), "limit": limit, "most": most},
+            status_code=503,
+        )
+
+    def said_before(body: PlayAsk, request: Request) -> str:
+        """What the app said lately about why it asks for this ("" if
+        nothing): for a converted copy, what went wrong playing; otherwise,
+        that playing couldn't keep up (see problems.py)."""
+        kinds = problems.LIBRARY_KINDS if body.convert else problems.KEPT_UP
+        return ctx.problems.said_lately(access.address(request.scope), STEP_S, kinds)
+
+    def said_step_down(
+        before: ondemand.PlaySession | None,
+        after: ondemand.PlaySession,
+        body: PlayAsk,
+        request: Request,
+        cap: int | None = None,
+    ) -> bool:
+        """Says in the log (and True) if a device just went to a smaller
+        version or copy of what it was playing: from what to what, and why
+        (the app's own reason, if it sent one: see problems.py; or away
+        from home, the Admin's cap, `cap`, where a version is over it)."""
+        if before is None or not stepped_down(before, after):
+            return False
+        who = playing.Watcher(
+            access.address(request.scope) if after.away else after.client,
+            after.away, after.user, after.user_id or None, after.app, after.tag,
+        )  # fmt: skip
+        fits = f" (about {playing.mbps(body.maxKbps)})" if body.maxKbps else ""
+        # (Every app sends the connection it measured, `maxKbps`, with every
+        # play: it's why only when the app asked for a copy to fit it, or
+        # what played before didn't fit it, by what it sent: sends_kbps.)
+        if body.convert:
+            why = "the app asked for a converted copy"
+        elif body.fit or (
+            body.maxKbps and sends_kbps(before) * ondemand.FIT_HEADROOM > body.maxKbps
+        ):
+            why = f"to fit its connection{fits}"
+        elif cap and any(ondemand.over_cap(m, cap) for m in after.entry.media):
+            why = f"to fit the {playing.mbps(cap)} allowed away from home"
+        else:
+            why = "the app asked for it"
+        said = said_before(body, request)
+        log.info(
+            "%s switched %s to a smaller %s, from %s to %s: %s%s",
+            who.subject(),
+            describe(after.entry),
+            "version" if after.copy is None or after.copy.plan.copies_picture else "copy",
+            quality(before)[2],
+            quality(after)[2],
+            why,
+            f"; the app said: {said}" if said else "",
+        )
+        return True
+
+    def drawn_for(
+        picked: languages.Picked | None, shows: frozenset[str], copy: bool, joined: bool = False
+    ) -> Track | None:
+        """The subtitle chosen for someone from their languages (see
+        languages.py) that's drawn into the picture, as an app's `subtitle`
+        is: one the player doesn't show itself (`shows`: the formats it
+        does), and in a copy (`copy`), one inside the file too, as a copy
+        holds none; in a copy that joins a version's several files
+        (`joined`), any, as one of its own goes with one of them alone. Only
+        one tapiOca can draw: otherwise none."""
+        found = picked.subtitle if picked else None
+        if found is None or (not joined and found.codec in shows and (found.external or not copy)):
+            return None
+        if converting.picture_subtitles(found):
+            return None if found.external else found
+        return found if ctx.subtitling and (not found.external or found.id.isdigit()) else None
+
+    def shown_for(
+        picked: languages.Picked | None,
+        drawn: Track | None,
+        shows: frozenset[str],
+        copy: bool,
+        joined: bool = False,
+    ) -> Track | None:
+        """The subtitle chosen for someone that's shown: drawn in, or by the
+        player itself (in a copy, only a file of its own, added beside it;
+        never beside a copy that joins several, `joined`)."""
+        found = picked.subtitle if picked else None
+        if found is None or drawn is not None:
+            return drawn
+        shown = found.codec in shows and (found.external or not copy) and not joined
+        return found if shown else None
+
+    async def drawing(
+        e: Entry, f: Media, track: Track, source: str
+    ) -> list[str] | str | tuple[Subtitles, Any]:
+        """How a subtitle track is drawn into a copy of one file (`f`, read
+        from `source`): the subtitles, and what's to be done first (read out
+        of the file), if anything; for a file of its own, where it's fetched
+        from (into the copy's folder: see play_copy); or why it can't be."""
+        inside = [t for t in sorted(f.subtitles, key=lambda t: t.index or 0) if not t.external]
+        nth = next((i for i, t in enumerate(inside) if t.id == track.id), None)
+        if converting.picture_subtitles(track):
+            if nth is None:
+                return ["its subtitles (a picture subtitle file of its own)"]
+            return Subtitles(stream=nth, image=True), None
+        if not ctx.subtitling:
+            return ["its subtitles (tapiOca can't draw text subtitles)"]
+        if track.external:
+            url = ctx.library.stream_url(e.key, f"/library/streams/{track.id}")
+            return url if url is not None and track.id.isdigit() else ["its subtitles"]
+        if nth is None:
+            return ["its subtitles"]
+        key = f"{source.split('?')[0]}|{nth}|{f.size}|{f.id}"
+        job = subtitles.Extraction(source, nth, settings.data_dir / subtitles.FOLDER
+                                   / f"app-{hashlib.sha1(key.encode()).hexdigest()[:24]}.ass",
+                                   track.codec == "ass")  # fmt: skip
+        try:
+            await asyncio.to_thread(job.target.parent.mkdir, parents=True, exist_ok=True)
+        except OSError as ex:
+            log.warning("A copy for a tapiOca app couldn't be made (%s)", ex)
+            raise HTTPException(503, COPY_FAILED) from None
+        return job.ready(), (None if job.target.exists() else subtitles.extract(settings, job))
+
+    async def play_copy(
+        body: PlayAsk,
+        request: Request,
+        e: Entry,
+        dev: ondemand.Device,
+        hls: frozenset[str],
+        client: str,
+        tag: str,
+        cap: int | None,
+        even: bool,
+        only_sound: Media | None = None,
+        wanted: languages.Wanted | None = None,
+        shows: frozenset[str] = frozenset(),
+        passed_over: tuple[Media, ...] = (),
+    ) -> Any:
+        """Playing a copy tapiOca makes (see converting.py), for a device
+        that can't play the file as it is, or for subtitles drawn in, a
+        smaller picture made to fit, night mode's sound, or away from home,
+        a file over the Admin's cap (`cap`, in kbps) converted down to fit
+        it; with even sound for a show's episodes (`even`), whatever it's
+        made for. (`client` and `tag`: the device, as device_of says.) Its
+        sound and subtitles are the app's (`audio`, `subtitle`), or else
+        chosen from what the person wants (`wanted`: see languages.py; with
+        `shows`, the subtitle formats the player shows itself).
+
+        `only_sound`: a version the device plays as it is, copied only for
+        even sound: its picture kept as it is, and only its sound made. None
+        (play it as it is, then) if its picture can't be kept.
+        `passed_over`: versions tapiOca found broken, never made a copy
+        of.
+
+        With the app's `convert` (its decoder failed at the file), the copy
+        is converted whatever the device says it plays: H.264 at 8 bits, at
+        most 1080p, ordinary rather than HDR, and AAC sound (see
+        converting.sound_for)."""
+        user_id, name = person(request)
+        away_ = access.outside(request.scope)
+        usable = [m for m in e.media if m not in passed_over]
+        versions = [m for m in ondemand.best_first(usable) if m.id] or usable
+        asked = [m for m in versions if body.version and m.id == body.version]
+        smaller = body.fit and body.maxKbps is not None
+
+        def refuse(why: list[str]) -> JSONResponse:
+            log.info("tapiOca can't make a copy of %s for an app (%s)", describe(e),
+                     ondemand.and_list(why))  # fmt: skip
+            detail = cant_convert(why) if body.convert else cant_copy(why)
+            return JSONResponse({"detail": detail, "why": why}, status_code=422)
+
+        def draws(m: Media) -> Track | None:
+            picked = languages.pick(m, wanted) if wanted else None
+            return drawn_for(picked, shows, copy=True, joined=m.joined)
+
+        # The version: the one asked for; or the best one whose picture can
+        # be kept (away from home, within the cap); or for converting, the
+        # smallest that's still big enough.
+        media = only_sound or (asked[0] if asked else None)
+        if media is None:
+            keepable = [m for m in versions
+                        if not body.convert
+                        and converting.picture_copyable(m, ondemand.unplayable(m, dev), hls)
+                        and not ondemand.over_cap(m, cap)]  # fmt: skip
+            if keepable and not (body.subtitle or smaller or draws(keepable[0])):
+                media = keepable[0]
+            else:
+                tall = [m for m in versions if m.height >= converting.CONVERT_MOST_HEIGHT]
+                media = tall[-1] if tall else versions[0]
+        picked = languages.pick(media, wanted) if wanted else None
+        to_draw = draws(media)
+        subtitle = body.subtitle if picked is None else to_draw.id if to_draw else None
+        if only_sound and subtitle:
+            return None  # (only the picture as it is will do: the file plays as it is)
+        capped = ondemand.over_cap(media, cap)
+        # (Asked for, what the device says it can't play is beside the point.)
+        why = [ASKED_WHY] if body.convert else ondemand.unplayable(media, dev)
+        sound = converting.audio_track(
+            media, picked.audio.id if picked and picked.audio else body.audio
+        )
+        even = even and sound is not None  # (no sound, nothing to even)
+        if only_sound and not even:
+            return None
+        if sound is not None and sound.codec and sound.codec not in dev.audio and not body.convert:
+            label = f"its sound's format ({ondemand.label(sound.codec)})"
+            if label not in why:
+                why.append(label)
+        shown = next((t for t in media.subtitles if t.id == subtitle), None)
+        if shown is not None:
+            why.append("its subtitles, drawn into the picture")
+        if smaller:
+            why.append("a smaller picture, to fit the connection")
+        if capped and cap:
+            why.append(f"a smaller copy, within the {playing.mbps(cap)} allowed away from home")
+        if even:
+            why.append(EVEN_WHY)
+        if body.night:
+            why.append("night mode's sound")
+        duration_s = (media.duration_ms or e.duration_ms or 0) / 1000
+        if duration_s <= 0:
+            return None if only_sound else refuse(["how long it is isn't known"])
+        # Where its file is read from: of a version in several (see
+        # catalog.Media), each of them, and where each starts in it.
+        sources = [await source_of(e, f) for f in media.files]
+        if any(path is None and stream is None for path, stream in sources):
+            raise HTTPException(503, NO_FILE)
+        path, stream = sources[0]
+        source = path or stream
+        assert source is not None
+        starts_at: list[float] | None = [0.0]
+        if media.joined:
+            starts_at = await part_starts(
+                settings, ctx.library, e.key, media.parts, ctx.media_access
+            )
+        if starts_at is None or duration_s <= starts_at[-1]:
+            return refuse(["how long each of its files is isn't known"])
+        lengths = [b - a for a, b in itertools.pairwise([*starts_at, duration_s])]
+        # Keeping the picture as it is, where it can be (its keyframes
+        # known from the file's index); otherwise converting it.
+        starts: tuple[float, ...] = ()
+        keep = converting.picture_copyable(media, why, hls) and not (
+            shown or smaller or capped or body.convert
+        )
+        if media.joined:
+            why.insert(1 if body.convert else 0, ondemand.joined_why(media))
+        if keep:
+            try:
+                found = await asyncio.wait_for(
+                    asyncio.gather(
+                        *(keyframes.keyframes(reader(*where), f.container)
+                          for where, f in zip(sources, media.files, strict=True))
+                    ),
+                    KEYFRAMES_WAIT_S,
+                )  # fmt: skip
+            except TimeoutError:
+                found = []
+            if found and all(found):
+                starts = converting.pieces_of(
+                    [(at, converting.pieces_at(kf or (), length))
+                     for at, kf, length in zip(starts_at, found, lengths, strict=True)]
+                )  # fmt: skip
+        if only_sound and not starts:
+            return None  # (only the picture as it is will do: the file plays as it is)
+        # The sound track, in each file: one alike in them all is copied
+        # where the device plays it; otherwise it's made again.
+        maps = [_audio_map(sound, media.audio, f.audio if n else media.audio)
+                for n, f in enumerate(media.files)]  # fmt: skip
+        alike = all(
+            (t.codec, t.channels) == (sound.codec, sound.channels)
+            for f in media.files[1:]
+            if sound is not None
+            for t in [_matching(sound, media.audio, f.audio) or Track("", "")]
+        )
+        audio_codec, channels = converting.sound_for(
+            sound, dev.audio, body.night, even or not alike, body.convert
+        )
+        if starts:
+            method, height, kbps, tone_map = converting.REPACKAGE, 0, 0, ""
+        else:
+            method, tone_map = converting.CONVERT, ""
+            if ondemand.needs_dolby_vision(media):
+                return refuse(["its Dolby Vision profile 5 picture"])
+            if media.hdr:
+                if not ctx.tone_mapping:
+                    return refuse([f"its {ondemand.hdr_label(media)} picture"])
+                tone_map = to_sdr(ProbeResult(
+                    ok=True, hdr="arib-std-b67" if media.hdr == catalog.HLG else "smpte2084"))  # fmt: skip
+            if "h264" not in dev.video and not body.convert:
+                return refuse(["this device doesn't play H.264"])
+            # (Away from home, never more than the cap, whatever it's converted for.)
+            height, kbps = converting.convert_size(
+                media, dev.video.get("h264", (0, 0, 0))[1], body.maxKbps if smaller else None,
+                cap, converting.sound_kbps(audio_codec, channels),
+            )  # fmt: skip
+            starts = converting.pieces_of(
+                [(at, converting.pieces_every(length))
+                 for at, length in zip(starts_at, lengths, strict=True)]
+            )  # fmt: skip
+        # Subtitles drawn in, into each of its files: a picture track as it
+        # is; text in the file, read out first; a file of its own, fetched
+        # first.
+        drawn: list[Subtitles | None] = [None] * len(sources)
+        jobs: list[Any] = []
+        fetches: list[tuple[int, str, Track]] = []  # (a subtitle file of its own: which, where)
+        if shown is not None:
+            for n, f in enumerate(media.files):
+                track = shown if n == 0 else _matching(shown, media.subtitles, f.subtitles)
+                if track is None:
+                    continue  # (none like it in this file: it plays without)
+                each = await drawing(e, f, track, sources[n][0] or sources[n][1] or "")
+                if isinstance(each, list):
+                    if n == 0:
+                        return refuse(each)
+                elif isinstance(each, str):
+                    fetches.append((n, each, track))
+                else:
+                    drawn[n], job = each
+                    if job is not None:
+                        jobs.append(job)
+        if (over := ctx.capacity.refusal(ctx.app_watchers(), client, away_)) is not None:
+            return over_the_limit(over, body, request, e, tag)
+        try:
+            folder = await asyncio.to_thread(converting.new_folder)
+        except OSError as ex:  # (the disk full, say)
+            log.warning("A copy for a tapiOca app couldn't be made (%s)", ex)
+            raise HTTPException(503, COPY_FAILED) from None
+        # Converted at once, at most: counted after the last wait before this
+        # one is, so devices asking at the same moment can't all get past it
+        # (and not counting this device's own, which this one takes over from).
+        on_gpu = ctx.gpu is not None and ctx.gpu.encoder_for_copies().is_gpu
+        mine = ctx.plays.on_device(access.sign_in_of(request), client)
+        if method == converting.CONVERT and ctx.plays.copies(besides=mine) >= (
+            CONVERTING_MOST_GPU if on_gpu else CONVERTING_MOST
+        ):
+            await asyncio.to_thread(shutil.rmtree, folder, True)
+            raise HTTPException(503, BUSY_CONVERTING)
+        for n, url, track in fetches:
+            kind = track.codec if track.codec in ("srt", "ass", "vtt") else "srt"
+            target = folder / f"subtitles-{n}.{kind}"
+            drawn[n] = Subtitles(path=str(target), styled=track.codec == "ass")
+            jobs.append(fetch_subtitles(url, target))
+        parts = tuple(
+            converting.Part(where[0] or where[1] or "", at, audio, subs)
+            for where, at, audio, subs in zip(sources, starts_at, maps, drawn, strict=True)
+        ) if media.joined else ()  # fmt: skip
+        plan = converting.Plan(
+            method=method, why=tuple(why), starts=starts, duration_s=duration_s, audio=sound,
+            audio_codec=audio_codec, audio_channels=channels, picture=media.video,
+            night=body.night, even=even, height=height, kbps=kbps, tone_map=tone_map,
+            subtitles=drawn[0], drawn=shown.id if shown else None, parts=parts,
+        )  # fmt: skip
+        task = asyncio.ensure_future(_all_of(jobs)) if jobs else None
+        label = app_of(body, request)
+        before = ctx.plays.before(user_id, e.key, client, STEP_S)
+        again = ctx.plays.before(user_id, e.key, client) is not None
+        sign_in = access.sign_in_of(request)
+        one_at_a_time(sign_in, client, e)
+        session = ctx.plays.start(
+            user_id=user_id, user=name, sign_in=sign_in,
+            entry=e, media=media, path=path, plex=stream, client=client, away=away_, app=label,
+            tag=tag, show=show_of(e),
+            # (Subtitle files of their own, shown beside it: not of a copy that
+            # joins several files, whose times are the first one's.)
+            subtitles={
+                t.id: (address, t.codec)
+                for t in media.subtitles
+                if t.external and t.id.isdigit() and not media.joined
+                and (address := ctx.library.stream_url(e.key, f"/library/streams/{t.id}"))
+            },
+        )  # fmt: skip
+        session.copy = converting.Copy(settings.ffmpeg_path, source, plan, folder, first=task,
+                                       gpu=ctx.gpu, name=describe(e))  # fmt: skip
+        session.copy.trouble = lambda at_s, why: trouble(session, at_s, why)
+        resume = ondemand.resume_from(ctx.db.progress_of(user_id, [e.key]).get(e.key))
+        session.start_s = (body.startMs if body.startMs is not None else resume) / 1000
+        cant = ondemand.unplayable(media, dev)
+        if sound is not None and sound.codec and sound.codec not in dev.audio:
+            cant.append(f"its sound's format ({ondemand.label(sound.codec)})")
+        how = how_copied(
+            plan, list(dict.fromkeys(cant)), smaller, session.copy.encoder,
+            cap if capped else None, said_before(body, request) if body.convert else None,
+            drawn_words(shown, picked is None, shows) if shown is not None else None,
+        )  # fmt: skip
+        if not said_step_down(before, session, body, request, cap):
+            said_start(session, sound, how, path is None)
+        if not again:
+            noted_away(session, request)
+        here = f"/play/{session.id}"
+        return {
+            "session": session.id,
+            "method": method,
+            "url": f"{here}/index.m3u8",
+            "why": why,
+            "audioTrack": sound.id if sound else None,
+            "drawnSubtitle": shown.id if shown else None,
+            "chosen": chosen(
+                picked, sound, shown_for(picked, shown, shows, copy=True, joined=media.joined)
+            ),
+            "leave": f"{here}/leave",
+            "resumeMs": resume,
+            "durationMs": media.duration_ms or e.duration_ms,
+            "bitrateKbps": plan.kbps_needed or media.bitrate_kbps,
+            "version": media.id or None,
+            "versions": playable_versions(e, dev, body.maxKbps, on_the_list(e), "ts" in hls),
+            "whenSlow": ctx.shared.when_slow["away" if away_ else "home"],
+            "markers": _markers(e),
+            "audio": tracks(media.audio, True),
+            "subtitles": [
+                {
+                    **t,
+                    "url": f"{here}/subtitles/{t['id']}.{t['codec']}"
+                    if t["external"] and t["id"] in session.subtitles
+                    else None,
+                }
+                for t in tracks(media.subtitles, False)
+            ],
+        }
+
+    def instead_of(
+        e: Entry,
+        broken: tuple[Media, ...],
+        body: PlayAsk,
+        dev: ondemand.Device,
+        cap: int | None,
+    ) -> str | None:
+        """Why another version plays, when the one that would have (the one
+        asked for, or else the one chosen for the device) is one tapiOca
+        found broken; None when it isn't."""
+        if not broken:
+            return None
+        best = ondemand.best_first(e.media)
+        asked = next((m for m in best if body.version and m.id == body.version), None)
+        would = asked or ondemand.choose(e, dev, None, body.maxKbps, cap)[0] or best[0]
+        if would not in broken:
+            return None
+        name = ondemand.version_labels(best)[best.index(would)]
+        log.info(
+            "%s: another version plays in tapiOca's apps, as tapiOca found the %s one broken",
+            describe(e),
+            name,
+        )
+        return f"another version, as {name} can't play right now"
+
+    def with_instead(answer: Any, instead: str | None) -> Any:
+        """A copy's answer, its `why` saying another version plays (see
+        instead_of), if one does."""
+        if instead and isinstance(answer, dict):
+            answer["why"] = [*(answer.get("why") or []), instead]
+        return answer
+
+    @app.post("/api/internal/play")
+    async def play(body: PlayAsk, request: Request):
+        shared_here(request)
+        user_id, name = person(request)
+        async with asking(request):
+            e = await cat.entry(body.key)
+            await must_see_or_restricted(user_id, e, request)
+        if e.kind not in (catalog.EPISODE, catalog.MOVIE):
+            raise HTTPException(400, NOT_PLAYABLE)
+        if not e.media:
+            raise HTTPException(404, "This program has no file to play")
+        # What tapiOca found broken never plays: another version of it
+        # does, if there's one it didn't (and the answer says so).
+        broken = tuple(m for m, problem in found_in(e) if problem == "broken")
+        if len(broken) >= len(e.media):
+            log.info(
+                "A tapiOca app asked to play %s, but tapiOca found its file broken (see "
+                "the Broken files tab)",
+                describe(e),
+            )
+            why = ["tapiOca found its file broken"]
+            return JSONResponse({"detail": ON_THE_LIST, "why": why}, status_code=422)
+        usable = replace(e, media=tuple(m for m in e.media if m not in broken)) if broken else e
+        dev = ondemand.device(
+            body.device.containers,
+            [(v.codec, v.width, v.height, v.bitDepth) for v in body.device.video],
+            body.device.hdr,
+            body.device.audio,
+        )
+        # Away from home (through the public port), at the Admin's quality
+        # there: a version within the cap plays as it would at home, and one
+        # over it is converted down to fit (see away.py).
+        away_ = access.outside(request.scope)
+        client, tag = device_of(request)
+        cap = ctx.away.media_kbps if away_ else None
+        instead = instead_of(e, broken, body, dev, cap)
+        hls = frozenset(h.strip().lower() for h in body.device.hls)
+        # (A version in several files plays as a copy that joins them.)
+        media, why = ondemand.choose(usable, dev, body.version, body.maxKbps, cap, "ts" in hls)
+        # The tracks this person wants (see languages.py), unless the app
+        # says which itself: then exactly those, as before. A subtitle chosen
+        # for them that the player doesn't show itself is drawn in, as the
+        # app's `subtitle` is.
+        told = bool({"audio", "subtitle"} & body.model_fields_set)
+        # (Automatic subtitles only for an app that sends the device's
+        # language: see languages.py.)
+        wanted = None if told else ctx.languages.wanted(user_id, e, body.language)
+        shows = frozenset(catalog.subtitle_codec(f) for f in body.device.subtitles)
+        picked = languages.pick(media, wanted) if wanted and media is not None else None
+        drawn = drawn_for(picked, shows, copy=False)
+        audio = picked.audio.id if picked and picked.audio else body.audio
+        sound = converting.audio_track(media, audio) if media is not None else None
+        capped = media is not None and ondemand.over_cap(media, cap)
+        as_it_is = (
+            media is not None
+            and not media.joined
+            and not capped
+            and not (body.subtitle or drawn or body.fit or body.night)
+            and (sound is None or not sound.codec or sound.codec in dev.audio)
+        )
+        # Even sound for a show's episodes (as the stations' episodes have it,
+        # whatever the order or the app), where an Admin has it on: never a
+        # movie.
+        even = ctx.shared.even_sound and e.kind == catalog.EPISODE
+        if body.convert:
+            if "ts" not in hls:
+                why = ["this app doesn't take copies"]
+                log.info("A tapiOca app asked for a converted copy of %s, but can't take one",
+                         describe(e))  # fmt: skip
+                return JSONResponse({"detail": CANT_TAKE_COPY, "why": why}, status_code=422)
+            converted = await play_copy(
+                body, request, e, dev, hls, client, tag, cap, even, wanted=wanted, shows=shows,
+                passed_over=broken,
+            )  # fmt: skip
+            return with_instead(converted, instead)
+        if not as_it_is and "ts" in hls:
+            copied = await play_copy(
+                body, request, e, dev, hls, client, tag, cap, even, wanted=wanted, shows=shows,
+                passed_over=broken,
+            )  # fmt: skip
+            return with_instead(copied, instead)
+        if media is None:
+            log.info(
+                "A tapiOca app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
+            )
+            return JSONResponse({"detail": ondemand.cant_play(why), "why": why}, status_code=422)
+        if capped and cap:
+            # (An app that can't take a copy made to fit.)
+            need = playing.mbps(ondemand.needs_kbps(media) or 0)
+            why = [f"it needs {need}, more than the {playing.mbps(cap)} allowed away from home"]
+            log.info("A tapiOca app can't play %s away from home (%s)", describe(e), why[0])
+            return JSONResponse({"detail": too_fast(need, cap), "why": why}, status_code=422)
+        # (A subtitle inside the file, chosen for them, that the player shows
+        # itself: a copy would hold none, so the file plays as it is.)
+        mine = shown_for(picked, None, shows, copy=False)
+        inside = mine is not None and not mine.external
+        if even and "ts" in hls and sound is not None and not inside:
+            # (As night mode's sound is made for an app that can't make it:
+            # the picture as it is, only the sound made. Where the picture
+            # can't be kept as it is, the file plays as it is: even sound
+            # never costs a picture made again.)
+            copied = await play_copy(
+                body, request, e, dev, hls, client, tag, cap, even, media, wanted, shows, broken
+            )
+            if copied is not None:
+                return with_instead(copied, instead)
+        if (over := ctx.capacity.refusal(ctx.app_watchers(), client, away_)) is not None:
+            return over_the_limit(over, body, request, e, tag)
+        path = None
+        if media.file:
+            found, _timed_out = await find_file(settings, ctx.media_access, e.key, media.file)
+            if found is not None:
+                learn_mapping(ctx.media_access, found)
+                path = found.path
+        stream = (
+            ctx.library.stream_url(e.key, media.part_key)
+            if path is None and media.part_key and ctx.library.configured
+            else None
+        )
+        if path is None and stream is None:
+            raise HTTPException(503, NO_FILE)
+        before = ctx.plays.before(user_id, e.key, client, STEP_S)
+        again = ctx.plays.before(user_id, e.key, client) is not None
+        sign_in = access.sign_in_of(request)
+        one_at_a_time(sign_in, client, e)
+        session = ctx.plays.start(
+            user_id=user_id,
+            user=name,
+            sign_in=sign_in,
+            entry=e,
+            media=media,
+            path=path,
+            plex=stream,
+            client=client,
+            away=away_,
+            app=app_of(body, request),
+            tag=tag,
+            show=show_of(e),
+            subtitles={
+                t.id: (url, t.codec)
+                for t in media.subtitles
+                if t.external
+                and t.id.isdigit()
+                and (url := ctx.library.stream_url(e.key, f"/library/streams/{t.id}"))
+            },
+        )
+        if not said_step_down(before, session, body, request, cap):
+            said_start(session, sound or media.default_audio, "playing as it is", path is None)
+        if not again:
+            noted_away(session, request)
+        here = f"/play/{session.id}"
+        return {
+            "session": session.id,
+            "method": "direct",
+            "url": f"{here}/file.{media.container or 'mkv'}",
+            "why": [instead] if instead else None,
+            "audioTrack": None,
+            "drawnSubtitle": None,
+            "chosen": chosen(picked, sound, shown_for(picked, None, shows, copy=False)),
+            "leave": f"{here}/leave",
+            "resumeMs": ondemand.resume_from(ctx.db.progress_of(user_id, [e.key]).get(e.key)),
+            "durationMs": media.duration_ms or e.duration_ms,
+            "bitrateKbps": media.bitrate_kbps,
+            "version": media.id or None,
+            "versions": playable_versions(e, dev, body.maxKbps, on_the_list(e), "ts" in hls),
+            "whenSlow": ctx.shared.when_slow["away" if away_ else "home"],
+            "markers": _markers(e),
+            "audio": tracks(media.audio, True),
+            "subtitles": [
+                {
+                    **t,
+                    "url": f"{here}/subtitles/{t['id']}.{t['codec']}"
+                    if t["external"] and t["id"] in session.subtitles
+                    else None,
+                }
+                for t in tracks(media.subtitles, False)
+            ],
+        }
+
+    @app.post("/api/internal/progress")
+    async def progress(body: ProgressReport, request: Request):
+        """Where someone is in an episode or a movie, or marked watched (or
+        not) from a menu (see docs/on-demand.md, "Progress"). Nothing is
+        sent on to Plex, and while it plays (`session`), Plex isn't asked."""
+        shared_here(request)
+        user_id, _ = person(request)
+        if body.positionMs is None and body.watched is None:
+            raise HTTPException(400, "Send positionMs, or watched")
+        # Its own playing (or one just ended): still watching, and the order
+        # of its reports. Through the public port, only one started there.
+        playing_ = ctx.plays.find(body.session or "") or ctx.plays.ended(body.session or "")
+        mine = (
+            playing_ is not None
+            and playing_.entry.key == body.key
+            and playing_.user_id == user_id
+            and (playing_.away or not access.outside(request.scope))
+        )
+        session = playing_ if mine else None
+        async with asking(request):
+            e = session.entry if session is not None else await cat.entry(body.key)
+            if not cat.shared_library(e):
+                raise NotShared(e.key)
+            await must_see_or_restricted(user_id, e, request)
+        if e.kind not in (catalog.EPISODE, catalog.MOVIE):
+            raise HTTPException(400, NOT_PLAYABLE)
+        kept = ctx.db.progress_of(user_id, [e.key]).get(e.key)
+        if session is not None and body.sequence is not None:
+            if body.sequence <= session.sequence:
+                # (Sent before one already here: it never moves them back.)
+                was = kept or (0, False)
+                return {"positionMs": ondemand.resume_at(was), "watched": was[1]}
+            session.sequence = body.sequence
+        length = ondemand.length_of(e, session.media if session is not None else None)
+        # (Past the end of what plays; without its playing, of its longest version.)
+        longest = max([length or 0, *(m.duration_ms or 0 for m in e.media if session is None)])
+        if body.positionMs is not None and longest and body.positionMs > longest + PAST_END_MS:
+            raise HTTPException(400, PAST_END)
+        if session is not None and ctx.plays.find(session.id) is session:
+            ctx.plays.get(session.id)  # (still watching)
+            if body.positionMs is not None:
+                session.position_ms = body.positionMs
+        if body.watched is not None:
+            position, watched = 0, body.watched
+        else:
+            position, watched = ondemand.progressed(kept, body.positionMs or 0, e, length)
+        now = int(time.time() * 1000)
+        # An episode in one file with others ("S01E01-E02"): they're where it is.
+        together = [
+            x for x in cat.kept_episodes(e.show_key or "") if e.file and x.file == e.file
+        ] or [e]
+        for x in together:
+            ctx.db.save_progress(user_id, x.key, x.show_key, position, e.duration_ms or 0,
+                                 watched, now)  # fmt: skip
+        return {"positionMs": ondemand.resume_at((position, watched)), "watched": watched}
+
+    @app.post("/api/internal/watched")
+    async def watched(body: ShowMarked, request: Request):
+        """A whole show, or one season of it, marked watched or not from a
+        menu, at once (from 1.36.3; see docs/internal-api.md): the episodes
+        this person may see, all of them or none. Each starts from the
+        beginning next time, as when one is marked. Nothing goes to Plex."""
+        shared_here(request)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        async with asking(request):
+            e = await cat.entry(body.show)
+            if not cat.shared_library(e):
+                raise NotShared(e.key)
+            await must_see(cat, viewer, e)
+            if e.kind != catalog.SHOW:
+                raise HTTPException(400, "That isn't a show")
+            found = await seen_only(cat, viewer, await cat.episodes(e.key))
+        chosen = {x.key: x for x in found if body.season is None or x.season == body.season}
+        # (An episode in one file with others, "S01E01-E02": they go with it.)
+        files = {x.file for x in chosen.values() if x.file}
+        chosen.update({x.key: x for x in found if x.file and x.file in files})
+        if len(chosen) > MARK_MOST:
+            raise HTTPException(400, TOO_MANY_TO_MARK)
+        if body.watched:
+            ctx.db.save_progress_many(
+                user_id,
+                [(x.key, x.show_key, 0, x.duration_ms or 0, True) for x in chosen.values()],
+                int(time.time() * 1000),
+            )
+        else:
+            # (Unwatched: as never started, so no rows that crowd out what's kept.)
+            ctx.db.forget_progress(user_id, list(chosen))
+        return {"watched": body.watched, "marked": len(chosen)}
+
+    # The play sessions' own addresses (a player can't sign in) ---------------
+
+    bound_of: dict[str, str] = {}  # (each play session's trusted network: "" for none)
+
+    @app.exception_handler(TitleRestricted)
+    async def title_restricted(request: Request, e: TitleRestricted):
+        return restricted_answer()
+
+    def show_of(e: Entry) -> Entry | None:
+        """An episode's show, as it was just judged (kept: never asks Plex)."""
+        if e.kind != catalog.EPISODE or not e.show_key:
+            return None
+        return cat.known(e.show_key)
+
+    async def must_see_or_restricted(user_id: int, e: Entry, request: Request) -> None:
+        """must_see, but a title its person's limits stopped while they
+        watched it, lately, is said to be restricted (403), so their app can
+        say so: they knew of it, so that tells them nothing new."""
+        try:
+            await must_see(cat, viewer_of(request), e)
+        except NotShared:
+            if user_id and ctx.plays.restricted_lately(user_id, e.key):
+                raise TitleRestricted() from None
+            raise
+
+    learning: dict[str, asyncio.Task] = {}  # (by session: what judged_now couldn't tell)
+    # (By session: how many asks found nothing, and when it may ask again.)
+    unlearned: dict[str, tuple[int, float]] = {}
+
+    def stop_learning() -> None:
+        """As tapiOca stops: the asks still going end."""
+        for task in learning.values():
+            task.cancel()
+
+    ctx.stop_learning = stop_learning
+
+    def learn(session: ondemand.PlaySession, tags: bool) -> None:
+        """Finds out, in the background, what judging `session` needs and
+        tapiOca doesn't know yet: an episode's show (asked of Plex, kept
+        with the session) and, when `tags`, its show's or movie's tags
+        (Titles.ensure). Never waited on: a later pass judges it (the second
+        cold audit of 1.40.0: what wasn't known was never asked for, so a
+        title played on to its end). One at a time for each session; when an
+        ask finds nothing (Plex down, or a show gone), each next one waits
+        twice as long, up to LEARN_WAIT_MOST_S, and the log says so once (the
+        final-diff audit: it asked, and said so, every pass)."""
+        going = learning.get(session.id)
+        if going is not None and not going.done():
+            return
+        for done in [k for k, task in learning.items() if task.done()]:
+            del learning[done]
+        going_ids = {s.id for s in ctx.plays.going()}
+        for gone in [k for k in unlearned if k not in going_ids]:
+            del unlearned[gone]
+        tries, after = unlearned.get(session.id, (0, 0.0))
+        if time.monotonic() < after:
+            return
+        e = session.entry
+        wants_show = e.kind == catalog.EPISODE and session.show is None and bool(e.show_key)
+        if not wants_show and not (tags and cat.titles is not None):
+            return  # (nothing it could find out)
+
+        async def work() -> None:
+            trouble: Exception | None = None
+            try:
+                if wants_show:
+                    session.show = (await shows_of(cat, [e])).get(e.show_key or "")
+                if tags and cat.titles is not None:
+                    await cat.titles.ensure(tags_wanted([e]))
+            except Exception as ex:
+                trouble = ex
+            key = (e.show_key or "") if e.kind == catalog.EPISODE else e.key
+            known = (not wants_show or session.show is not None) and (
+                not tags or cat.titles is None or cat.titles.tags(key) is not None
+            )
+            if known:
+                unlearned.pop(session.id, None)
+                return
+            if tries == 0:
+                log.info(
+                    "Couldn't find out about %s to check it against limits (%s); "
+                    "it plays on, and is asked about again later",
+                    describe(e), trouble or "not known",
+                )  # fmt: skip
+            wait = min(ondemand.LEARN_WAIT_S * 2**tries, ondemand.LEARN_WAIT_MOST_S)
+            unlearned[session.id] = (tries + 1, time.monotonic() + wait)
+
+        learning[session.id] = asyncio.get_running_loop().create_task(work())
+
+    def judged_now(session: ondemand.PlaySession, viewer: viewing.Viewer) -> bool | None:
+        """Whether what `session` plays is still allowed for its person, by
+        the one program check as it started (1.40.0), from what tapiOca
+        knows: never asking Plex, so it never waits. None when that can't be
+        told (an episode's show, or tags its limits go by, not known): it was
+        allowed, so it stands."""
+        if viewer.unchecked:
+            return True
+        e = session.entry
+        titles = cat.titles
+        tags = None
+        if titles is not None:
+            tags = titles.tags((e.show_key or "") if e.kind == catalog.EPISODE else e.key)
+        unknown_tags = viewer.by_tags and tags is None
+        if (e.kind == catalog.EPISODE and session.show is None) or unknown_tags:
+            learn(session, unknown_tags)
+            return None
+        return viewer.sees(viewing.judge_entry(e, session.show, tags))
+
+    def no_longer_good(session: ondemand.PlaySession) -> bool:
+        """Whether a play session's own address has ended: its Media folder
+        no longer shared, signing in turned on since it started, watching
+        away from home turned off for one started there, or its sign-in
+        gone (its person removed, signed out or their device revoked).
+        From what tapiOca keeps; never asks Plex."""
+        return (
+            not cat.shared_library(session.entry)
+            or (ctx.access.required and session.sign_in is None)
+            or (session.away and not ctx.away.on)
+            or (
+                session.sign_in is not None
+                and ctx.access.session_user_hashed(session.sign_in, anywhere=True, used=False)
+                is None
+            )
+        )
+
+    failing: set[str] = set()  # (sessions whose check failed: said once each)
+
+    def stop_restricted() -> int:
+        """Ends what's playing that may no longer play (1.40.0), each play on
+        its own: a session whose address has ended (no_longer_good) ends,
+        and one its person's limits no longer allow (an Admin changed them,
+        or their level) is stopped as restricted, with the log saying so.
+        Either way what it's sending is cut. How many were restricted."""
+        viewers: dict[int, viewing.Viewer] = {}
+        signing_in = ctx.viewing.signing_in()
+        stopped = 0
+        for session in ctx.plays.going():
+            try:
+                if no_longer_good(session):
+                    ctx.plays.end(session.id)  # (and what it's sending is cut)
+                    continue
+                if not signing_in or not session.user_id:
+                    continue  # (no one has limits)
+                if session.user_id not in viewers:
+                    user = ctx.db.user(session.user_id)
+                    if user is None:  # (removed: its sign-in ends it, above)
+                        continue
+                    viewers[session.user_id] = ctx.viewing.viewer(user)
+                if judged_now(session, viewers[session.user_id]) is not False:
+                    continue
+                if ctx.plays.restrict(session.id) is None:
+                    continue
+                stopped += 1
+                said_stop(session)
+                ctx.access.record(
+                    logging.INFO,
+                    f"{possessive(session.user or 'Someone')} {describe(session.entry)} "
+                    "stopped: their limits no longer allow it",
+                )
+            except Exception:
+                # (One session never holds up the rest; a lasting failure is
+                # said once, not every pass.)
+                if session.id not in failing:
+                    failing.add(session.id)
+                    log.exception("Checking %s against limits failed", describe(session.entry))
+                continue
+            failing.discard(session.id)
+        failing.intersection_update(s.id for s in ctx.plays.going())
+        return stopped
+
+    ctx.stop_restricted = stop_restricted  # (watched by watch_limits_forever)
+
+    def session_or_404(session_id: str, request: Request) -> ondemand.PlaySession:
+        """A play session that's still good, now marked as used: its library
+        still shared, and its sign-in (if signing in is on) still good.
+        Through the public port, only one an app started there, while
+        watching away from home is on, with its sign-in checked every time
+        (at home, every RECHECK_S)."""
+        outside = access.outside(request.scope)
+        session = ctx.plays.find(session_id)
+        if session is None:
+            gone = ctx.plays.ended(session_id)
+            if gone is not None and gone.restricted and (gone.away or not outside):
+                raise TitleRestricted()  # (stopped by its person's limits: 1.40.0)
+            raise HTTPException(404, PLAY_ENDED)
+        if outside and not session.away:
+            raise HTTPException(404, PLAY_ENDED)
+        # (Started with a sign-in a trusted network gave: good only there,
+        # 1.36.0. Looked up once for each session.)
+        if session.sign_in and session_id not in bound_of:
+            made = ctx.db.session_user(session.sign_in, 0)
+            bound_of[session_id] = made.trusted if made is not None else ""
+            while len(bound_of) > 1000:  # (the oldest go)
+                del bound_of[next(iter(bound_of))]
+        here = (request.scope.get("state", {}).get("trusted") or {}).get("id", "")
+        if bound_of.get(session_id) and bound_of[session_id] != here:
+            raise HTTPException(404, PLAY_ENDED)
+        now = time.monotonic()
+        ended = (
+            not cat.shared_library(session.entry)
+            or (ctx.access.required and session.sign_in is None)
+            or (session.away and not ctx.away.on)
+        )
+        if (
+            not ended
+            and session.sign_in
+            and (outside or now - session.checked > ondemand.RECHECK_S)
+        ):
+            ended = ctx.access.session_user_hashed(session.sign_in, anywhere=True) is None
+            session.checked = now
+        if ended:
+            ctx.plays.end(session_id)
+            raise HTTPException(404, PLAY_ENDED)
+        # (Its person's limits are judged again in the background, never
+        # here: see stop_restricted. 1.40.0.)
+        session.used(now)
+        return session
+
+    @app.api_route("/play/{session_id}/file.{ext}", methods=["GET", "HEAD"])
+    async def play_file(session_id: str, ext: str, request: Request):
+        session = session_or_404(session_id, request)
+        kind = _TYPES.get(session.media.container, "application/octet-stream")
+        if session.path is not None:
+            if not await asyncio.to_thread(Path(session.path).is_file):
+                raise HTTPException(503, NO_FILE)
+            return Guarded(
+                FileResponse(session.path, media_type=kind, headers={"Cache-Control": "no-store"}),
+                session,
+            )
+        assert session.plex is not None
+        if request.method == "HEAD" and session.media.size:
+            return Response(
+                headers={
+                    "Content-Length": str(session.media.size),
+                    "Accept-Ranges": "bytes",
+                    "Content-Type": kind,
+                    "Cache-Control": "no-store",
+                }
+            )
+        return Guarded(await _from_plex(proxy(), session.plex, request, kind), session)
+
+    @app.get("/play/{session_id}/index.m3u8")
+    async def copy_playlist(session_id: str, request: Request):
+        session = session_or_404(session_id, request)
+        if session.copy is None:
+            raise HTTPException(404, PLAY_ENDED)
+        return Response(
+            session.copy.playlist(session.start_s),
+            media_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/play/{session_id}/piece-{n}.ts")
+    async def copy_piece(session_id: str, n: int, request: Request):
+        session = session_or_404(session_id, request)
+        if session.copy is None:
+            raise HTTPException(404, PLAY_ENDED)
+        found = await session.copy.piece(n, request.is_disconnected)
+        if found is None:
+            if session.restricted:  # (stopped by its person's limits while waited on)
+                raise TitleRestricted()
+            if session.copy.stopped:
+                raise HTTPException(404, PLAY_ENDED)
+            if session.copy.broken or not 0 <= n < session.copy.end:
+                raise HTTPException(404, COPY_FAILED)
+            raise HTTPException(503, "That part isn't ready yet. Try again in a moment.")
+        ctx.plays.get(session_id)  # (still watching)
+        return Guarded(
+            FileResponse(found, media_type="video/mp2t", headers={"Cache-Control": "no-store"}),
+            session,
+        )
+
+    @app.get("/play/{session_id}/subtitles/{track}.{ext}")
+    async def play_subtitles(session_id: str, track: str, ext: str, request: Request):
+        session = session_or_404(session_id, request)
+        found = session.subtitles.get(track)
+        if found is None:
+            raise HTTPException(404, "There's no such subtitle track")
+        url, codec = found
+        try:
+            got = await proxy().get(url)
+            got.raise_for_status()
+        except httpx.HTTPError:
+            got = None
+        # (Stopped while Plex answered: the re-checks of 1.40.0. Said first,
+        # whatever Plex answered.)
+        if session.restricted:
+            raise TitleRestricted()
+        if session.ended:
+            raise HTTPException(404, PLAY_ENDED)
+        if got is None or len(got.content) > SUBTITLES_MOST:
+            raise HTTPException(503, NO_FILE)
+        # (Its type is the track's, never what the address says: a subtitle
+        # file is text from elsewhere, and is never shown as a page.)
+        return Response(
+            got.content,
+            media_type=_SUBTITLE_TYPES.get(codec, "text/plain"),
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": "sandbox",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.post("/play/{session_id}/leave", status_code=204)
+    async def play_leave(session_id: str, request: Request):
+        going = ctx.plays.find(session_id)
+        if going is None or (access.outside(request.scope) and not going.away):
+            return Response(status_code=204)  # (nothing of its own to end)
+        session = ctx.plays.end(session_id)
+        # (Not when a newer one took over: another sound track, a smaller version.)
+        if session is not None and not ctx.plays.newer(session):
+            said_stop(session)
+        return Response(status_code=204)
+
+    # The Access tab: which libraries the apps may see ------------------------
+
+    @app.get("/api/app-libraries")
+    async def shared_libraries():
+        # (Plex is waited for a few seconds at most, and what it says when it
+        # can't answer is a plain sentence: 1.34.1, the owner.)
+        found: list[dict] = []
+        problem = None
+        if not ctx.library.configured:
+            problem = (
+                "There are no Media folders to share yet. Add one on the Setup tab, under "
+                "Media folders, or connect Plex (the Tuner step of the setup "
+                "says how)."
+            )
+        else:
+            try:
+                found, away = await ctx.library.listed(setup.PLEX_ASK_S)
+                if away is not None and not found:
+                    raise away
+                if away is None:
+                    ctx.shared.note(found)
+                else:
+                    # (Media folders of tapiOca's own are listed; Plex's
+                    # aren't, so nothing here changes until they are.)
+                    why = str(away) or NOT_ANSWERING
+                    problem = (
+                        f"{why.rstrip('.')}, so tapiOca can’t list Plex’s Media folders right "
+                        "now. What’s shared stays as it is until it can."
+                    ).replace("'", "’")
+            except (LibraryError, TimeoutError) as e:
+                why = str(e) if isinstance(e, LibraryError) and str(e) else NOT_ANSWERING
+                problem = (
+                    f"{why.rstrip('.')}, so tapiOca can’t list your Media folders right now. "
+                    "Those already shared stay shared."
+                ).replace("'", "’")
+        return {
+            "libraries": [
+                {"key": str(s["key"]), "title": s.get("title") or "", "kind": s.get("type")}
+                for s in found
+            ],
+            "shared": list(ctx.shared.keys),
+            # (Every Media folder of shows and movies, new ones too: no
+            # Admin has chosen yet.)
+            "everything": ctx.shared.everything,
+            # (None shared yet, from before 1.34.1: every one is offered,
+            # ticked, until an Admin chooses.)
+            "waiting": ctx.shared.waiting,
+            "whenSlow": ctx.shared.when_slow,
+            "evenSound": ctx.shared.even_sound,
+            "problem": problem,
+            "playing": len(ctx.plays.watching()),
+        }
+
+    @app.put("/api/app-libraries")
+    async def share_libraries(body: SharedLibraries, request: Request):
+        try:
+            keys = ctx.shared.save(body.libraries) if body.libraries is not None else None
+            if body.whenSlow is not None:
+                before = dict(ctx.shared.when_slow)
+                after = ctx.shared.save_when_slow(body.whenSlow.home, body.whenSlow.away)
+                if after != before:
+                    log.info(
+                        "When playing in tapiOca's apps can't keep up: at home, %s; away "
+                        "from home, %s",
+                        _slow_words(after["home"]),
+                        _slow_words(after["away"]),
+                    )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        who = access.signed_in(request)
+        if body.evenSound is not None and body.evenSound != ctx.shared.even_sound:
+            ctx.shared.save_even_sound(body.evenSound)
+            log.info(
+                "Even sound for a show's episodes in tapiOca's apps: %s%s",
+                "on" if body.evenSound else "off (each episode's sound as it is)",
+                f" (set by {who.name})" if who else "",
+            )
+        if keys is not None:
+            ctx.app_pictures.clear()  # (programs playing from one unshared stop at their next ask)
+            ctx.info_panels.wake.set()  # (INFO counts what's shared)
+            listed, _ = await ctx.library.listed(setup.PLEX_ASK_S)
+            names = {str(s["key"]): s.get("title") or "" for s in listed}
+            chosen = ", ".join(names.get(k, f"Media folder {k}") for k in keys) or "none"
+            log.info(
+                "Media folders in tapiOca's apps: %s%s",
+                chosen,
+                f" (set by {who.name})" if who else "",
+            )
+        return await shared_libraries()
+
+
+def _whole(text: str | None, otherwise: int, name: str, low: int, high: int) -> int:
+    if text is None or text == "":
+        return otherwise
+    try:
+        value = int(text)
+    except ValueError:
+        raise HTTPException(400, f"{name} must be a whole number") from None
+    if not low <= value <= high:
+        raise HTTPException(400, f"{name} must be from {low} to {high}")
+    return value
+
+
+def _tags(said: str) -> set[str]:
+    """The ETags in an If-None-Match header (weak ones as strong ones)."""
+    return {t.strip().removeprefix("W/") for t in said.split(",") if t.strip()}
+
+
+def chosen(picked: languages.Picked | None, sound: Track | None, shown: Track | None) -> Any:
+    """What was chosen for someone from their languages, as the play answer
+    says it (`sound`: the track that plays; `shown`: the subtitle that's
+    shown, if any); None when nothing was."""
+    if picked is None:
+        return None
+    why = picked.subtitle_why
+    if picked.subtitle is not None and shown is None:
+        why += ". This device can't show them"
+    return {
+        "audio": sound.id if sound and sound.id else None,
+        "audioWhy": picked.audio_why,
+        "subtitle": shown.id if shown else None,
+        "subtitleWhy": why,
+    }
+
+
+def cant_copy(why: list[str]) -> str:
+    """Why tapiOca can't make a copy for a device, in a sentence."""
+    return (
+        f"This device can't play this file as it is ({ondemand.and_list(why)}), and tapiOca "
+        "can't make a copy of it that the device can."
+    )
+
+
+def cant_convert(why: list[str]) -> str:
+    """Why tapiOca can't make the converted copy an app asked for, in a
+    sentence."""
+    return f"tapiOca can't make a converted copy of this file ({ondemand.and_list(why)})."
+
+
+def too_fast(need: str, cap_kbps: int) -> str:
+    """Why an app that can't take a copy can't play a file away from home
+    that's over the Admin's cap, in a sentence."""
+    return (
+        f"This file needs {need}, more than the {playing.mbps(cap_kbps)} an Admin allows for "
+        "Media away from home, and this app can't take a copy made to fit. Watch it at home, "
+        "or update the app."
+    )
+
+
+def _matching(track: Track, first: tuple[Track, ...], theirs: tuple[Track, ...]) -> Track | None:
+    """The track of another of a version's files (`theirs`: its tracks of
+    a kind) that stands for `track` of its first (`first`: that file's): the
+    one at its place among those inside the file, or among files of their
+    own. None if it has none there."""
+    mine = [t for t in first if t.external == track.external]
+    place = next((i for i, t in enumerate(mine) if t.id == track.id), None)
+    others = [t for t in theirs if t.external == track.external]
+    return others[place] if place is not None and place < len(others) else None
+
+
+def _audio_map(sound: Track | None, first: tuple[Track, ...], theirs: tuple[Track, ...]) -> str:
+    """How ffmpeg takes a copy's sound track from one of a version's files:
+    the one there like `sound` in its first file (see _matching); by its
+    place among the sound tracks where the file's own aren't known; or else
+    its first."""
+    if sound is None:
+        return "0:a:0?"
+    match = _matching(sound, first, theirs)
+    if match is not None and match.index is not None:
+        return f"0:{match.index}"
+    place = next((i for i, t in enumerate(first) if t.id == sound.id), 0)
+    return "0:a:0?" if theirs else f"0:a:{place}?"
+
+
+async def _all_of(jobs: list[Any]) -> bool:
+    """Whether everything to be done before a copy is made (subtitles read
+    out or fetched) was."""
+    return all(await asyncio.gather(*jobs))
+
+
+def _slow_words(choice: str) -> str:
+    return "switch to a smaller version" if choice == "switch" else "offer a smaller version"
+
+
+def _markers(e: Entry) -> dict[str, Any]:
+    """Where an episode's intro and closing credits are (see plex._skips),
+    for the Skip intro and Skip credits buttons; a movie has neither."""
+    credits = e.credits
+    return {
+        "intro": list(e.intro) if e.intro else None,
+        "credits": list(credits) if credits else None,
+        # Nothing follows the credits: Skip credits goes on to what's next.
+        "creditsToEnd": bool(credits and e.duration_ms and credits[1] >= e.duration_ms),
+    }
+
+
+class _Passed(StreamingResponse):
+    """A file passed on from Plex as it comes. Plex's answer is closed
+    however the player's request ends (finished, or gone partway, as a
+    player that seeks does), so no connection to Plex is left open."""
+
+    def __init__(self, got: httpx.Response, **kwargs: Any) -> None:
+        super().__init__(got.aiter_bytes(), **kwargs)
+        self.got = got
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with anyio.CancelScope(shield=True):
+                await self.got.aclose()
+
+
+async def _from_plex(client: httpx.AsyncClient, url: str, request: Request, kind: str) -> Response:
+    """A file from Plex, passed on as it comes, ranges and all (so a player
+    can seek in it)."""
+    asked = {
+        name: value
+        for name in ("range", "if-range")
+        if (value := request.headers.get(name)) is not None
+    }
+    asked["accept-encoding"] = "identity"  # (as it is: its length and ranges are the file's)
+    try:
+        got = await client.send(client.build_request("GET", url, headers=asked), stream=True)
+    except httpx.HTTPError:
+        raise HTTPException(503, NO_FILE) from None
+    if got.status_code not in (200, 206):
+        status, whole = got.status_code, got.headers.get("content-range")
+        await got.aclose()
+        if status == 416:
+            return Response(status_code=416, headers={"Content-Range": whole or "bytes */*"})
+        raise HTTPException(503, NO_FILE)
+    headers = {k: v for k in PROXIED_HEADERS if (v := got.headers.get(k)) is not None}
+    headers.setdefault("accept-ranges", "bytes")
+    if not headers.get("content-type", "").startswith("multipart/"):
+        headers["content-type"] = kind  # (several ranges at once keep Plex's type)
+    headers["cache-control"] = "no-store"
+    if request.method == "HEAD":
+        await got.aclose()
+        return Response(status_code=got.status_code, headers=headers)
+    return _Passed(got, status_code=got.status_code, headers=headers)

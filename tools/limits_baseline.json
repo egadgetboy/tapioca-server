@@ -1,0 +1,18 @@
+{
+  "about": "The server's hard limits (the plan's release gate, DL369): its memory at its most and its processor time each minute (FFmpeg's included) in CI's soak with headless clients (tests/test_soak_clients.py), and how much worse a release may measure before it needs the owner's OK (worse_by, for the run's own noise). The plan's low-end server run (8b) stays the owner's. A baseline counts once the owner approves it, and a new one only with his OK.",
+  "server": {
+    "approved": "the owner, October 28, 6:30 AM (\"agreed\": approved as the starting line, a release not to measure worse without his OK; a like-for-like comparison with Jellyfin's server follows in Gates that enforce themselves, part 2's report)",
+    "kind": "CI: quality.yml's Soak: headless clients, on ubuntu-24.04",
+    "values": {
+      "memory_mb": {
+        "value": 151,
+        "worse_by": 0.15
+      },
+      "cpu_s_per_min": {
+        "value": 71.5,
+        "worse_by": 0.2
+      }
+    },
+    "measured": "quality.yml run 40617065559 (wip/gates2), Soak: headless clients, 30 minutes, October 28"
+  }
+}

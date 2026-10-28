@@ -1,0 +1,244 @@
+# Builds the container image, for amd64 and for arm64 (each on its own kind
+# of machine), and tests each as built, whenever main changes. The tests run
+# in the image itself (the Dockerfile's test stage: the image people get,
+# with the tests added), on the FFmpeg, Python and libraries it has.
+#
+# The image is published (the owner, October 12: D4 is No, U1), and always
+# the exact image that was tested, by digest, never built again (C7). So
+# each image that passes its tests is pushed here, by commit: the amd64 one
+# as sha-<commit>-amd64, the arm64 one as sha-<commit>-arm64, then both as
+# one, sha-<commit>. release.yml gives a version's tags (:<version>,
+# :<major.minor>, :latest) to exactly that one, once this workflow has
+# passed on its commit, with the lists of packages each image had.
+#
+# A push that changes nothing but release notes (docs/releases/) isn't built
+# or tested again (the alpha process, October 18): its image is the one
+# already tested at the version's commit, which release.yml publishes by
+# digest, as it always has for "a later main commit with nothing but
+# release notes changed since". A push with anything else in it runs here as
+# before. Only docs/releases/ is left out: the rest of docs/ is in the test
+# stage, and tests read it.
+name: image
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/releases/**"]
+  workflow_dispatch:
+
+jobs:
+  # (Written first, though it runs last, after both images have passed: the
+  # two images joined as one, and what release.yml needs, kept with the run.)
+  image:
+    needs: build-and-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: made-*
+          path: ${{ runner.temp }}/made/
+          merge-multiple: true
+      - name: Join the tested images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tapioca-server"
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' app/__init__.py)
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          amd=$(cat "$RUNNER_TEMP/made/digest-amd64.txt")
+          arm=$(cat "$RUNNER_TEMP/made/digest-arm64.txt")
+          docker buildx imagetools create --tag "$image:sha-$GITHUB_SHA" "$image@$amd" "$image@$arm"
+          joined=$(docker buildx imagetools inspect "$image:sha-$GITHUB_SHA" --format '{{json .Manifest}}' | jq -r .digest)
+          # (What's inside is the very images tested: each one's own
+          # manifest, or those in it, if docker push made a list.)
+          platforms() {
+            jq -r 'if .manifests then .manifests[] | select(.platform.os != "unknown") | .digest else empty end'
+          }
+          want=$(for d in "$amd" "$arm"; do
+            got=$(docker buildx imagetools inspect --raw "$image@$d" | platforms)
+            echo "${got:-$d}"
+          done | sort | paste -sd ' ')
+          inside=$(docker buildx imagetools inspect --raw "$image@$joined" | platforms | sort | paste -sd ' ')
+          if [ "$inside" != "$want" ]; then
+            echo "::error::The joined image isn't the two that were tested ($inside, not $want)"; exit 1
+          fi
+          echo "$image@$joined" > "$RUNNER_TEMP/made/tapioca-$version-image.txt"
+          rm "$RUNNER_TEMP/made/digest-amd64.txt" "$RUNNER_TEMP/made/digest-arm64.txt"
+          echo "::notice::Tested and pushed: $image@$joined (amd64 $amd, arm64 $arm)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: ${{ runner.temp }}/made/
+          if-no-files-found: error
+          retention-days: 90
+
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # (The tests take 30 to 50 minutes; building, a few more.)
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Build
+        run: |
+          docker build --tag stationplay:latest .
+          docker build --target test --tag stationplay:test .
+          # (The tests run in the very image people get: the test stage's
+          # layers are its, with the tests' on top.)
+          shipped=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:latest)
+          tested=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:test)
+          if [ "${tested#"$shipped "}" = "$tested" ]; then
+            echo "::error::The test stage isn't built on the image people get"; exit 1
+          fi
+          # (git is the tests' own: never in the image people get.)
+          if docker run --rm stationplay:latest sh -c 'command -v git'; then
+            echo "::error::git is in the image people get"; exit 1
+          fi
+      # First, every test collected, and the tests that read the project's
+      # own files run (a few minutes): a file the image hasn't got stops it
+      # here, not 40 minutes in. tools/image_check.py runs the same before
+      # each push, without Docker.
+      - name: Quick check
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          said() {
+            { grep -E "^(FAILED|ERROR) " "$1" || true; } | head -9 | cut -c1-1600 | sed 's/^/::error::/'
+            why=$({ grep -E "^E   " "$1" || true; } | head -40 | cut -c1-300 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            [ -n "$why" ] && echo "::error title=Why::$why"
+            exit 1
+          }
+          docker run --rm -e COLUMNS=400 stationplay:test \
+            python -m pytest -q -p no:cacheprovider --collect-only > "$RUNNER_TEMP/collected.txt" 2>&1 \
+            || { tail -40 "$RUNNER_TEMP/collected.txt"; said "$RUNNER_TEMP/collected.txt"; }
+          tail -1 "$RUNNER_TEMP/collected.txt"
+          chosen=$(python3 tools/image_check.py --list)
+          if [ -z "$chosen" ]; then echo "::error::tools/image_check.py chose no tests"; exit 1; fi
+          docker run --rm --init -e COLUMNS=400 stationplay:test \
+            python -m pytest -q -p no:cacheprovider $chosen 2>&1 \
+            | tee "$RUNNER_TEMP/quick.txt" || said "$RUNNER_TEMP/quick.txt"
+      # release.yml publishes a version only once this step has passed on
+      # its commit (or a later one with nothing but release notes since), on
+      # both kinds of machine: keep its name.
+      - name: Test
+        timeout-minutes: 60
+        run: |
+          # (What the tests ran with, on the run's page.)
+          docker run --rm stationplay:test sh -c \
+            'echo "::notice::${{ matrix.arch }}: $(ffmpeg -version | head -1) at $(command -v ffmpeg); $(nproc) processors; $(python --version)"'
+          # (Each test that fails is named on the run's page, not only in its
+          # log, with why: pytest's summary is as wide as COLUMNS, and the
+          # lines saying what failed ("E ...") go in one more note, since a
+          # step shows 10 at most.)
+          set -o pipefail
+          # (Under coverage, for the check that changed lines are covered: the
+          # image's own command, measured; Python's low-cost monitoring.)
+          mkdir -p "$RUNNER_TEMP/cov" && chmod 777 "$RUNNER_TEMP/cov"
+          docker run --rm --init -e COLUMNS=400 -e COVERAGE_CORE=sysmon -v "$RUNNER_TEMP/cov:/tmp/cov" stationplay:test \
+            python -m coverage run --data-file=/tmp/cov/.coverage --source=app -m pytest -v -p no:cacheprovider -rfE \
+            2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
+            grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -9 | cut -c1-1600 | sed 's/^/::error::/'
+            why=$(grep -E "^E   " "$RUNNER_TEMP/tests.txt" | head -40 | cut -c1-300 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            [ -n "$why" ] && echo "::error title=Why::$why"
+            exit 1
+          }
+      # Changed lines are covered: each line of app/ changed since the last
+      # release, with code on it, runs in a test (tools/diff_cover.py).
+      - name: Changed lines covered
+        if: matrix.arch == 'amd64'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/release_gate.py --fetch-only
+          docker run --rm -v "$RUNNER_TEMP/cov:/tmp/cov" stationplay:test \
+            python -m coverage lcov --data-file=/tmp/cov/.coverage -o /tmp/cov/coverage.lcov -q
+          python3 tools/diff_cover.py server lcov "$RUNNER_TEMP/cov/coverage.lcov" --strip /opt/stationplay/
+      # Flaky tests are defects: each test file added or changed since the
+      # last release runs 19 more times, in the exact image, on one kind of
+      # machine; one failure fails the run.
+      - name: New and changed tests, 20 times
+        if: matrix.arch == 'amd64'
+        timeout-minutes: 90
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/release_gate.py --fetch-only
+          files=$(python3 tools/changed_lines.py --files server 'tests/test_*.py' 'tests/**/test_*.py' | tr '\n' ' ')
+          if [ -z "${files// }" ]; then echo "No test changed since the last release"; exit 0; fi
+          for i in $(seq 2 20); do
+            docker run --rm --init -e COLUMNS=400 stationplay:test python -m pytest -q -p no:cacheprovider $files > "$RUNNER_TEMP/again.txt" 2>&1 || {
+              grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/again.txt" | head -9 | cut -c1-1600 | sed 's/^/::error::/'
+              echo "::error::A new or changed test failed on its run $i of 20: a flaky test is a defect, fixed at its cause"
+              exit 1
+            }
+          done
+          echo "Each new or changed test file passed 20 times: $files"
+      # The security suite (DL287), in the exact image tested, on both kinds
+      # of machine: the unit layer and the live harness, a real tapiOca on
+      # two loopback ports, with no open Critical or High. Its report is
+      # printed here, for the release's readiness record.
+      - name: Security suite
+        timeout-minutes: 30
+        run: docker run --rm --init -e COLUMNS=400 -e GITHUB_SHA -e GITHUB_RUN_ID stationplay:test python -m tools.security_suite --report /tmp/security-report.md
+      # What the tested image was made of (tools/sbom.py), for release.yml
+      # to add to the release: made after the tests, and kept with this run.
+      - name: Made of
+        timeout-minutes: 10
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' app/__init__.py)
+          mkdir -p "$RUNNER_TEMP/made"
+          if [ "${{ matrix.arch }}" = amd64 ]; then
+            docker run --rm -i stationplay:latest python - "$version" < tools/sbom.py \
+              > "$RUNNER_TEMP/made/tapioca-$version-packages.txt"
+          else
+            docker run --rm -i stationplay:latest python - "$version" < tools/sbom.py \
+              > "$RUNNER_TEMP/made/tapioca-$version-packages-arm64.txt"
+          fi
+          echo "::notice::$(grep -ch snapshot.debian.org "$RUNNER_TEMP"/made/*.txt) Debian packages listed"
+      # The tested image itself, pushed by this commit (never built again:
+      # the same layers the tests ran on), and its digest kept for the
+      # image job above.
+      - name: Push the tested image
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tapioca-server"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag stationplay:latest "$image:sha-$GITHUB_SHA-${{ matrix.arch }}"
+          pushed=$(docker push "$image:sha-$GITHUB_SHA-${{ matrix.arch }}" | tee /dev/stderr)
+          # (The digest docker push says; else the one it recorded.)
+          digest=$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' <<< "$pushed" | tail -1)
+          if [ -z "$digest" ]; then
+            digest=$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' stationplay:latest \
+              | sed -n "s|^$image@\(sha256:[0-9a-f]\{64\}\)$|\1|p" | head -1)
+          fi
+          if [ -z "$digest" ]; then echo "::error::The pushed image's digest wasn't found"; exit 1; fi
+          echo "$digest" > "$RUNNER_TEMP/made/digest-${{ matrix.arch }}.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: made-${{ matrix.arch }}
+          path: ${{ runner.temp }}/made/
+          if-no-files-found: error
+          retention-days: 1
