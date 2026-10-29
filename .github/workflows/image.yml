@@ -90,8 +90,10 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    # (The tests take 30 to 50 minutes; building, a few more.)
-    timeout-minutes: 75
+    # (The tests take 30 to 50 minutes, and on amd64 the new and changed
+    # tests 20 times after them, which a release that changes many tests can
+    # take an hour over: the limit holds every step's own, as a test checks.)
+    timeout-minutes: 250
     permissions:
       contents: read
       packages: write
@@ -178,7 +180,7 @@ jobs:
       # machine; one failure fails the run.
       - name: New and changed tests, 20 times
         if: matrix.arch == 'amd64'
-        timeout-minutes: 90
+        timeout-minutes: 120
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

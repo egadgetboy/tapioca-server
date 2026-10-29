@@ -999,3 +999,16 @@ def test_the_gates_lint_reads_the_plan_for_a_class_d_release():
     linting = [step for step in steps if "release_gate.py lint" in step]
     assert len(linting) == 1
     assert "PLAN_READ_TOKEN: ${{ secrets.PLAN_READ_TOKEN }}" in linting[0]
+
+
+def test_the_image_jobs_time_limit_holds_every_step_it_runs():
+    """A job's time limit covers the sum of its steps' own: 1.44.3's candidate,
+    with many tests changed, ran its new and changed tests 20 times past the
+    job's 75 minutes, and was stopped with every check passing so far."""
+    text = (ROOT / ".github" / "workflows" / "image.yml").read_text()
+    jobs = re.split(r"\n  (?=[a-z-]+:\n)", text.split("\njobs:\n", 1)[1])
+    for job in jobs:
+        limits = [int(n) for n in re.findall(r"^ {4}timeout-minutes: (\d+)$", job, re.M)]
+        steps = [int(n) for n in re.findall(r"^ {8}timeout-minutes: (\d+)$", job, re.M)]
+        if steps:
+            assert limits and limits[0] >= sum(steps), (job.split(":", 1)[0], limits, steps)
