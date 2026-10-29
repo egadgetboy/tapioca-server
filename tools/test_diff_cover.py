@@ -62,5 +62,35 @@ class Checking(unittest.TestCase):
         self.assertEqual(d.uncovered({}, {"core/New.kt": {1}}, ("core/",), {"core/New.kt"}), ["core/New.kt: no test runs it"])
 
 
+class Local(unittest.TestCase):
+    """--local (the CI audit, P8): the tests named, run here, then CI's check."""
+
+    def test_the_tests_named_are_the_ones_run(self):
+        asked = []
+        real = d.local
+        d.local = asked.append
+        try:
+            d.main(["diff_cover.py", "server", "--local", "tests/test_a.py", "tests/test_b.py"])
+        finally:
+            d.local = real
+        self.assertEqual(asked, [["tests/test_a.py", "tests/test_b.py"]])
+
+    def test_failing_tests_stop_it_before_the_check(self):
+        calls = []
+        real_run, real_main = d.subprocess.run, d.main
+
+        class Ran:
+            returncode = 3
+
+        d.subprocess.run = lambda *a, **k: calls.append(a[0]) or Ran()
+        d.main = lambda argv: calls.append("checked") or 0
+        try:
+            self.assertEqual(d.local(["tests/test_a.py"]), 3)
+        finally:
+            d.subprocess.run, d.main = real_run, real_main
+        self.assertEqual(len(calls), 1)
+        self.assertIn("tests/test_a.py", calls[0])
+
+
 if __name__ == "__main__":
     unittest.main()

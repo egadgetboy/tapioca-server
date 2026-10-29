@@ -4,9 +4,13 @@ name: gates
 # ratchet on app/main.py, copied code, the standing rules in CLAUDE.md, the
 # linters on changed lines, strict types on new modules, and the pinned
 # dependencies scanned. Minutes, Ubuntu; the tools are pinned, and never ship.
+# (Run first by image.yml, as its first job, for every push it builds; on its
+# own only for a push of release notes, which image.yml leaves out.)
 on:
+  workflow_call:
   push:
     branches: [main]
+    paths: ["docs/releases/**"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,7 +29,7 @@ jobs:
           token=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
           echo "::stop-commands::$token"
           failed=0
-          for t in tools/test_release_gate.py tools/test_changed_lines.py tools/test_dep_scan.py tools/test_dupes.py tools/test_size_ratchet.py tools/test_claude_rules.py tools/test_mutate.py; do python3 "$t" || failed=1; done
+          for t in tools/test_release_gate.py tools/test_changed_lines.py tools/test_dep_scan.py tools/test_dupes.py tools/test_size_ratchet.py tools/test_claude_rules.py tools/test_mutate.py tools/test_diff_cover.py; do python3 "$t" || failed=1; done
           echo "::$token::"
           if [ "$failed" != 0 ]; then echo "::error::A check's own tests failed (above)"; exit 1; fi
       - name: The gates

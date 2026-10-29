@@ -797,12 +797,10 @@ def test_a_version_never_tested_says_how_to_start_its_tests(run):
     assert "Run workflow" in out  # (its commit was pushed with [skip ci], say)
 
 
-def _pushed_step() -> str:
-    """The "Was this push release notes alone?" step's script."""
-    lines = WORKFLOW.read_text().splitlines()
-    start = next(
-        i for i, line in enumerate(lines) if "name: Was this push release notes alone?" in line
-    )
+def _step_script(workflow: Path, name: str) -> str:
+    """The script of `workflow`'s step called `name`."""
+    lines = workflow.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if f"name: {name}" in line)
     run_at = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |")
     indent = len(lines[run_at + 1]) - len(lines[run_at + 1].lstrip())
     body = []
@@ -811,6 +809,11 @@ def _pushed_step() -> str:
             break
         body.append(line[indent:])
     return "\n".join(body) + "\n"
+
+
+def _pushed_step() -> str:
+    """The "Was this push release notes alone?" step's script."""
+    return _step_script(WORKFLOW, "Was this push release notes alone?")
 
 
 @pytest.mark.parametrize(
@@ -1012,3 +1015,84 @@ def test_the_image_jobs_time_limit_holds_every_step_it_runs():
         steps = [int(n) for n in re.findall(r"^ {8}timeout-minutes: (\d+)$", job, re.M)]
         if steps:
             assert limits and limits[0] >= sum(steps), (job.split(":", 1)[0], limits, steps)
+
+
+# The CI audit (October 29): the gates first (P3), the security suite before
+# Test (P6), and a light path for documentation alone (P2) -----------------------
+
+
+def _image_steps() -> list[tuple[str, str]]:
+    """image.yml's build-and-test steps, in order: each one's name and text."""
+    job = IMAGE.read_text().split("\n  build-and-test:\n", 1)[1]
+    steps = re.split(r"\n      - (?=name:|uses:)", job)[1:]
+    return [(re.match(r"(?:name: )?(.*)", step).group(1).strip(), step) for step in steps]
+
+
+def test_the_gates_run_first_and_stop_the_tests():
+    text = IMAGE.read_text()
+    assert re.search(r"\n  gates:\n(    .*\n)*    uses: \./\.github/workflows/gates\.yml\n", text)
+    assert "\n  build-and-test:\n    needs: gates\n" in text
+    gates = (ROOT / ".github" / "workflows" / "gates.yml").read_text()
+    on = gates.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+    assert "  workflow_call:" in on
+    # (On its own, only for release notes, which image.yml leaves out.)
+    assert 'paths: ["docs/releases/**"]' in on
+
+
+def test_the_security_suite_runs_before_test():
+    names = [name for name, _ in _image_steps()]
+    assert (
+        names.index("Security suite") < names.index("Test") < names.index("Push the tested image")
+    )
+
+
+def test_the_light_path_never_counts_as_a_tested_commit():
+    """On documentation alone, nothing heavy runs and nothing is pushed: its
+    Test step is skipped, so release.yml (which needs Test passed on both
+    machines) never takes it for a tested commit."""
+    light = "env.LIGHT != '1'"
+    steps = dict(_image_steps())
+    for name in ("Security suite", "Test", "Changed lines covered", "New and changed tests, 20 times",
+                 "Made of", "Push the tested image"):  # fmt: skip
+        assert light in steps[name].split("\n", 2)[1], name
+    uploads = [step for name, step in _image_steps() if "upload-artifact" in name]
+    assert uploads and all(light in step for step in uploads)
+    for name in ("What changed", "Build", "Quick check"):
+        assert "env.LIGHT" not in steps[name], name
+    text = IMAGE.read_text()
+    assert "    if: needs.build-and-test.outputs.light != '1'\n" in text.split("\n  image:\n", 1)[1]
+
+
+@pytest.mark.parametrize(
+    "event, changed, light",
+    [("push", ["docs/notes/a.md"], True), ("push", ["README.md", "docs/x/y.txt"], True),
+     ("push", ["app/a.py"], False), ("push", ["docs/a.md", "app/a.py"], False),
+     ("push", ["app/README.md"], False), ("push", ["tests/data/x.md"], False),
+     ("push", [".github/workflows/image.yml"], False), ("no before", ["docs/a.md"], False),
+     ("workflow_dispatch", ["docs/a.md"], False)],
+)  # fmt: skip
+def test_only_documentation_alone_takes_the_light_path(tmp_path, event, changed, light):
+    work = tmp_path / "work"
+    work.mkdir()
+    git(work, "init", "-q", "-b", "main")
+    (work / "app").mkdir()
+    (work / "app" / "a.py").write_text("x = 1\n")
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "before")
+    before = git(work, "rev-parse", "HEAD")
+    for name in changed:
+        (work / name).parent.mkdir(parents=True, exist_ok=True)
+        (work / name).write_text("changed\n")
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "the push")
+    env_file, out = tmp_path / "env", tmp_path / "out"
+    done = subprocess.run(
+        ["bash", "-e", "-c", _step_script(IMAGE, "What changed")], cwd=work, capture_output=True, text=True,
+        env={**os.environ, "BEFORE": "0" * 40 if event == "no before" else before,
+             "GITHUB_EVENT_NAME": "push" if event == "no before" else event,
+             "GITHUB_SHA": git(work, "rev-parse", "HEAD"), "GITHUB_ENV": str(env_file), "GITHUB_OUTPUT": str(out)},
+    )  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    said = env_file.read_text() if env_file.exists() else ""
+    assert ("LIGHT=1" in said) == light, (said, done.stdout)
+    assert (out.exists() and "light=1" in out.read_text()) == light
