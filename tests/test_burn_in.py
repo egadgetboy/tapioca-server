@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import math
 import shutil
 import subprocess
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -227,22 +229,51 @@ async def test_each_part_drifts_by_when_it_airs(monkeypatch, tmp_path):
 # On the air ---------------------------------------------------------------------
 
 
-def corner_places(path: Path) -> list[tuple[int, int]]:
-    """Where the logo is in the bottom-right corner of each frame of a
-    recording, in programs of one colour."""
+class Frame(NamedTuple):
+    at: float  # its time in the stream (its PTS, in seconds)
+    key: bool
+    place: tuple[int, int] | None  # where the logo is, or None when it isn't a program's
+
+
+def corner_frames(path: Path) -> list[Frame]:
+    """Every frame of a recording as the stream timed it, with where the logo
+    is in the bottom-right corner, in programs of one colour. (Decoded with
+    each frame's own time: evening the rate out would repeat or drop frames
+    around a join between programs, and counting those mistimes the steps.)"""
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "frame=best_effort_timestamp_time,key_frame", "-of", "json", str(path)],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    timed = json.loads(probe)["frames"]
     raw = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path), "-vf", "crop=110:100:530:260",
-         "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        ["ffmpeg", "-v", "error", "-i", str(path), "-fps_mode", "passthrough",
+         "-vf", "crop=110:100:530:260", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
         capture_output=True, check=True,
     ).stdout  # fmt: skip
     size = 110 * 100
-    places = []
-    for n in range(len(raw) // size):
+    assert len(raw) == len(timed) * size
+    frames = []
+    for n, f in enumerate(timed):
         img = raw[n * size : (n + 1) * size]
-        if any(abs(a - img[0]) > 24 for a in img[size - 110 * 8 :]):
-            continue  # (not a program: nothing to look at)
-        places.append(corner_box(img, bytes([img[0]]) * size, 110)[:2])
-    return places
+        # (A frame that isn't one colour along its foot isn't a program's.)
+        plain = all(abs(a - img[0]) <= 24 for a in img[size - 110 * 8 :])
+        place = corner_box(img, bytes([img[0]]) * size, 110)[:2] if plain else None
+        frames.append(Frame(float(f["best_effort_timestamp_time"]), f["key_frame"] == 1, place))
+    return frames
+
+
+def program_starts(frames: list[Frame]) -> list[int]:
+    """Where each program after the first starts: a keyframe off the last
+    one's beat (each program's keyframes come every GOP_FRAMES from its own
+    first frame). By their times, so frames lost before one don't hide it."""
+    keys = [n for n, f in enumerate(frames) if f.key]
+    beat = ff.GOP_FRAMES * FRAME_S
+    return [
+        b
+        for a, b in itertools.pairwise(keys)
+        if abs(frames[b].at - frames[a].at - beat) > FRAME_S / 2
+    ]
 
 
 async def test_on_the_air_it_steps_all_through_programs_and_across_them(tmp_path, monkeypatch):
@@ -277,21 +308,33 @@ async def test_on_the_air_it_steps_all_through_programs_and_across_them(tmp_path
     out = tmp_path / "drift.ts"
     out.write_bytes(data)
     assert_clean_stream(out)
-    places = corner_places(out)
-    assert len(places) * FRAME_S > 14  # (two programs' worth: across a change)
-    runs = [(place, len(list(same))) for place, same in itertools.groupby(places)]
-    print("\nplaces: " + ", ".join(f"{p} x{n}" for p, n in runs))
-    assert len(runs) >= 6, runs
-    # Steady between steps, 2 seconds apart (to a frame or two: each part's
-    # frames start on its own timeline).
-    for _, frames in runs[1:-1]:
-        assert abs(frames * FRAME_S - 2) <= 2.5 * FRAME_S, runs
+    frames = corner_frames(out)
+    assert frames[-1].at - frames[0].at > 14  # (two programs' worth: across a change)
+    starts = program_starts(frames)
+    assert starts, "no program change recorded"
+    # No frame lost: frame after frame all through a program; a gap only where
+    # the next program starts, and under assert_clean_stream's 0.2 s there.
+    for n, (a, b) in enumerate(itertools.pairwise(frames), start=1):
+        if b.at - a.at > 1.5 * FRAME_S:
+            assert n in starts, f"{b.at - a.at - FRAME_S:.3f} s of frames lost at {a.at:.3f}"
+    # Each step's moment, from the stream's own clock: after the last frame in
+    # the old place and by the first in the new one (a frame apart, or a join
+    # apart where it falls across one).
+    shown = [f for f in frames if f.place is not None]
+    steps = [(a.at, b.at, (b.place[0] - a.place[0], b.place[1] - a.place[1]))
+             for a, b in itertools.pairwise(shown) if a.place != b.place]  # fmt: skip
+    print("\nsteps: " + ", ".join(f"({lo:.3f}, {hi:.3f}] {move}" for lo, hi, move in steps))
+    assert len(steps) >= 6, steps
+    # Steady between steps, 2 seconds apart, through each program and across
+    # the change, to within the 2.5 frames the frames' own timeline allows.
+    for (lo_a, hi_a, _), (lo_b, hi_b, _) in itertools.pairwise(steps):
+        assert lo_b - hi_a <= 2 + 2.5 * FRAME_S and hi_b - lo_a >= 2 - 2.5 * FRAME_S, steps
     # One step at a time, round the places in order.
-    steps = [(b[0] - a[0], b[1] - a[1]) for (a, _), (b, _) in itertools.pairwise(runs)]
+    moves = [move for _, _, move in steps]
     order = [(b[0] - a[0], b[1] - a[1]) for a, b in itertools.pairwise((*NUDGES, NUDGES[0]))]
     assert any(
-        steps == [order[(start + k) % 9] for k in range(len(steps))] for start in range(9)
-    ), steps
+        moves == [order[(start + k) % 9] for k in range(len(moves))] for start in range(9)
+    ), moves
 
 
 # Found by the cold audit of 1.31.0: every corner, and the whole of what's drawn -----
