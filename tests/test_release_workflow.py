@@ -903,7 +903,9 @@ def test_from_first_gated_a_version_without_its_manifest_isnt_published(run):
 def test_from_first_gated_a_version_with_its_manifest_is_published(run):
     (run.work / "docs" / "reviews").mkdir(parents=True)
     (run.work / "docs" / "reviews" / "self.md").write_text("# Review\n\n## Quality bar\n\nFine.\n")
-    (run.work / "docs" / "releases" / "v1.32.2.toml").write_text(GOOD_MANIFEST.format(commit=run.commits["1.32.1"]))
+    (run.work / "docs" / "releases" / "v1.32.2.toml").write_text(
+        GOOD_MANIFEST.format(commit=run.commits["1.32.1"])
+    )
     run.version("1.32.2")
     image_run(run, 7)
     image_run(run, 8, version="1.32.2")
@@ -913,7 +915,9 @@ def test_from_first_gated_a_version_with_its_manifest_is_published(run):
 
 
 def test_the_release_job_names_its_first_gated_version():
-    text = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "release.yml").read_text()
+    text = (
+        Path(__file__).resolve().parents[1] / ".github" / "workflows" / "release.yml"
+    ).read_text()
     assert 'FIRST_GATED: "1.44.2"' in text
     assert 'python3 tools/release_gate.py check server "$version" "$commit"' in text
     assert "PLAN_READ_TOKEN: ${{ secrets.PLAN_READ_TOKEN }}" in text
@@ -929,13 +933,23 @@ def test_no_workflow_compares_with_a_commit_id():
                 raise AssertionError(f"{f.name}:{n} compares with a commit ID: {line.strip()}")
 
 
+OLD_RELEASE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC"
+
+
 def test_the_readme_checks_signatures_with_every_key_a_release_was_signed_with():
-    """release-signing.pub signs from 1.44.3 on; 1.44.2 was signed by the key
-    before it. The README's allowed_signers lines check both."""
+    """release-signing.pub signs from 1.44.3 on, as the README's
+    tapioca-release; 1.44.2 was signed by the key before it, which the README
+    names only as tapioca-release-1.44.2, so it can't vouch for any other
+    version (the cold audit of 1.44.3, SO-C1-07)."""
     readme = (ROOT / "README.md").read_text()
     current = " ".join((ROOT / "release-signing.pub").read_text().split()[:2])
-    for key in (current, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC"):
-        assert f'tapioca-release namespaces="tapioca-release" {key}' in readme, key
+    signers = [line for line in readme.splitlines() if 'namespaces="tapioca-release"' in line]
+    assert (
+        f'tapioca-release namespaces="tapioca-release" {current} tapiOca release signing' in signers
+    )
+    assert f'tapioca-release-1.44.2 namespaces="tapioca-release" {OLD_RELEASE_KEY}' in signers
+    assert len(signers) == 2
+    assert "-I tapioca-release-1.44.2" in readme
 
 
 def test_the_checks_own_tests_print_as_text(tmp_path):
@@ -967,6 +981,8 @@ def test_the_checks_own_tests_print_as_text(tmp_path):
     printed = [i for i, s in enumerate(said) if s == "::error::from a test"]
     assert len(printed) == len(names) and all(begun < i < resumed for i in printed)
     (tmp_path / names[0]).write_text("raise SystemExit(1)\n")
-    failed = subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+    failed = subprocess.run(
+        ["bash", "-e", "-c", script], cwd=tmp_path, capture_output=True, text=True
+    )
     assert failed.returncode != 0
     assert failed.stdout.splitlines()[-1].startswith("::error::")

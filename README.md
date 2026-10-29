@@ -1618,11 +1618,11 @@ To update, get the new source, build it under the new version, and change `image
 
 ### Checking a release's signature
 
-Each release's zip comes with an SSH signature, `tapioca-<version>.zip.sig`. From 1.44.3 on, it's made by the key in the repo's `release-signing.pub`; 1.44.2 was signed by the key before it. To check any of them, put these two lines in a file named `allowed_signers`:
+Each release's zip comes with an SSH signature, `tapioca-<version>.zip.sig`, made by the key in the repo's `release-signing.pub` (from 1.44.3). 1.44.2 was signed by the key before it, which is retired: it vouches for 1.44.2 alone. To check a release, put these two lines in a file named `allowed_signers`:
 
 ```
 tapioca-release namespaces="tapioca-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN2ZQ/9Bzx2Dle4Q3fkBOpfGuEAZsKHgqAciLMQJ4ahr tapiOca release signing
-tapioca-release namespaces="tapioca-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC
+tapioca-release-1.44.2 namespaces="tapioca-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC
 ```
 
 Then, in the folder with the zip and its signature, run:
@@ -1630,6 +1630,8 @@ Then, in the folder with the zip and its signature, run:
 ```
 ssh-keygen -Y verify -f allowed_signers -I tapioca-release -n tapioca-release -s tapioca-<version>.zip.sig < tapioca-<version>.zip
 ```
+
+For 1.44.2, use `-I tapioca-release-1.44.2` instead.
 
 It says `Good "tapioca-release" signature` when the zip is exactly what was published. From 1.34.0 on, every release's zip and its `SHA256SUMS` are signed.
 
