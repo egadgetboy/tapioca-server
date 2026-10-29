@@ -727,6 +727,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if token is None:
             raise HTTPException(401, access.SIGN_IN)
         if token.startswith(access.API_TOKEN_PREFIX):
+            # (The Gate's own refusal, which it always makes for an API token
+            # outside /api/v1, kept for this one decision.)
             raise HTTPException(*request.scope["state"]["token_refused"])
         hashed = access.session_hash(token)
         user = access.signed_in(request)

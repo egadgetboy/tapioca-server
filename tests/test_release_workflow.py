@@ -933,23 +933,24 @@ def test_no_workflow_compares_with_a_commit_id():
                 raise AssertionError(f"{f.name}:{n} compares with a commit ID: {line.strip()}")
 
 
-OLD_RELEASE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC"
+RETIRED_KEY = "AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC"
+# 1.44.2's published SHA256SUMS, by its SHA-256 (its signature checked with the retired key that made it).
+SUMS_1_44_2 = "bd3f829007c7ff7c8e5e0004e88a6a92abc9e22bd3520a23756403d9cd339ec8"
 
 
-def test_the_readme_checks_signatures_with_every_key_a_release_was_signed_with():
-    """release-signing.pub signs from 1.44.3 on, as the README's
-    tapioca-release; 1.44.2 was signed by the key before it, which the README
-    names only as tapioca-release-1.44.2, so it can't vouch for any other
-    version (the cold audit of 1.44.3, SO-C1-07)."""
+def test_the_readme_trusts_only_the_current_release_key():
+    """release-signing.pub signs from 1.44.3 on, and is the one key the
+    README's allowed_signers trusts. 1.44.2 was signed by a key now retired,
+    which isn't trusted at all: 1.44.2 is checked by its SHA256SUMS's digest
+    (the cold audits of 1.44.3, SO-C1-07 and SO-C2-05)."""
     readme = (ROOT / "README.md").read_text()
     current = " ".join((ROOT / "release-signing.pub").read_text().split()[:2])
     signers = [line for line in readme.splitlines() if 'namespaces="tapioca-release"' in line]
-    assert (
-        f'tapioca-release namespaces="tapioca-release" {current} tapiOca release signing' in signers
-    )
-    assert f'tapioca-release-1.44.2 namespaces="tapioca-release" {OLD_RELEASE_KEY}' in signers
-    assert len(signers) == 2
-    assert "-I tapioca-release-1.44.2" in readme
+    assert signers == [
+        f'tapioca-release namespaces="tapioca-release" {current} tapiOca release signing'
+    ]
+    assert RETIRED_KEY not in readme
+    assert f"`sha256sum SHA256SUMS` must print `{SUMS_1_44_2}`" in readme
 
 
 def test_the_checks_own_tests_print_as_text(tmp_path):

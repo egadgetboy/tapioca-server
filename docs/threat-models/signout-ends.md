@@ -13,7 +13,7 @@ A person on a shared device presses Sign out. Their app sends
 sign-in. Before 1.44.3 the remove wasn't one of the Gate's open routes, so
 for a sign-in tapiOca no longer took, the Gate answered 401 "Sign in to
 tapiOca" before the handler ran, and no one was removed. The apps let a
-remove's 401 go and show Who's Tuning In?, with the person still on it.
+remove's 401 go and show Who's tuning in?, with the person still on it.
 
 A device's sign-in stops working for many reasons, which the app hears of
 only at its next request:
@@ -32,7 +32,7 @@ only at its next request:
   goes with the old sign-in.
 
 So a careful person's path failed: change the password on a phone, walk to
-the TV, press Sign out. They stayed on Who's Tuning In?, and with no PIN,
+the TV, press Sign out. They stayed on Who's tuning in?, and with no PIN,
 anyone at that device could pick them: picking needs only the device's key,
 so the new password didn't help. **A Medium** (a shared device; no data
 leaves it).
@@ -81,13 +81,19 @@ page-origin check). The handler decides, in this order:
    forgotten, `{"ok": true}`, and the access log's line.
 5. **Otherwise** 401 "Sign in to tapiOca".
 
-**Only the remove reads the table.** A census test pins the places in
-`db.py` whose code names it (never in a docstring): `SCHEMA`, its fill's
-mark and the check for a sign-in without its row; `copy_database`,
-`forget_device_sign_ins` (a restored backup's, as it's put in place) and
-`changes_needed`; and `Database`'s opening and `_upgrade`, `add_session`,
-`seen`, `remove_by_ended_sign_in` and `_take_off`. No other file in `app/`
-names it in SQL.
+**Only the remove reads the table.** The security suite's census
+(`tests/security/test_device_sign_ins.py`) pins it twice. By code: the
+places in `db.py` whose code names it (a docstring isn't code): `SCHEMA`,
+its fill's mark and the check for a sign-in without its row;
+`copy_database`, `forget_device_sign_ins` (a restored backup's, as it's put
+in place) and `changes_needed`; and `Database`'s opening and `_upgrade`,
+`add_session`, `seen`, `remove_by_ended_sign_in` and `_take_off`; no other
+file in `app/` names it. As it runs: every connection's authorizer reports
+what touches the table through tapiOca's flows (signing in, a password
+changed, a sign-in seen, Sign out, a backup, a person and a device deleted,
+a restore), which must be exactly those places, the rule's check and the
+two deletes that cascade to it, so a name built at run time can't slip
+past on those flows.
 
 **Backups never hold it:** `copy_database` empties it with `sessions`, so
 the nightly backups, the page's downloads and a before-restore copy never
@@ -131,7 +137,8 @@ transaction. A second start changes nothing.
 4. It never relaxes a network's binding: a trusted network's device away
    from it is refused by `this_device` (403), as before.
 5. No secret kept or written: hashes as `sessions` keeps them; never in a
-   backup 1.44.3 makes; never in a log line.
+   backup 1.44.3 makes (before-update copies aside, which keep sign-ins);
+   never in a log line.
 6. Nothing grows: one row per person per device.
 7. The update is safe: backed up first; filled once, and rebuilt whenever
    it can't be trusted; 1.44.2 opens the updated database and ignores the
@@ -211,7 +218,9 @@ The same token anywhere else (each of P2 to P11): the Gate's 401, as before.
   with its reason, and a structural check: every route classed watcher,
   user or admin is outside it, and every device route inside it (a
   handler's own 401 would otherwise pass a watcher's checks).
-- **The census:** where `device_sign_ins` may appear.
+- **The census** (`tests/security/test_device_sign_ins.py`): where
+  `device_sign_ins` may appear in the code, and what touches it as tapiOca
+  runs (§2).
 - **The live harness** (`tools/attack_check.py`): a password changed on
   another device; the ended sign-in refused on the apps' other routes, with
   another device's key, as an API token or a made-up one; then taking its
@@ -226,29 +235,30 @@ Each is the behavior before 1.44.3, unchanged, with nothing new on screen:
   **or after a restored backup** (P25): its remove gets a 401 once; the
   person signs in once more to sign out.
 - **A start stopped between the schema and the fill** is repaired at the
-  next start (the mark is missing); one stopped after a rebuild and before
-  the version is noted rebuilds again, harmlessly, with a second copy.
+  next start (the mark is missing).
 - **A remove racing a pick** (R2) and **a remove during a changed
   password's check** (R3), as in §4.
-- **A trusted network's device, away from that network** (P21): the person
-  comes off when they sign out on that network.
-- **The TV asked first:** if the device asks tapiOca anything before Sign
-  out, it hears the 401 and goes back to Who's Tuning In? with no goodbye;
-  the person stays listed until they pick themselves and sign out. That's
-  the design (a locked viewer goes back there), and outside what this
-  release promises.
+- **The TV asked first**, which is common, not rare: a TV playing Media
+  hears within seconds that the sign-in ended (tapiOca ends the play as soon
+  as it's gone), and an idle app within minutes. It goes back to Who's
+  tuning in? with no goodbye, and the person stays listed until they pick
+  themselves and sign out. That's the design (a locked viewer goes back
+  there), outside what this release promises, and where the Medium this
+  release fixes still applies.
 - **Two installs with one key** (only by copying the key): one install's
   Sign out ends the other's sign-in for the same person.
-- **A start that keeps failing** before it notes its version (a restart
-  loop, after an update from an older version): each restart backs up the
-  database and rebuilds the record, so the rows of sign-ins already gone
-  from `sessions` are lost (those people get one 401 at Sign out, as before
-  1.44.3), and after three restarts the copy from before the update is
-  pruned. Every copy left opens under 1.44.2, so rolling back still works.
+- **A start that stops after a rebuild and before it notes its version**
+  (once, or in a restart loop after an update from an older version): each
+  start backs up the database again and rebuilds the record. A start that
+  stopped before serving changed no sign-in, so each rebuild makes the same
+  rows; what's real is the extra copies, and after three the copy from
+  before the update is pruned. Every copy left opens under 1.44.2, so
+  rolling back still works.
 - **Going back to 1.44.3 from a later version that reshapes this table**
-  would stop it at start: later versions add columns to it and never rename
-  or drop them (no going back from a later version is promised before the
-  launch).
+  would stop it at start: later versions add columns to it only if they're
+  nullable or have a default (1.44.3's writes name their columns), and never
+  rename or drop one (no going back from a later version is promised before
+  the launch).
 
 ## 8. The ten gates
 
@@ -258,7 +268,8 @@ Each is the behavior before 1.44.3, unchanged, with nothing new on screen:
   its sign-in was made for; only the remove reads it.
 - **FG-03 Data and migration.** One table and index, backed up before,
   filled once and rebuilt whenever it can't be trusted, cascaded with
-  devices and people, never in a backup 1.44.3 makes.
+  devices and people, never in a backup 1.44.3 makes (before-update copies
+  aside).
 - **FG-04 Auth and privacy.** §3's rules 1 to 5; one narrow new way in,
   stated: an ended sign-in with the device's key reaches one write, its own
   person's removal from that device.
@@ -268,15 +279,18 @@ Each is the behavior before 1.44.3, unchanged, with nothing new on screen:
   contract is unchanged.
 - **FG-07 Performance and scale.** One indexed lookup on a remove that
   isn't signed in; one row written per device sign-in; one indexed update at
-  a renewed sign-in's first "seen"; at each start, one pass over the sign-ins
+  every sign-in's "seen" (every five minutes of use), which changes a row only
+  at a renewed one's first; at each start, one pass over the sign-ins
   that have a device (a window function: `sessions` has no index on
   `device_id`), twice (the backup's check and the opening); one row per
   person per device.
 - **FG-08 Platform feasibility.** Python and SQLite as before; no
   dependency.
 - **FG-09 Verification.** `tests/test_signout_ends.py` (every path, the
-  races, the predicate as a table, the fill and rebuild, backups, the
-  census, the bare 500), the security suite, `upgrade_check`, the soak.
+  races, the predicate as a table, changes_needed and the start agreeing on
+  real files, the fill and rebuild, backups and restores, rules 1 and 3,
+  the bare 500), the security suite with the census, `upgrade_check`, the
+  soak.
 - **FG-10 Operations.** The access log's line. Ending a person's sign-ins
   on the device ends a play there; an app sends the remove only for its own
   viewer's Sign out, so nothing playing is stopped that Sign out wouldn't.

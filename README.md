@@ -42,7 +42,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 
 ### Available now
 
-Everything here is in tapiOca 1.44.2 and the apps' newest test builds.
+Everything here is in the newest release of tapiOca and the apps' newest test builds.
 
 - **Your own live Stations.** Pick shows and movies, give a Station a number and a name, and it plays them around the clock, like broadcast TV, with a guide two days ahead. Play them in episode order or shuffled. Make Stations one at a time, from a filter that keeps itself up to date, from your collections, or dozens at once as smart Stations (see [Making stations](#making-stations)).
 - **Station extras.** Marathons, movie nights and time-of-day blocks. Commercials and trailers from your own folders, even by decade. Station ID cards with original jingles, an Intro Bumper as someone tunes in, and an Up Next Banner. A logo, name or clock in the corner, with burn-in protection. Nearly 1,000 original logos, or your own. Episodes play at an even loudness (see [Station features](#station-features)).
@@ -57,7 +57,7 @@ Everything here is in tapiOca 1.44.2 and the apps' newest test builds.
 
 ### Coming toward 1.0
 
-Features are being rolled out across releases toward 1.0. None of these is in tapiOca 1.44.2 yet.
+Features are being rolled out across releases toward 1.0. None of these is released yet.
 
 - **Clean audio.** Strong language muted automatically, title by title and person by person, so the whole family can watch the same movie. You choose how strict. *Only with tapiOca's apps.*
 - **Watch Groups.** Watch in sync with family and friends, near or far, with chat, all on your own server. *Only with tapiOca's apps.*
@@ -432,7 +432,7 @@ To go back to the version you had before an update:
    Remove-Item stationplay.db-wal, stationplay.db-shm -ErrorAction SilentlyContinue
    ```
    Use your own folder and the copy's name. Copying over the old file keeps its owner, so tapiOca can still write to it.
-3. **Ask for the previous version's image.** Change the end of `image:` from `:latest` to that version, such as `ghcr.io/egadgetboy/tapioca-server:1.44.1`, and start it. On TrueNAS, edit the app and save it, then start it if it doesn't start by itself. With Docker Compose, run `docker compose up -d`. On Unraid, edit the container's **Repository** and apply. On Synology, edit `docker-compose.yml`, then connect over SSH and run `sudo docker compose up -d` in its folder. With docker run, run `docker rm stationplay`, then your `docker run` command with that version at the end.
+3. **Ask for the previous version's image.** Change the end of `image:` from `:latest` to that version, such as `ghcr.io/egadgetboy/tapioca-server:1.44.2`, and start it. On TrueNAS, edit the app and save it, then start it if it doesn't start by itself. With Docker Compose, run `docker compose up -d`. On Unraid, edit the container's **Repository** and apply. On Synology, edit `docker-compose.yml`, then connect over SSH and run `sudo docker compose up -d` in its folder. With docker run, run `docker rm stationplay`, then your `docker run` command with that version at the end.
 
 It stays on that version until you change `image:` back to `:latest`. Images are published from 1.34.0 on. To go back to an earlier version, build it from its zip (see [Building from source](#building-from-source)).
 
@@ -526,8 +526,8 @@ tapiOca's apps are in beta, in private testing, and not in any app store yet. Th
 | 1.29.1 | A converted copy of a file the device can't play, and more detail on problems |
 | 1.30.0 | Report a problem |
 | 1.34.0 | Automatic subtitles |
-| 1.37.0 | Shuffle on a show's page (**Shuffle all**, or **Shuffle unwatched**), and jumping through a Media folder by letter, by month or year added, or by decade, as it's sorted |
 | 1.36.0 | Trusted networks: a device on one is linked without signing in |
+| 1.37.0 | Shuffle on a show's page (**Shuffle all**, or **Shuffle unwatched**), and jumping through a Media folder by letter, by month or year added, or by decade, as it's sorted |
 | 1.38.0 | An Admin's password on **Who's tuning in?** for Admin tasks, an Admin's PIN in Light sign-in, and invite codes for people with neither a password nor a PIN |
 | 1.39.0 | "Restricted program": a program someone may not watch is blocked for them while it airs, and their station comes back by itself |
 | 1.40.0 | Limits checked while a title plays, so a change stops it within seconds |
@@ -1590,7 +1590,7 @@ It uses its own ports, stops only what it started, and cleans up afterward. `--f
 
 Then the draft is published, once anyone can pull the image without signing in: the `tapioca-server` package on GitHub must be public, or the run says so and publishes nothing. A draft left by a run that stopped partway is deleted, and the release made again. The workflow runs only in this repository, not in forks.
 
-A version whose tests are still running waits for them, and one whose tests failed isn't published; the run says why in one line. Push and test each version's commit before the next one's. Versions before 1.34.0 were source only: no image was published for them, and each person's build got Debian's packages from Debian. Public releases here start with 1.32.0.
+A version whose tests are still running waits for them, and one whose tests failed isn't published; the run says why in one line. Push and test each version's commit before the next one's. Versions before 1.34.0 were source only: no image was published for them, and each person's build got Debian's packages from Debian. Public releases here start with 1.44.2.
 
 **Before each push to `main`,** run `python tools/image_check.py` (about 3 minutes). It lays the project out as the image's test stage has it and runs the tests that read the project's own files there, so a file the image hasn't got shows up at once rather than 40 minutes into the image workflow. The image workflow runs the same tests first, in the image itself.
 
@@ -1618,11 +1618,10 @@ To update, get the new source, build it under the new version, and change `image
 
 ### Checking a release's signature
 
-Each release's zip comes with an SSH signature, `tapioca-<version>.zip.sig`, made by the key in the repo's `release-signing.pub` (from 1.44.3). 1.44.2 was signed by the key before it, which is retired: it vouches for 1.44.2 alone. To check a release, put these two lines in a file named `allowed_signers`:
+Each release's zip comes with an SSH signature, `tapioca-<version>.zip.sig`, made by the key in the repo's `release-signing.pub` (from 1.44.3). To check one, put this line in a file named `allowed_signers`:
 
 ```
 tapioca-release namespaces="tapioca-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN2ZQ/9Bzx2Dle4Q3fkBOpfGuEAZsKHgqAciLMQJ4ahr tapiOca release signing
-tapioca-release-1.44.2 namespaces="tapioca-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMGwA9MpUzSlWeish/aRH6oYEo3PjkIBC9LXZSXxcdsC
 ```
 
 Then, in the folder with the zip and its signature, run:
@@ -1631,7 +1630,7 @@ Then, in the folder with the zip and its signature, run:
 ssh-keygen -Y verify -f allowed_signers -I tapioca-release -n tapioca-release -s tapioca-<version>.zip.sig < tapioca-<version>.zip
 ```
 
-For 1.44.2, use `-I tapioca-release-1.44.2` instead.
+1.44.2 was signed by a key that's now retired, so it isn't trusted here. Check 1.44.2 by its `SHA256SUMS` instead: `sha256sum SHA256SUMS` must print `bd3f829007c7ff7c8e5e0004e88a6a92abc9e22bd3520a23756403d9cd339ec8`, and then `sha256sum -c --ignore-missing SHA256SUMS` checks its files, as below.
 
 It says `Good "tapioca-release" signature` when the zip is exactly what was published. From 1.34.0 on, every release's zip and its `SHA256SUMS` are signed.
 

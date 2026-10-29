@@ -2,10 +2,12 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .github/
-# (but the release workflow's script, which a test runs, and the image
-# workflow, which that test reads)
+# (but the release workflow's script, which a test runs, the image
+# workflow, which that test reads, and the gates' workflow, whose own tests'
+# script a test runs)
 !.github/workflows/release.yml
 !.github/workflows/image.yml
+!.github/workflows/gates.yml
 *.ts
 data/
 # (tests/ and these tools are for the Dockerfile's test stage alone: what

@@ -57,6 +57,10 @@ LAYERS = {
     "test_ssrf.py": ("Outbound requests by provenance (SSRF-01 to SSRF-08)", "Critical"),
     "test_traversal.py": ("Paths on every route with a parameter (INJ-01)", "Critical"),
     "test_chains.py": ("The four scripted chains (CHAIN-01 to CHAIN-04)", "Critical"),
+    "test_device_sign_ins.py": (
+        "Only Sign out reads the device sign-ins' record, in code and as it runs (1.44.3)",
+        "High",
+    ),
 }
 
 _RESULT = re.compile(r"^(PASSED|FAILED|ERROR) tests/security/([a-z_]+\.py)::(\S+)")

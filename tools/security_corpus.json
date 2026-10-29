@@ -1,5 +1,5 @@
 {
-  "checks": 1182,
+  "checks": 1201,
   "about": "The regression corpus only grows (DL287): the number of checks tools/security_suite.py ran at the last release candidate. A run with fewer fails unless merges holds that exact reduction, reviewed: from_checks, to_checks, removed_case_ids, a reason and the review's commit (review_sha).",
   "merges": [],
   "history": [
@@ -14,6 +14,10 @@
     {
       "to_checks": 1182,
       "why": "1.44.0: the audits' later rounds (outage lookups, odd encodings, console redaction, census forms, guard)"
+    },
+    {
+      "to_checks": 1201,
+      "why": "1.44.3: the remove's device class and the Gate's open list pinned (tests/security/test_authz.py), the record's census in code and as it runs (tests/security/test_device_sign_ins.py), and the live harness's ended sign-in (tools/attack_check.py)"
     }
   ]
 }

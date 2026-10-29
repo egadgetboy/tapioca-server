@@ -7,11 +7,11 @@ thing, while they're on that device's list. Nothing else."""
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import contextlib
 import io
 import itertools
+import re
 import sqlite3
 import tempfile
 import threading
@@ -41,6 +41,7 @@ from .test_picker import (  # noqa: F401  # fmt: skip
     people,
     two_ports,
 )
+from .test_trusted import PAT as NETWORK_ADMIN
 from .test_trusted import device_at, home
 
 PAT = {"name": "Pat", "password": "pat's long password"}
@@ -136,6 +137,38 @@ def test_someone_else_signing_in_on_the_tv_still_leaves_the_newest_able(tv_room)
     assert tv.get("/api/v1/stations", headers=bearer(t1)).status_code == 401
     assert remove(tv, key, t1).status_code == 200
     assert people(tv, key) == ["Ada"]
+    # (§3, rule 3: only that person: Ada, watching on the TV now, stays signed in.)
+    assert tv.get("/api/internal/me", headers=bearer(ada.json()["token"])).status_code == 200
+
+
+def test_a_live_sign_in_of_another_device_ends_only_that_persons_here(app, tv_room):
+    # (P1b with someone else on the TV now: rule 3, only Pat's sign-ins end.)
+    _, tv, key, _ = tv_room
+    pat_on(tv, key)
+    ada = tv.post("/api/internal/picker/sign-in", json=ADA, headers=device(key)).json()["token"]
+    phone = TestClient(app)
+    t_phone = phone.post("/api/internal/sign-in", json={**PAT, **PHONE}).json()["token"]
+    assert remove(tv, key, t_phone).status_code == 200
+    assert people(tv, key) == ["Ada"]
+    assert tv.get("/api/internal/me", headers=bearer(ada)).status_code == 200
+
+
+def test_an_ended_sign_in_never_acts_for_someone_off_the_list(app, tv_room):
+    # (§3, rule 1, P18: the row is there, but an Admin chose the TV for Pat,
+    # which lists no one: the remove finds no one, and the Admin's choice stays.)
+    admin, tv, key, pat_id = tv_room
+    t1 = pat_on(tv, key)
+    phone_password_change(app)
+    chose = admin.put(f"/api/access/users/{pat_id}/picker", json={"devices": [_tv_id(app)]})
+    assert chose.status_code == 200, chose.text
+    assert remove(tv, key, t1).status_code == 401
+    with sqlite3.connect(Path(app.state.ctx.db.path)) as c:
+        how = c.execute(
+            "SELECT how FROM device_people WHERE user_id = ? AND device_id = ?",
+            (pat_id, _tv_id(app)),
+        ).fetchone()
+    assert how == ("chosen",)
+    assert any(row[1] == pat_id for row in _rows(app))
 
 
 def test_the_sign_in_a_changed_password_renewed_from_still_signs_out(tv_room):
@@ -483,57 +516,6 @@ def test_a_file_without_meta_never_stops_a_start(tmp_path):
     assert "device sign-ins rebuilt" in dbmod.changes_needed(path)
 
 
-def _naming_the_record(tree: ast.Module) -> set[str]:
-    """The module's names whose code (never their docstrings) says
-    device_sign_ins: a constant's, a function's or a class's method's."""
-    found: set[str] = set()
-
-    def visit(node: ast.AST, scope: str) -> None:
-        body = getattr(node, "body", [])
-        skip = body[0] if body and isinstance(body[0], ast.Expr) else None
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-                visit(child, f"{scope}{child.name}" if not scope else f"{scope}.{child.name}")
-            elif child is not skip and any(
-                isinstance(n, ast.Constant)
-                and isinstance(n.value, str)
-                and "device_sign_ins" in n.value
-                for n in ast.walk(child)
-            ):
-                targets = getattr(child, "targets", None) or [getattr(child, "target", None)]
-                names = [t.id for t in targets if isinstance(t, ast.Name)]
-                found.add(scope or names[0])
-
-    visit(tree, "")
-    return found
-
-
-def test_only_the_remove_reads_the_record():
-    # (§2's census: in app/, the table is named in SQL only in these places of
-    # db.py, so a new reader can't be added without changing this test.)
-    root = Path(__file__).resolve().parent.parent / "app"
-    elsewhere = {
-        p.name
-        for p in root.rglob("*.py")
-        if p.name != "db.py" and _naming_the_record(ast.parse(p.read_text()))
-    }
-    assert elsewhere == set()
-    assert _naming_the_record(ast.parse((root / "db.py").read_text())) == {
-        "SCHEMA",
-        "FILLED_META",
-        "_UNROWED",
-        "copy_database",
-        "forget_device_sign_ins",
-        "changes_needed",
-        "Database.__post_init__",
-        "Database._upgrade",
-        "Database.add_session",
-        "Database.seen",
-        "Database.remove_by_ended_sign_in",
-        "Database._take_off",
-    }
-
-
 # The rest of §4's paths -------------------------------------------------------------
 
 
@@ -734,11 +716,25 @@ def test_a_networks_device_away_from_its_network_is_refused_first(tmp_path):
     try:
         tv = device_at(made, "192.168.1.60")
         token = tv.post("/api/internal/trusted", json={"app": "TV"}).json()["token"]
+        # (A row elsewhere first, so the check below can fail: Kid on the den's
+        # Roku, by an invite code, which makes it an ordinary linked device.)
+        admin = device_at(made, "192.168.1.50")
+        assert admin.post("/api/access/sign-in", json=NETWORK_ADMIN).status_code == 200
+        code = admin.post(f"/api/access/users/{made.state.kid}/invite").json()["code"]
+        den = device_at(made, "192.168.1.62")
+        den_key = den.post("/api/internal/trusted", json={"app": "Roku", "picker": True}).json()[
+            "deviceKey"
+        ]
+        by_code = {"name": "Kid", "code": code}
+        assert den.post(
+            "/api/internal/picker/sign-in", json=by_code, headers=device(den_key)
+        ).is_success
         tablet = device_at(made, "192.168.1.61")
         key = tablet.post("/api/internal/trusted", json={"app": "Tablet", "picker": True}).json()[
             "deviceKey"
         ]
         before = _rows(made)
+        assert before
         away = device_at(made, "192.168.20.5", stationplay_device=key)
         assert away.post(REMOVE, headers=bearer(token)).status_code == 403
         assert _rows(made) == before
@@ -908,6 +904,10 @@ def test_a_sign_in_gone_before_the_update_finds_no_one(app, tv_room):
     assert people(tv, key) == ["Ada", "Pat"]
 
 
+# changes_needed's lines about the record, and nothing else it may list.
+RECORD_LINE = re.compile(r"device_sign_ins|device sign-ins")
+
+
 def _record(path: Path) -> tuple:
     with sqlite3.connect(path) as c:
         there = c.execute(
@@ -957,7 +957,7 @@ def test_changes_needed_and_the_start_agree_on_real_files(
         c.execute("DELETE FROM meta WHERE key = 'version_started'")
         if version:
             c.execute("INSERT INTO meta (key, value) VALUES ('version_started', ?)", (version,))
-    said = dbmod.changes_needed(path)
+    said = [line for line in dbmod.changes_needed(path) if RECORD_LINE.search(line)]
     before = _record(path)
     Database(path).close()
     assert bool(said) == (_record(path) != before), (said, before, _record(path))
