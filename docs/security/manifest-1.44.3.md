@@ -14,7 +14,8 @@ The six questions every release answers, for its readiness record.
 2. **New outbound request?** None.
 3. **New file write or upload?** None but the database: a new table,
    `device_sign_ins` (hashes only, as `sessions` keeps them), emptied in
-   every backup tapiOca makes, kept in the before-update copy.
+   every backup 1.44.3 makes and forgotten when one is restored, kept in the
+   before-update copy.
 4. **New use of FFmpeg or another program?** None.
 5. **New stored field returned to a client?** None: only the remove reads
    the table, and it answers `{"ok": true}` or the refusals it answered

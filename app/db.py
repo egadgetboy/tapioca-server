@@ -335,7 +335,6 @@ CREATE TABLE IF NOT EXISTS device_sign_ins (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     session_hash TEXT    NOT NULL,
     renewed_from TEXT,
-    made_ms      INTEGER NOT NULL,
     PRIMARY KEY (device_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS device_sign_ins_by_hash ON device_sign_ins (session_hash);
@@ -1030,12 +1029,14 @@ def copy_database(source: Path, dest: Path, sign_ins: bool = False) -> None:
 # to date; FILLED_META: it was filled from sessions, to the end.
 KEEPS_DEVICE_SIGN_INS = (1, 44, 3)
 FILLED_META = "device_sign_ins_filled"
-# Each person's newest sign-in on each linked device, as sessions has them.
+# Each person's newest sign-in on each linked device, as sessions has them
+# (one pass over the sign-ins with a device: sessions has no index on it).
 _NEWEST_ON_DEVICES = (
-    "SELECT s.device_id, s.user_id, s.token_hash, s.created_ms FROM sessions s "
-    "JOIN linked_devices d ON d.id = s.device_id JOIN users u ON u.id = s.user_id "
-    "WHERE s.rowid = (SELECT n.rowid FROM sessions n WHERE n.device_id = s.device_id "
-    "AND n.user_id = s.user_id ORDER BY n.created_ms DESC, n.rowid DESC LIMIT 1)"
+    "SELECT n.device_id, n.user_id, n.token_hash FROM (SELECT device_id, user_id, token_hash, "
+    "ROW_NUMBER() OVER (PARTITION BY device_id, user_id ORDER BY created_ms DESC, rowid DESC) "
+    "AS newest FROM sessions WHERE device_id IS NOT NULL) n "
+    "JOIN linked_devices d ON d.id = n.device_id JOIN users u ON u.id = n.user_id "
+    "WHERE n.newest = 1"
 )
 _FILL_META = "SELECT key, value FROM meta WHERE key IN (?, ?)"
 # A device's sign-in without its row (see device_sign_ins_fill).
@@ -1066,8 +1067,6 @@ def device_sign_ins_fill(*, table: bool, mark: bool, version_started: str, unrow
 def _fills_device_sign_ins(conn: sqlite3.Connection, table: bool) -> bool:
     """device_sign_ins_fill, for the database `conn` is open on (`table`:
     whether device_sign_ins was there before this start)."""
-    if not table:
-        return True
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     meta: dict[str, str] = {}
     if "meta" in tables:
@@ -1079,11 +1078,26 @@ def _fills_device_sign_ins(conn: sqlite3.Connection, table: bool) -> bool:
         and conn.execute(_UNROWED).fetchone() is not None
     )
     return device_sign_ins_fill(
-        table=True,
+        table=table,
         mark=FILLED_META in meta,
         version_started=meta.get(VERSION_META, ""),
         unrowed=unrowed,
     )
+
+
+def forget_device_sign_ins(path: Path) -> None:
+    """A restored backup's device sign-ins are forgotten as it's put in
+    place: every sign-in ended with the restore, and the version that made it
+    may not have kept them up to date (see device_sign_ins_fill)."""
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True)  # (never made here)
+    try:
+        with conn:
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'device_sign_ins'"
+            ).fetchone():
+                conn.execute("DELETE FROM device_sign_ins")
+    finally:
+        conn.close()
 
 
 def changes_needed(path: Path) -> list[str]:
@@ -1233,7 +1247,7 @@ class Database:
             with self._conn:
                 self._conn.execute("DELETE FROM device_sign_ins")
                 self._conn.execute(
-                    "INSERT INTO device_sign_ins (device_id, user_id, session_hash, made_ms) "
+                    "INSERT INTO device_sign_ins (device_id, user_id, session_hash) "
                     + _NEWEST_ON_DEVICES
                 )
                 self._conn.execute(
@@ -2212,11 +2226,10 @@ class Database:
             )  # fmt: skip
             if device_id is not None:
                 self._conn.execute(
-                    "INSERT INTO device_sign_ins (device_id, user_id, session_hash, renewed_from, "
-                    "made_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT (device_id, user_id) DO UPDATE SET "
-                    "session_hash = excluded.session_hash, renewed_from = excluded.renewed_from, "
-                    "made_ms = excluded.made_ms",
-                    (device_id, user_id, token_hash, renewed_from, now),
+                    "INSERT INTO device_sign_ins (device_id, user_id, session_hash, renewed_from) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT (device_id, user_id) DO UPDATE SET "
+                    "session_hash = excluded.session_hash, renewed_from = excluded.renewed_from",
+                    (device_id, user_id, token_hash, renewed_from),
                 )
             # (Kept apart by where they work: a trusted network's sign-ins
             # never push out someone's others, 1.36.0.)
@@ -2562,8 +2575,9 @@ class Database:
         """Someone takes themselves off a device's picker with their newest
         sign-in there, or the one a changed password renewed it from, after
         it ended (`token_hash`), while they're on it (`on_picker`, given them
-        and how they're on it there: see devices.on_picker). Every sign-in of
-        theirs there ends. Who came off; None if no one did (1.44.3)."""
+        and how they're on it there: see devices.on_picker; it runs under the
+        database's lock, so it must read nothing). Every sign-in of theirs
+        there ends. Who came off; None if no one did (1.44.3)."""
         with self._lock, self._conn:
             row = self._conn.execute(
                 "SELECT users.*, device_people.how FROM device_sign_ins "

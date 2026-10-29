@@ -15,8 +15,8 @@ for a sign-in tapiOca no longer took, the Gate answered 401 "Sign in to
 tapiOca" before the handler ran, and no one was removed. The apps let a
 remove's 401 go and show Who's Tuning In?, with the person still on it.
 
-A device's sign-in stops being taken for many reasons, which the app hears
-of only at its next request:
+A device's sign-in stops working for many reasons, which the app hears of
+only at its next request:
 
 - the person's password changed, on any device (every sign-in they have ends);
 - their role changed;
@@ -25,7 +25,8 @@ of only at its next request:
 - a device's sign-in unused for a day (or 30 days since last seen);
 - the person's 21st sign-in ending their oldest;
 - another person signing in on the device (one sign-in per device);
-- an Admin ending it, a trusted network forgotten, old ones pruned;
+- an Admin ending it, or old ones pruned (a trusted network forgotten
+  unlinks the devices it linked: P20);
 - a restored backup, or the reset-access file;
 - a changed password's own answer lost, late or cut off, so the app's remove
   goes with the old sign-in.
@@ -45,8 +46,9 @@ Nothing else.
 
 **What's kept:** a table, `device_sign_ins`, with one row per person per
 linked device: the hash of their newest sign-in there (as `sessions` keeps
-it), the hash it was renewed from when a changed password made it on that
-device (else none), and when it was made. Its key is (device, person), with
+it), and the hash it was renewed from when a changed password made it on
+that device (else none). (The audited record kept when it was made too; its
+only reader went with round 2's time guard, so the column isn't kept.) Its key is (device, person), with
 foreign keys to `linked_devices` and `users`, `ON DELETE CASCADE`. It's
 written in `Database.add_session`'s transaction, the only writer of
 `sessions`, whenever the sign-in has a device, so the row is always the
@@ -79,14 +81,20 @@ page-origin check). The handler decides, in this order:
    forgotten, `{"ok": true}`, and the access log's line.
 5. **Otherwise** 401 "Sign in to tapiOca".
 
-**Only the remove reads the table** (a census test: it appears in `app/`
-only in `db.py`).
+**Only the remove reads the table.** A census test pins the places in
+`db.py` whose code names it (never in a docstring): `SCHEMA`, its fill's
+mark and the check for a sign-in without its row; `copy_database`,
+`forget_device_sign_ins` (a restored backup's, as it's put in place) and
+`changes_needed`; and `Database`'s opening and `_upgrade`, `add_session`,
+`seen`, `remove_by_ended_sign_in` and `_take_off`. No other file in `app/`
+names it in SQL.
 
 **Backups never hold it:** `copy_database` empties it with `sessions`, so
 the nightly backups, the page's downloads and a before-restore copy never
 say who signed in where. A later update's before-update copy keeps it, as it
-keeps sign-ins. A backup 1.44.2 makes of an updated database does hold its
-rows, and the rebuild below clears them when it's restored.
+keeps sign-ins. A backup another version makes of an updated database may
+hold rows, so a restore forgets them as it puts the backup in place (every
+sign-in ends with a restore anyway: P25).
 
 **The access log** says "Pat took themselves off Living Room TV", with
 "(their sign-in there had ended)" when it had. No token or hash is written.
@@ -118,7 +126,8 @@ transaction. A second start changes nothing.
    device, another device's, a browser's, an API token, or a token tapiOca
    never gave: refused.
 3. The remove only takes away: it never signs anyone in or returns a
-   sign-in.
+   sign-in, and never changes anything but that person on that device and
+   the sign-in it was sent with.
 4. It never relaxes a network's binding: a trusted network's device away
    from it is refused by `this_device` (403), as before.
 5. No secret kept or written: hashes as `sessions` keeps them; never in a
@@ -146,7 +155,7 @@ ended, their row forgotten, `{"ok": true}`.
 | P4 | the newest, ended by a new PIN, a PIN removed, or Full sign-in | 401 | removed |
 | P5 | the newest, unused for a day | 401 | removed |
 | P6 | the newest, ended as the person's 21st sign-in came | 401 | removed |
-| P7 | the newest, ended by an Admin, a forgotten network, or pruned | 401 | removed |
+| P7 | the newest, ended by an Admin (by its ID) or pruned (30 days unused) | 401 | removed |
 | P8 | the newest, ended because someone else signed in on this device | 401 | removed |
 | P9 | the one a changed password renewed from, its answer lost | 401; the new one left live, held by no one | removed, the new one ended too |
 | P10, P11 | the one renewed from, after Sign out's time ran out, or a network change canceled the password's answer | 401 | removed |
@@ -163,7 +172,7 @@ ended, their row forgotten, `{"ok": true}`.
 | P18 | the person already off this device's list | 401 | 401 |
 | P19 | the person deleted | 401 | 401 (cascade) |
 | P20 | the device unlinked | 401 | 401 (cascade) |
-| P21 | a trusted network's device, away from that network | 401 | 403, the device's own answer, asked first; still listed |
+| P21 | a trusted network's device, away from that network | 401 | 403, the device's own answer, asked first; the record unchanged (a device stays bound only until someone signs in on it by name or code, so no one is on its list while it's bound) |
 | P22 | the device's key wrong or missing | 401 | 401 |
 | P23 | signing in off on the server | 400 | 400 |
 | P24 | after going back to 1.44.2 and forward again: an old row's token | — | 401: rebuilt at the start |
@@ -230,6 +239,16 @@ Each is the behavior before 1.44.3, unchanged, with nothing new on screen:
   release promises.
 - **Two installs with one key** (only by copying the key): one install's
   Sign out ends the other's sign-in for the same person.
+- **A start that keeps failing** before it notes its version (a restart
+  loop, after an update from an older version): each restart backs up the
+  database and rebuilds the record, so the rows of sign-ins already gone
+  from `sessions` are lost (those people get one 401 at Sign out, as before
+  1.44.3), and after three restarts the copy from before the update is
+  pruned. Every copy left opens under 1.44.2, so rolling back still works.
+- **Going back to 1.44.3 from a later version that reshapes this table**
+  would stop it at start: later versions add columns to it and never rename
+  or drop them (no going back from a later version is promised before the
+  launch).
 
 ## 8. The ten gates
 
@@ -249,11 +268,15 @@ Each is the behavior before 1.44.3, unchanged, with nothing new on screen:
   contract is unchanged.
 - **FG-07 Performance and scale.** One indexed lookup on a remove that
   isn't signed in; one row written per device sign-in; one indexed update at
-  a renewed sign-in's first "seen"; one query at each start; one row per
+  a renewed sign-in's first "seen"; at each start, one pass over the sign-ins
+  that have a device (a window function: `sessions` has no index on
+  `device_id`), twice (the backup's check and the opening); one row per
   person per device.
 - **FG-08 Platform feasibility.** Python and SQLite as before; no
   dependency.
 - **FG-09 Verification.** `tests/test_signout_ends.py` (every path, the
   races, the predicate as a table, the fill and rebuild, backups, the
   census, the bare 500), the security suite, `upgrade_check`, the soak.
-- **FG-10 Operations.** The access log's line; no playback touched.
+- **FG-10 Operations.** The access log's line. Ending a person's sign-ins
+  on the device ends a play there; an app sends the remove only for its own
+  viewer's Sign out, so nothing playing is stopped that Sign out wouldn't.

@@ -56,7 +56,7 @@ OPEN_FOR_APPS = {
     "/api/internal/picker": "a linked device's picker: its key says which",
     "/api/internal/picker/choose": "picking someone there: its key, and their PIN or password",
     "/api/internal/picker/sign-in": "signing in there by name",
-    "/api/internal/picker/remove": "Sign out there: its key, and a sign-in of the person's there (1.44.3)",
+    "/api/internal/picker/remove": "Sign out there: its key, and a sign-in of theirs still good, or their newest there after it ended (1.44.3)",
     "/api/access/trusted-sign-in": "a trusted network's browser: where it comes from says who may",
     "/api/internal/trusted": "a trusted network's device: where it comes from says who may",
 }

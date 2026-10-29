@@ -346,7 +346,7 @@ OPEN = (
     # (A linked device's picker: its key, not a sign-in, says who may ask.)
     | {"/api/internal/picker", "/api/internal/picker/choose", "/api/internal/picker/sign-in"}
     # (Taking yourself off a device's picker: its key, and a sign-in of
-    # yours there, still good or your newest there after it ended, which the
+    # yours still good, or your newest there after it ended, which the
     # handler decides: see appapi.py, 1.44.3.)
     | {"/api/internal/picker/remove"}
     # (A trusted network's: where the request comes from says who may: see

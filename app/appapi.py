@@ -727,8 +727,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if token is None:
             raise HTTPException(401, access.SIGN_IN)
         if token.startswith(access.API_TOKEN_PREFIX):
-            refused = request.scope["state"].get("token_refused")
-            raise HTTPException(*(refused or (401, access.SIGN_IN)))
+            raise HTTPException(*request.scope["state"]["token_refused"])
         hashed = access.session_hash(token)
         user = access.signed_in(request)
         ended = user is None

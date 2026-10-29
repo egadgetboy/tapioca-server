@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import __version__
-from .db import changes_needed, copy_database
+from .db import changes_needed, copy_database, forget_device_sign_ins
 from .text import plain
 
 if TYPE_CHECKING:
@@ -394,6 +394,7 @@ def _put_in_place(data_dir: Path, staging: Path) -> None:
             _write_zip(folder / f"stationplay-before-restore-{_stamp()}.zip", data_dir, copy)
         prune(folder, "before-restore")
     _forget_alerts(staging / DB_NAME)
+    forget_device_sign_ins(staging / DB_NAME)
     for suffix in ("-wal", "-shm"):
         (data_dir / (DB_NAME + suffix)).unlink(missing_ok=True)
     os.replace(staging / DB_NAME, current)

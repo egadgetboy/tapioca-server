@@ -7,17 +7,30 @@ thing, while they're on that device's list. Nothing else."""
 
 from __future__ import annotations
 
+import ast
+import asyncio
 import contextlib
+import io
+import itertools
 import sqlite3
+import tempfile
+import threading
+import zipfile
 from pathlib import Path
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app import access
 from app import db as dbmod
+from app.config import Settings
 from app.db import Database
+from app.main import create_app
+from app.plex import PlexClient
 
+from .fakeplex import FakePlex
+from .test_backups import client_for, plex
 from .test_picker import (  # noqa: F401  # fmt: skip
     ADA,
     TV,
@@ -28,6 +41,7 @@ from .test_picker import (  # noqa: F401  # fmt: skip
     people,
     two_ports,
 )
+from .test_trusted import device_at, home
 
 PAT = {"name": "Pat", "password": "pat's long password"}
 PHONE = {"app": "tapiOca for Android", "deviceName": "Pat's phone"}
@@ -256,6 +270,150 @@ def test_a_database_error_is_never_hidden(app, tv_room, monkeypatch):
     assert "detail" not in got.text
 
 
+TIA = {"name": "Tia", "password": "tia's long password", "role": "user", "showOn": "signed-in"}
+
+
+def _listed_with_a_pin(admin, tv, key, who: dict, pin: str) -> int:
+    """Someone with a PIN on the TV's list (by their password, or for someone
+    with none, an invite code): their ID."""
+    made = admin.post("/api/access/users", json=who)
+    assert made.status_code == 201, made.text
+    who_id = made.json()["id"]
+    assert admin.put(f"/api/access/users/{who_id}/picker", json={"pin": pin}).status_code == 200
+    by = {"password": who["password"]} if "password" in who else {
+        "code": admin.post(f"/api/access/users/{who_id}/invite").json()["code"]
+    }  # fmt: skip
+    signed = tv.post("/api/internal/picker/sign-in", json={"name": who["name"], **by},
+                     headers=device(key))  # fmt: skip
+    assert signed.status_code == 200, signed.text
+    return who_id
+
+
+def _picked(tv, key, who_id: int, pin: str) -> str:
+    picked = tv.post(
+        "/api/internal/picker/choose", json={"id": who_id, "pin": pin}, headers=device(key)
+    )
+    assert picked.status_code == 200, picked.text
+    return picked.json()["token"]
+
+
+def test_a_new_pin_still_signs_out_here(tv_room):
+    # (P4: an Admin sets a new PIN, which ends the sign-ins the old one made.)
+    admin, tv, key, _ = tv_room
+    tia = _listed_with_a_pin(admin, tv, key, TIA, "4321")
+    t_pin = _picked(tv, key, tia, "4321")
+    assert admin.put(f"/api/access/users/{tia}/picker", json={"pin": "9876"}).status_code == 200
+    assert tv.get("/api/internal/me", headers=bearer(t_pin)).status_code == 401
+    assert remove(tv, key, t_pin).status_code == 200
+    assert "Tia" not in people(tv, key)
+
+
+def test_a_pin_removed_still_signs_out_here(tv_room):
+    # (P4: someone with no password, whose PIN an Admin removes.)
+    admin, tv, key, _ = tv_room
+    kids = _listed_with_a_pin(admin, tv, key, {"name": "Kids", "role": "user"}, "2468")
+    t_pin = _picked(tv, key, kids, "2468")
+    assert admin.put(f"/api/access/users/{kids}/picker", json={"pin": ""}).status_code == 200
+    assert tv.get("/api/internal/me", headers=bearer(t_pin)).status_code == 401
+    assert remove(tv, key, t_pin).status_code == 200
+    assert "Kids" not in people(tv, key)
+
+
+def test_full_sign_in_still_signs_out_here(app, tv_room):
+    # (P4: an Admin in Light sign-in picked with their PIN, then choosing Full,
+    # which ends the sign-ins their PIN made.)
+    admin, tv, key, _ = tv_room
+    ada = next(u.id for u in app.state.ctx.db.users() if u.name == "Ada")
+    assert admin.put(f"/api/access/users/{ada}/picker", json={"pin": "1357"}).status_code == 200
+    light = {"how": "light", "password": ADA["password"]}
+    assert admin.put("/api/access/me/sign-in", json=light).status_code == 200
+    t_pin = _picked(tv, key, ada, "1357")
+    full = {"how": "full", "password": ADA["password"]}
+    assert admin.put("/api/access/me/sign-in", json=full).status_code == 200
+    assert tv.get("/api/internal/me", headers=bearer(t_pin)).status_code == 401
+    assert remove(tv, key, t_pin).status_code == 200
+    assert "Ada" not in people(tv, key)
+
+
+def test_the_twenty_first_sign_in_still_signs_out_here(app, tv_room):
+    # (P6: their 21st sign-in ends their oldest, the TV's.)
+    _, tv, key, _ = tv_room
+    t1 = pat_on(tv, key)
+    for n in range(access.SESSIONS_KEPT):
+        more = {**PAT, "app": "tapiOca for Android", "deviceName": f"Phone {n}"}
+        assert TestClient(app).post("/api/internal/sign-in", json=more).status_code == 200
+    assert tv.get("/api/internal/me", headers=bearer(t1)).status_code == 401
+    assert remove(tv, key, t1).status_code == 200
+    assert people(tv, key) == ["Ada"]
+
+
+def test_an_admin_ending_it_or_its_pruning_still_signs_out_here(app, tv_room):
+    # (P7: an Admin ends the TV's sign-in by its ID; then, signed in again,
+    # it goes unused past SESSION_DAYS and is pruned. A trusted network
+    # forgotten unlinks the devices it linked, which is P20.)
+    admin, tv, key, _ = tv_room
+    for end in ("by its ID", "pruned"):
+        token = pat_on(tv, key)
+        with sqlite3.connect(Path(app.state.ctx.db.path)) as c:
+            if end == "by its ID":
+                rowid = c.execute(
+                    "SELECT rowid FROM sessions WHERE token_hash = ?", (access.session_hash(token),)
+                ).fetchone()[0]
+            else:
+                c.execute(
+                    "UPDATE sessions SET seen_ms = 0 WHERE token_hash = ?",
+                    (access.session_hash(token),),
+                )
+        if end == "by its ID":
+            assert admin.delete(f"/api/access/apps/{rowid}").status_code == 204
+        else:
+            app.state.ctx.db.forget_sessions_before(
+                access._now() - access.SESSION_DAYS * 86_400_000
+            )
+        assert tv.get("/api/internal/me", headers=bearer(token)).status_code == 401, end
+        assert remove(tv, key, token).status_code == 200, end
+        assert people(tv, key) == ["Ada"], end
+
+
+def test_a_remove_racing_a_pick(app, tv_room, monkeypatch):
+    # (R2, a known limit, as with a sign-in still good: the pick read them
+    # listed, the remove takes them off, and the pick's sign-in follows, so
+    # they're signed in on the device but off its list until they sign out.)
+    admin, tv, key, pat_id = tv_room
+    t1 = pat_on(tv, key)
+    assert admin.put(f"/api/access/users/{pat_id}/picker", json={"pin": "4321"}).status_code == 200
+    phone_password_change(app)
+    checking, go = threading.Event(), threading.Event()
+    devices = app.state.ctx.devices
+    real = devices._check_pin
+
+    async def held(*args, **kwargs):
+        checking.set()
+        while not go.is_set():
+            await asyncio.sleep(0.01)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(devices, "_check_pin", held)
+    answers: dict[str, object] = {}
+
+    def pick() -> None:
+        answers["pick"] = tv.post(
+            "/api/internal/picker/choose", json={"id": pat_id, "pin": "4321"}, headers=device(key)
+        )
+
+    worker = threading.Thread(target=pick)
+    worker.start()
+    assert checking.wait(10)
+    assert remove(tv, key, t1).status_code == 200
+    go.set()
+    worker.join(10)
+    assert not worker.is_alive()
+    picked = answers["pick"]
+    assert picked.status_code == 200, picked.text
+    assert people(tv, key) == ["Ada"]
+    assert tv.get("/api/internal/me", headers=bearer(picked.json()["token"])).status_code == 200
+
+
 # The record itself ------------------------------------------------------------------
 
 
@@ -314,22 +472,63 @@ def test_an_older_version_having_run_rebuilds_the_table(tmp_path):
 
 
 def test_a_file_without_meta_never_stops_a_start(tmp_path):
+    # (The table there, but no meta: the rule reads meta only when there is one.)
     path = tmp_path / "bare.db"
     with sqlite3.connect(path) as c:
-        c.execute("CREATE TABLE stations (id INTEGER PRIMARY KEY)")
-    dbmod.changes_needed(path)
+        c.execute("CREATE TABLE device_sign_ins (device_id INTEGER, user_id INTEGER, "
+                  "session_hash TEXT, renewed_from TEXT)")  # fmt: skip
+    assert "device sign-ins rebuilt" in dbmod.changes_needed(path)
+
+
+def _naming_the_record(tree: ast.Module) -> set[str]:
+    """The module's names whose code (never their docstrings) says
+    device_sign_ins: a constant's, a function's or a class's method's."""
+    found: set[str] = set()
+
+    def visit(node: ast.AST, scope: str) -> None:
+        body = getattr(node, "body", [])
+        skip = body[0] if body and isinstance(body[0], ast.Expr) else None
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                visit(child, f"{scope}{child.name}" if not scope else f"{scope}.{child.name}")
+            elif child is not skip and any(
+                isinstance(n, ast.Constant)
+                and isinstance(n.value, str)
+                and "device_sign_ins" in n.value
+                for n in ast.walk(child)
+            ):
+                targets = getattr(child, "targets", None) or [getattr(child, "target", None)]
+                names = [t.id for t in targets if isinstance(t, ast.Name)]
+                found.add(scope or names[0])
+
+    visit(tree, "")
+    return found
 
 
 def test_only_the_remove_reads_the_record():
-    # (§2's census, in app/: the schema, the rule, the fill, add_session, seen,
-    # the remove's method and the live path's forgetting, and copy_database.)
-    allowed = {"db.py"}
-    found = {
+    # (§2's census: in app/, the table is named in SQL only in these places of
+    # db.py, so a new reader can't be added without changing this test.)
+    root = Path(__file__).resolve().parent.parent / "app"
+    elsewhere = {
         p.name
-        for p in (Path(__file__).resolve().parent.parent / "app").rglob("*.py")
-        if "device_sign_ins" in p.read_text()
+        for p in root.rglob("*.py")
+        if p.name != "db.py" and _naming_the_record(ast.parse(p.read_text()))
     }
-    assert found == allowed, found
+    assert elsewhere == set()
+    assert _naming_the_record(ast.parse((root / "db.py").read_text())) == {
+        "SCHEMA",
+        "FILLED_META",
+        "_UNROWED",
+        "copy_database",
+        "forget_device_sign_ins",
+        "changes_needed",
+        "Database.__post_init__",
+        "Database._upgrade",
+        "Database.add_session",
+        "Database.seen",
+        "Database.remove_by_ended_sign_in",
+        "Database._take_off",
+    }
 
 
 # The rest of §4's paths -------------------------------------------------------------
@@ -410,7 +609,7 @@ def test_once_off_the_list_the_same_remove_finds_no_one(app, tv_room):
     phone_password_change(app)
     assert remove(tv, key, t1).status_code == 200
     assert remove(tv, key, t1).status_code == 401
-    assert _rows(app) == [] or all(row[1] != tv_room[3] for row in _rows(app))
+    assert all(row[1] != tv_room[3] for row in _rows(app))
 
 
 def test_the_record_goes_with_its_person_and_its_device(app, tv_room):
@@ -438,8 +637,6 @@ def test_signing_in_off_is_said_as_today(app):
 
 def test_two_removes_at_once_remove_once(app, tv_room):
     # (R1: one transaction under the database's lock.)
-    import threading
-
     _, tv, key, _ = tv_room
     t1 = pat_on(tv, key)
     phone_password_change(app)
@@ -463,48 +660,43 @@ def test_two_removes_at_once_remove_once(app, tv_room):
 
 def test_a_remove_while_a_password_change_is_being_checked(app, tv_room, monkeypatch):
     # (R3, a known limit: removed; the password then makes a sign-in on this
-    # device for someone off its list, held by no one.)
-    import threading
-    import time as _time
-
+    # device for someone off its list, held by no one, which doesn't list them.)
     _, tv, key, _ = tv_room
     t1 = pat_on(tv, key)
     checking, go = threading.Event(), threading.Event()
     real = app.state.ctx.access.check_password
 
     async def held(*args, **kwargs):
-        import asyncio
-
         checking.set()
         while not go.is_set():
             await asyncio.sleep(0.01)
         return await real(*args, **kwargs)
 
     monkeypatch.setattr(app.state.ctx.access, "check_password", held)
-    answers: dict[str, int] = {}
+    answers: dict[str, object] = {}
 
     def change() -> None:
         answers["password"] = tv.post(
             "/api/internal/password",
             json={"current": PAT["password"], "new": "a brand new password"},
             headers=bearer(t1),
-        ).status_code
+        )
 
     worker = threading.Thread(target=change)
     worker.start()
     assert checking.wait(10)
-    answers["remove"] = remove(tv, key, t1).status_code
+    assert remove(tv, key, t1).status_code == 200
     go.set()
     worker.join(10)
-    _time.sleep(0)
-    assert answers["remove"] == 200
+    assert not worker.is_alive()
+    changed = answers["password"]
+    assert changed.status_code == 200, changed.text
+    assert tv.get("/api/internal/me", headers=bearer(changed.json()["token"])).status_code == 200
     assert people(tv, key) == ["Ada"]
 
 
 def test_the_same_ended_sign_in_is_refused_on_every_other_route(app, tv_room):
     # (§3, rule 1, every route the apps use, and the API's: the Gate's 401.)
-    from fastapi.routing import APIRoute
-
     _, tv, key, _ = tv_room
     t1 = pat_on(tv, key)
     phone_password_change(app)
@@ -527,19 +719,23 @@ def test_the_same_ended_sign_in_is_refused_on_every_other_route(app, tv_room):
 
 
 def test_a_networks_device_away_from_its_network_is_refused_first(tmp_path):
-    # (P21: this_device's 403, as today; the person comes off on that network.)
-    from .test_trusted import device_at, home
-
+    # (P21: this_device's 403, before any sign-in is read, and the record is
+    # unchanged. A device a network linked stays bound to it only until someone
+    # signs in on it by name or code, so no one is on its list while it's
+    # bound: what's sent is the household's real sign-in, the family room TV's.)
     gen = home.__wrapped__(tmp_path)
     made = next(gen)
     try:
+        tv = device_at(made, "192.168.1.60")
+        token = tv.post("/api/internal/trusted", json={"app": "TV"}).json()["token"]
         tablet = device_at(made, "192.168.1.61")
         key = tablet.post("/api/internal/trusted", json={"app": "Tablet", "picker": True}).json()[
             "deviceKey"
         ]
+        before = _rows(made)
         away = device_at(made, "192.168.20.5", stationplay_device=key)
-        sent = away.post(REMOVE, headers=bearer("anything"))
-        assert sent.status_code == 403
+        assert away.post(REMOVE, headers=bearer(token)).status_code == 403
+        assert _rows(made) == before
     finally:
         with contextlib.suppress(StopIteration):
             next(gen)
@@ -665,12 +861,6 @@ def test_a_doubled_or_orphaned_sign_in_never_breaks_the_fill(app, tv_room):
 
 
 def test_two_starts_make_one_before_update_copy_and_keep_the_record(tmp_path):
-    from app.config import Settings
-    from app.main import create_app
-    from app.plex import PlexClient
-
-    from .fakeplex import FakePlex
-
     def started():
         settings = Settings(
             plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data"
@@ -697,3 +887,104 @@ def test_two_starts_make_one_before_update_copy_and_keep_the_record(tmp_path):
     copies = list((tmp_path / "data").rglob("before-*.db"))
     assert len(copies) == 1, copies
     assert _table(path)
+
+
+def test_a_sign_in_gone_before_the_update_finds_no_one(app, tv_room):
+    # (P17: pruned while 1.44.2 ran, so the fill at the update can't know it.)
+    _, tv, key, _ = tv_room
+    t1 = pat_on(tv, key)
+    path = Path(app.state.ctx.db.path)
+    _as_if_1_44_2_ran(path)
+    with sqlite3.connect(path) as c:
+        c.execute("DELETE FROM sessions WHERE token_hash = ?", (access.session_hash(t1),))
+    Database(path).close()
+    assert remove(tv, key, t1).status_code == 401
+    assert people(tv, key) == ["Ada", "Pat"]
+
+
+def _record(path: Path) -> tuple:
+    with sqlite3.connect(path) as c:
+        there = c.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'device_sign_ins'"
+        ).fetchone()
+        rows = (
+            c.execute("SELECT * FROM device_sign_ins ORDER BY device_id, user_id").fetchall()
+            if there
+            else None
+        )
+        mark = c.execute("SELECT value FROM meta WHERE key = ?", (dbmod.FILLED_META,)).fetchone()
+    return rows, mark
+
+
+@pytest.mark.parametrize(
+    ("version", "table", "mark", "unrowed"),
+    [
+        (version, True, mark, unrowed)
+        for version, mark, unrowed in itertools.product(
+            ["", "1.33.9", "1.44.2", "1.44.3", "1.45.0", "junk"], [True, False], [True, False]
+        )
+    ]
+    + [(version, False, False, False) for version in ["", "1.44.2", "1.44.3"]],
+)
+def test_changes_needed_and_the_start_agree_on_real_files(
+    app, tv_room, version, table, mark, unrowed
+):
+    # (§2: the backup is made exactly when the start changes the record: a
+    # sentinel row (Ada's, with no sign-in on the TV) shows whether it did.)
+    _, tv, key, pat_id = tv_room
+    pat_on(tv, key)
+    path = Path(app.state.ctx.db.path)
+    with sqlite3.connect(path) as c:
+        ada = c.execute("SELECT id FROM users WHERE name = 'Ada'").fetchone()[0]
+        c.execute("DELETE FROM sessions WHERE user_id = ? AND device_id IS NOT NULL", (ada,))
+        c.execute(
+            "INSERT OR REPLACE INTO device_sign_ins (device_id, user_id, session_hash) "
+            "VALUES (?, ?, 'sentinel')",
+            (_tv_id(app), ada),
+        )
+        if not mark:
+            c.execute("DELETE FROM meta WHERE key = ?", (dbmod.FILLED_META,))
+        if unrowed:
+            c.execute("DELETE FROM device_sign_ins WHERE user_id = ?", (pat_id,))
+        if not table:
+            c.execute("DROP TABLE device_sign_ins")
+        c.execute("DELETE FROM meta WHERE key = 'version_started'")
+        if version:
+            c.execute("INSERT INTO meta (key, value) VALUES ('version_started', ?)", (version,))
+    said = dbmod.changes_needed(path)
+    before = _record(path)
+    Database(path).close()
+    assert bool(said) == (_record(path) != before), (said, before, _record(path))
+
+
+def test_a_restored_backup_brings_back_no_rows(tmp_path):
+    # (A backup another version made of an updated database may hold rows it
+    # never kept up, and say a version the rule can't tell from 1.44.3's: a
+    # restore forgets them as it puts the backup in place.)
+    data = tmp_path / "data"
+    with client_for(data, plex()) as client:
+        name = client.post("/api/backups").json()["name"]
+        backup = client.get(f"/api/backups/{name}").content
+    with tempfile.TemporaryDirectory() as folder:
+        copy = Path(folder) / "stationplay.db"
+        with zipfile.ZipFile(io.BytesIO(backup)) as z:
+            copy.write_bytes(z.read("stationplay.db"))
+            files = {n: z.read(n) for n in z.namelist() if n != "stationplay.db"}
+        with contextlib.closing(sqlite3.connect(copy)) as c, c:
+            c.execute(
+                "INSERT INTO device_sign_ins (device_id, user_id, session_hash) VALUES (1, 1, 'old')"
+            )
+            c.execute(
+                "INSERT INTO meta (key, value) VALUES ('version_started', '1.45.0') "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            )
+        made = io.BytesIO()
+        with zipfile.ZipFile(made, "w") as z:
+            z.writestr("stationplay.db", copy.read_bytes())
+            for n, content in files.items():
+                z.writestr(n, content)
+    with client_for(data, plex()) as client:
+        assert client.post("/api/restore", content=made.getvalue()).status_code == 200
+    with client_for(data, plex()):
+        pass
+    assert _table(data / "stationplay.db") == []
