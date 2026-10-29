@@ -41,7 +41,25 @@ GATE_REFUSALS = {
     access.ADMIN_PASSWORD_NEEDED,
     access.WATCHING_ONLY,
 }
-CLASSES = {"public", "tuner", "capability", "watcher", "user", "admin"}
+CLASSES = {"public", "tuner", "capability", "device", "watcher", "user", "admin"}
+# What the Gate lets through to tapiOca's apps with no sign-in it takes, each with why (access.OPEN,
+# beside the page's own files and the tuner's): adding to it is a security decision, made here on purpose.
+OPEN_FOR_APPS = {
+    "/api/internal/reach": "the reach check: says nothing unless asked with the value it waits for",
+    "/api/access/sign-in": "signing in",
+    "/api/access/sign-out": "signing out of a browser",
+    "/api/access/pin-sign-in": "signing in with a PIN, on a browser that's someone's",
+    "/api/access/browser/forget": "Remove from this browser: its own cookie says which",
+    "/api/internal/sign-in": "an app signing in",
+    "/api/internal/link": "an app asking for a code to link with",
+    "/api/internal/link/check": "an app asking whether its code was entered",
+    "/api/internal/picker": "a linked device's picker: its key says which",
+    "/api/internal/picker/choose": "picking someone there: its key, and their PIN or password",
+    "/api/internal/picker/sign-in": "signing in there by name",
+    "/api/internal/picker/remove": "Sign out there: its key, and a sign-in of the person's there (1.44.3)",
+    "/api/access/trusted-sign-in": "a trusted network's browser: where it comes from says who may",
+    "/api/internal/trusted": "a trusted network's device: where it comes from says who may",
+}
 
 
 # (A device at home, as tapiOca's page asks: the module's tapiOca is made before the tests' own fixtures run.)
@@ -147,6 +165,18 @@ def test_each_route_lets_in_exactly_whom_its_class_says(world, route):
         ):
             assert not _refused_by_gate(answer), f"{route} ({cls}) refused {name}: {answer}"
         return
+    if cls == "device":
+        # (The key is asked first: with none, a sign-in or a made-up token gets the same 401.)
+        for name, answer in (
+            ("no sign-in", nobody),
+            ("a made-up token", forged),
+            ("the Kid", kid),
+            ("an Admin", admin),
+        ):
+            assert answer[0] == 401, (
+                f"{route} (device) let in {name} with no device's key: {answer}"
+            )
+        return
     if cls == "capability":
         # (A made-up session or key is never let in, by anyone: its address is what lets a player in.)
         # (Leaving with a made-up address does nothing and says so with 204: there's no one there to leave.
@@ -173,3 +203,82 @@ def test_each_route_lets_in_exactly_whom_its_class_says(world, route):
     elif cls == "watcher":
         assert not _refused_by_gate(user), f"{route} (watcher) refused a User: {user}"
         assert not _refused_by_gate(kid), f"{route} (watcher) refused a Kid: {kid}"
+
+
+def test_the_gates_open_list_is_exactly_what_it_should_be():
+    assert set(access.OPEN) == access.PAGE | access.FOR_PLEX | set(OPEN_FOR_APPS)
+
+
+def test_every_signed_in_class_is_gated_and_every_device_route_is_open():
+    # (A device route's handler answers 401 itself, which would pass a watcher's checks: so its
+    # place in the Gate's open list is checked here, both ways. The 1.44.3 design audit's SO-D2-03.)
+    for route, (cls, _) in MATRIX.items():
+        path = route.split(" ", 1)[1]
+        if cls in ("watcher", "user", "admin"):
+            assert path not in access.OPEN, f"{route} ({cls}) is open at the Gate"
+        if cls == "device":
+            assert path in access.OPEN, f"{route} (device) isn't open at the Gate"
+
+
+@pytest.fixture
+def tv(tmp_path):
+    """Sam on a linked TV, with an older sign-in there and their newest; and a Den Roku of
+    theirs too: the app, the TV's key, the Den's, Sam's sign-ins (older, newest, the Den's) and
+    an Admin's page."""
+    settings = Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data")
+    app = create_app(
+        settings, PlexClient("http://plex.test", "token", transport=LibraryPlex().transport())
+    )
+    with _client(app) as admin:
+        assert admin.post("/api/access/users", json=ADA).status_code in (200, 201)
+        assert admin.post("/api/access/sign-in", json=ADA).status_code == 200
+        sam = admin.post("/api/access/users", json={**SAM, "showOn": "signed-in"})
+        assert sam.status_code in (200, 201)
+
+        def linked(name: str) -> str:
+            made = _client(app).post(
+                "/api/internal/sign-in",
+                json={**ADA, "app": "Roku", "deviceName": name, "picker": True},
+            )
+            return made.json()["deviceKey"]
+
+        def picked(key: str) -> str:
+            got = _client(app).post(
+                "/api/internal/picker/sign-in",
+                json={"name": SAM["name"], "password": SAM["password"]},
+                headers={"StationPlay-Device": key},
+            )
+            assert got.status_code == 200, got.text
+            return got.json()["token"]
+
+        tv_key, den_key = linked("Living Room"), linked("Den")
+        older, newest, den = picked(tv_key), picked(tv_key), picked(den_key)
+        phone = _token(app, {**SAM, "app": "Phone", "deviceName": "Sam's phone"})
+        changed = _client(app).post(
+            "/api/internal/password",
+            json={"current": SAM["password"], "new": "a brand new long password"},
+            headers={"Authorization": f"Bearer {phone}"},
+        )
+        assert changed.status_code == 200, changed.text
+        yield app, admin, tv_key, {"older": older, "newest": newest, "den": den}
+
+
+def test_a_device_route_takes_only_its_own_devices_newest_sign_in(tv):
+    # (The security suite's device class, 1.44.3: each with the TV's key.)
+    app, admin, tv_key, signed = tv
+    script = admin.post("/api/api-tokens", json={"name": "Script", "scope": "viewer"})
+    assert script.status_code in (200, 201), script.text
+
+    def remove(token: str | None) -> int:
+        headers = {"StationPlay-Device": tv_key}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return _client(app).post("/api/internal/picker/remove", headers=headers).status_code
+
+    assert remove(None) == 401
+    assert remove(secrets.token_urlsafe(32)) == 401
+    assert remove(script.json()["token"]) == 403
+    assert remove(signed["den"]) == 401
+    assert remove(signed["older"]) == 401
+    assert remove(signed["newest"]) == 200
+    assert remove(signed["newest"]) == 401

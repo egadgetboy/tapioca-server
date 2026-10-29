@@ -7,6 +7,8 @@ The classes:
 - public: anyone, signed in or not (the page, signing in, linking).
 - tuner: the home network's tuner for Plex and Jellyfin (home only, by Tuner access).
 - capability: an address of its own lets a player in (/play/<session>/, /hls/k/<key>/); a made-up one is 404.
+- device: a linked device's key says which device, and the handler decides whose sign-in may act there,
+  one still good or its person's newest there after it ended (open at the Gate; the remove, 1.44.3).
 - watcher: anyone signed in, a limited Viewing Level included.
 - user: anyone signed in whose Level lets them make or change Stations.
 - admin: an Admin only.
@@ -121,7 +123,7 @@ MATRIX: dict[str, tuple[str, str]] = {
     "POST /api/internal/password": ("watcher", "/api/internal/password"),
     "GET /api/internal/picker": ("public", "/api/internal/picker"),
     "POST /api/internal/picker/choose": ("public", "/api/internal/picker/choose"),
-    "POST /api/internal/picker/remove": ("watcher", "/api/internal/picker/remove"),
+    "POST /api/internal/picker/remove": ("device", "/api/internal/picker/remove"),
     "POST /api/internal/picker/sign-in": ("public", "/api/internal/picker/sign-in"),
     "POST /api/internal/pin": ("watcher", "/api/internal/pin"),
     "POST /api/internal/play": ("watcher", "/api/internal/play"),

@@ -643,6 +643,9 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
 
     # 14) PINs and passwords from the apps: only one's own, as the rules say.
     await _own_pin_and_password(checks, app, home, net, admin_h, sam_h, kit_h, device_key)
+    # 14b) Sign out with a sign-in that has ended: it still takes its own
+    # person off its own device, and does nothing else (1.44.3).
+    await _signout_ends(checks, home, admin_h, device_key)
 
     # 15) Admin alerts, and the web address they're sent to: only for Admins.
     await _alerts_and_notify(checks, app, home, net, admin_h, sam_h, kit_h)
@@ -1089,6 +1092,78 @@ async def _picker_away(checks: Checks, app, home: str, net: str, device_key: str
         plain = await out.get("/api/internal/picker", headers={"X-Forwarded-Proto": "http"})
         checks.ok(plain.status_code == 403, "the picker away from home needs HTTPS",
                   f"got {plain.status_code}")  # fmt: skip
+
+
+async def _signout_ends(checks: Checks, home: str, admin_h: dict, other_key: str) -> None:
+    """POST /api/internal/picker/remove with a sign-in tapiOca has ended (a
+    password changed on another device): every other route refuses it, as
+    does another device's key and an API token; with its own device's key it
+    takes its own person off that device's list, once (1.44.3)."""
+    checks.section("Sign out, with a sign-in that has ended")
+    quinn = {"name": "Quinn", "password": "quinn's own long password"}
+    hall_roku = {**ADMIN, "picker": True, "app": "Roku", "deviceName": "Hall"}
+    phone = {**quinn, "app": "Phone", "deviceName": "Quinn's phone"}
+    remove = "/api/internal/picker/remove"
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
+        made = await c.post(
+            "/api/access/users",
+            headers=admin_h,
+            json={**quinn, "role": "user", "showOn": "signed-in"},
+        )
+        linked = (await c.post("/api/internal/sign-in", json=hall_roku)).json()
+        key = {"StationPlay-Device": linked["deviceKey"]}
+        picked = await c.post("/api/internal/picker/sign-in", json=quinn, headers=key)
+        old = picked.json()["token"]
+        on_phone = (await c.post("/api/internal/sign-in", json=phone)).json()["token"]
+        changed = await c.post(
+            "/api/internal/password",
+            headers={"Authorization": f"Bearer {on_phone}"},
+            json={"current": quinn["password"], "new": "quinn's newer long password"},
+        )
+        checks.ok(
+            made.status_code == 201 and changed.status_code == 200,
+            "Quinn, signed in on the Hall Roku, changed their password on their phone",
+            f"{made.status_code} {changed.status_code}",
+        )
+        ended = {"Authorization": f"Bearer {old}"}
+        elsewhere = (
+            ("GET", "/api/internal/me"),
+            ("GET", "/api/internal/home"),
+            ("GET", "/api/v1/stations"),
+            ("POST", "/api/internal/play"),
+            ("POST", "/api/internal/sign-out"),
+            ("POST", "/api/internal/pin"),
+            ("POST", "/api/internal/password"),
+        )
+        for method, path in elsewhere:
+            body = {} if method == "POST" else None
+            r = await c.request(method, path, headers={**key, **ended}, json=body)
+            checks.ok(
+                r.status_code == 401,
+                f"the ended sign-in can't {method} {path}",
+                f"got {r.status_code}",
+            )
+        r = await c.post(remove, headers={"StationPlay-Device": other_key, **ended})
+        checks.ok(r.status_code == 401, "nor take Quinn off another device", f"got {r.status_code}")
+        script = await c.post(
+            "/api/api-tokens", headers=admin_h, json={"name": "Quinn's script", "scope": "viewer"}
+        )
+        api = {"Authorization": f"Bearer {script.json()['token']}"}
+        r = await c.post(remove, headers={**key, **api})
+        checks.ok(r.status_code == 403, "nor an API token", f"got {r.status_code}")
+        r = await c.post(remove, headers={**key, "Authorization": "Bearer made-up"})
+        checks.ok(r.status_code == 401, "nor a made-up sign-in", f"got {r.status_code}")
+        r = await c.post(remove, headers={**key, **ended})
+        people = (await c.get("/api/internal/picker", headers=key)).json()["people"]
+        listed = [p["name"] for p in people]
+        checks.ok(
+            r.status_code == 200 and "Quinn" not in listed,
+            "with the Hall Roku's own key, Quinn's ended sign-in takes Quinn off it",
+            f"got {r.status_code}, listed {listed}",
+        )
+        r = await c.post(remove, headers={**key, **ended})
+        checks.ok(r.status_code == 401, "once", f"got {r.status_code}")
+        await c.delete(f"/api/access/users/{made.json().get('id')}", headers=admin_h)
 
 
 async def _own_pin_and_password(
