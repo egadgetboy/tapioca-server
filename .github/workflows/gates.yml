@@ -31,6 +31,8 @@ jobs:
       - name: The gates
         env:
           GH_TOKEN: ${{ github.token }}
+          # (A Class D manifest's readiness record is checked against the plan.)
+          PLAN_READ_TOKEN: ${{ secrets.PLAN_READ_TOKEN }}
         run: |
           python3 tools/release_gate.py --fetch-only  # (the history and tags: the checks below compare with them)
           python3 tools/release_gate.py lint

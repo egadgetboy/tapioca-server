@@ -987,3 +987,15 @@ def test_the_checks_own_tests_print_as_text(tmp_path):
     )
     assert failed.returncode != 0
     assert failed.stdout.splitlines()[-1].startswith("::error::")
+
+
+def test_the_gates_lint_reads_the_plan_for_a_class_d_release():
+    """A Class D manifest's readiness record is checked against the plan, which
+    only PLAN_READ_TOKEN reads: the gates' step that lints every manifest has
+    it (1.44.3, the first server Class D release under the gate, found it
+    missing)."""
+    text = (ROOT / ".github" / "workflows" / "gates.yml").read_text()
+    steps = re.split(r"\n      - (?=name:|uses:)", text)
+    linting = [step for step in steps if "release_gate.py lint" in step]
+    assert len(linting) == 1
+    assert "PLAN_READ_TOKEN: ${{ secrets.PLAN_READ_TOKEN }}" in linting[0]
