@@ -451,18 +451,23 @@ def test_media_on_a_big_folder_answers_in_time_and_keeps_what_plex_said(tmp_path
         took = time.monotonic() - started
         partly = sum(titles.tags(k) is not None for k in big)
         await titles.ensure(big, wait_s=0.0)  # (a second answer meanwhile: nothing asked twice)
-        started = time.monotonic()
+        asked_before_small = len(asked)
         await titles.ensure(small, wait_s=0.8)
-        small_took = time.monotonic() - started
         small_known = all(titles.tags(k) is not None for k in small)
         await asyncio.sleep(2.0)  # (the rest carries on, and is kept)
-        return took, partly, small_took, small_known
+        return took, partly, asked_before_small, small_known
 
-    took, partly, small_took, small_known = asyncio.run(run())
+    took, partly, asked_before_small, small_known = asyncio.run(run())
     assert took < 0.38 and partly == 2 * titles_module.ENSURE_AT_ONCE  # (two batches back in time)
     # (Behind at most what was already going and one batch of the rest: the
-    # same big folder asked for again didn't go ahead of it.)
-    assert small_known and small_took < 0.55
+    # same big folder asked for again put one batch ahead, and its rest waits
+    # its turn a batch at a time, so of the batches asked after the small
+    # folder was, at most those two went first; and it was answered within
+    # its 0.8 s. Counted in batches, not timed: a clock here measured the
+    # test machine, 1.44.3's candidate on a busy CI runner.)
+    then = asked[asked_before_small:]
+    small_first = next(n for n, batch in enumerate(then) if batch[0].startswith("s"))
+    assert small_known and small_first <= 2, then[: small_first + 1]
     assert all(titles.tags(k) == NO_TAGS for k in big if k != "599")
     flat = [k for batch in asked for k in batch]
     assert sorted(flat) == sorted([*big, *small]) and len(flat) == len(set(flat))  # (each once)
