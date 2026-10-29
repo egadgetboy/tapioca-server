@@ -7,22 +7,21 @@
 
 > [!WARNING]
 > ## tapiOca is in BETA
-> Features are still being added and changed. Some of what this README describes hasn't shipped yet, and things may break between versions. **For testing only.**
+> Features are still being added and changed, and things may break between versions. **For testing only.** Features are being rolled out across releases toward 1.0: what's under [Coming toward 1.0](#coming-toward-10) hasn't shipped yet.
 
 # tapiOca: Stations & Media
 
-tapiOca was called StationPlay until version 1.34.0.
+**All your movies, shows and music, and your very own TV.**
 
-tapiOca turns your own movies and shows, in Plex or in folders tapiOca reads itself, into always-on TV stations. Pick some shows or movies, give the station a number and a name, and it plays them around the clock like a broadcast station. It comes with a program guide. You can also add commercials, station IDs, a corner logo, movie nights and Saturday-morning blocks.
+tapiOca is a media server you run at home and truly own. It turns your own movies and shows into live, always-on Stations with a real on-screen guide, and plays any of them on demand from Media. You watch in tapiOca's apps, on your TV, phone and tablet (in testing now). There's no subscription, no cloud account and no ads. Music, playlists and audiobooks are on the way (see [Coming toward 1.0](#coming-toward-10)).
 
-Watch them in tapiOca's own apps, in Jellyfin, Emby or Kodi, in Plex's **Live TV** guide on every Plex app (Plex sees tapiOca as an HDHomeRun network tuner), or in other apps on your home network.
-
-tapiOca is free, open source and self-hosted (see [License](#license)). It runs in Docker on your own hardware and gets everything from your Plex server, or straight from [folders tapiOca reads itself](#media-folders-tapioca-reads-itself), with no Plex at all. It needs no outside accounts or cloud services. It can tell you when a new version is out, if an Admin says yes: every 4 hours it asks GitHub, which sees your server's internet address, as any website does (see [Updating](#updating)).
+The server is free and open source (see [License](#license)). It runs in Docker on your own hardware, and nothing outside your home is required. It reads your folders itself, so it's complete on its own, and it works beside Plex if you have it.
 
 If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadgetboy).
 
 ## Contents
 
+- [What tapiOca does](#what-tapioca-does): [Available now](#available-now) · [Coming toward 1.0](#coming-toward-10) · [Private by design](#private-by-design) · [tapiOca and Plex](#tapioca-and-plex)
 - [What you need](#what-you-need)
 - [Install](#install): [TrueNAS SCALE](#truenas-scale) · [Docker Compose (Linux, Proxmox, Raspberry Pi)](#docker-compose-linux-proxmox-raspberry-pi) · [Synology](#synology) · [Unraid](#unraid) · [Windows and macOS](#windows-and-macos) · [docker run](#docker-run)
 - [GPU encoding](#gpu-encoding) · [Backups](#backups) · [How tapiOca reads your files](#how-tapioca-reads-your-files) · [Security and remote access](#security-and-remote-access)
@@ -31,20 +30,69 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [Reaching tapiOca from outside your home](#reaching-tapioca-from-outside-your-home): a VPN, a reverse proxy, or a Cloudflare Tunnel
 - [First-time setup](#first-time-setup): [The INFO station](#the-info-station)
 - [Media folders tapiOca reads itself](#media-folders-tapioca-reads-itself): shows and movies straight from your folders, with or without Plex
-- [Making stations](#making-stations)
-- [How stations play](#how-stations-play)
+- [Making stations](#making-stations): [Filters](#filters) · [Stations from Plex collections](#stations-from-plex-collections) · [Smart stations](#smart-stations)
+- [How stations play](#how-stations-play): picture, tuners, schedules, updates, skipping intros and credits, sound, the guide
 - [Station features](#station-features): logos, corner logo, Up Next Banner, Station ID card, commercials, Intro Bumper, subtitles, specials
 - [Keeping stations on the air](#keeping-stations-on-the-air): safeguards, the Broken files list, file checks, Sonarr and Radarr, people's reports
-- [Who can use tapiOca](#who-can-use-tapioca): [Trusted networks](#trusted-networks) · [Trusted proxies](#trusted-proxies) · [Names for tapiOca at home](#names-for-tapioca-at-home) · [Doors left open](#doors-left-open) · [When tapiOca can't see where connections come from](#when-tapioca-cant-see-where-connections-come-from) · [Viewing Levels](#viewing-levels) · [Parental limits](#parental-limits-what-tapioca-enforces-and-what-it-cant) · [Linked devices and Who's tuning in?](#linked-devices-and-whos-tuning-in) · [Tuner access](#tuner-access)
+- [Who can use tapiOca](#who-can-use-tapioca): [Trusted networks](#trusted-networks) · [Trusted proxies](#trusted-proxies) · [Names for tapiOca at home](#names-for-tapioca-at-home) · [Doors left open](#doors-left-open) · [When tapiOca can't see where connections come from](#when-tapioca-cant-see-where-connections-come-from) · [Viewing Levels](#viewing-levels) · [Parental limits](#parental-limits-what-tapioca-enforces-and-what-it-cant) · [Linked devices and Who's tuning in?](#linked-devices-and-whos-tuning-in) · [Blocking stations for some Plex users](#blocking-stations-for-some-plex-users) · [Tuner access](#tuner-access)
 - [Stats](#stats) · [tapiOca's API](#tapiocas-api) · [Settings](#settings) · [Troubleshooting](#troubleshooting) · [Development](#development)
 - [Contributing](#contributing) · [Forks and credit](#forks-and-credit) · [License](#license)
 
+## What tapiOca does
+
+### Available now
+
+Everything here is in tapiOca 1.44.2 and the apps' newest test builds.
+
+- **Your own live Stations.** Pick shows and movies, give a Station a number and a name, and it plays them around the clock, like broadcast TV, with a guide two days ahead. Play them in episode order or shuffled. Make Stations one at a time, from a filter that keeps itself up to date, from your collections, or dozens at once as smart Stations (see [Making stations](#making-stations)).
+- **Station extras.** Marathons, movie nights and time-of-day blocks. Commercials and trailers from your own folders, even by decade. Station ID cards with original jingles, an Intro Bumper as someone tunes in, and an Up Next Banner. A logo, name or clock in the corner, with burn-in protection. Nearly 1,000 original logos, or your own. Episodes play at an even loudness (see [Station features](#station-features)).
+- **A bad file never stops the show.** A program that fails is tried again, then a stand-in fills its time, so the guide stays right. tapiOca checks files before they air and scans them overnight, and lists what's wrong on its Broken files list. If you use Sonarr or Radarr, it can ask them to replace a file (see [Keeping stations on the air](#keeping-stations-on-the-air)).
+- **Media.** In tapiOca's apps, browse your shows and movies, search, and pick up where you left off. See cast and crew and titles like it, shuffle a show, and skip intros and credits Plex has marked. Your sound and subtitle languages follow you to every device. Each device gets the best picture and sound it can play, Dolby Vision and Dolby Atmos included, and a file is converted only when a device can't play it (see [tapiOca's own apps](#tapiocas-own-apps)).
+- **With or without Plex.** tapiOca reads your shows and movies straight from your folders, with details from NFO files, the files' own tags and their names. Use it on its own, beside Plex, or for what isn't in Plex (see [Media folders tapiOca reads itself](#media-folders-tapioca-reads-itself)).
+- **Family limits in tapiOca's apps.** Everyone signs in as themselves. Viewing Levels set what each person can see, by rating, genre, tag, collection or studio, and you can allow or hide a title or a Station for one person. A program someone may not watch is blocked for them while it airs, and limits are checked while a title plays. A shared TV opens on **Who's tuning in?**, where each person picks themselves, with a PIN. These limits are in tapiOca's apps and on its page only: Plex, Jellyfin and anything else on the tuner aren't covered (see [Parental limits](#parental-limits-what-tapioca-enforces-and-what-it-cant)).
+- **Away from home.** tapiOca's apps work away from home through a VPN or your own reverse proxy with HTTPS. tapiOca checks that they can reach it, and an Admin sets how many devices can watch at once (see [Reaching tapiOca from outside your home](#reaching-tapioca-from-outside-your-home)).
+- **One page to run it all.** tapiOca's page, for Admins, has a guided setup, the Station editor, the Broken files list, the logs with the apps' problem reports, Stats, alerts sent where you like (such as ntfy, Discord or Slack), nightly backups, and a banner when a new version is out. Add it to a phone's home screen, or install it on a computer, like an app.
+- **tapiOca's apps, in testing.** tapiOca for Android (phones, foldables, tablets, Google TV and Android TV), for iPhone and iPad, and for Roku. Each has the guide, flipping between Stations, Media, night mode, a sleep timer, favorites, and signing in on a TV with a short code. On a phone or tablet, keep a Station playing in picture-in-picture, or send it to your TV with Cast (Android) or AirPlay (Apple). They're in private testing, not in any store yet.
+- **Works with Plex and Jellyfin.** Your Stations also show up in other apps on your home network, as a tuner and a guide (see [tapiOca and Plex](#tapioca-and-plex)).
+
+### Coming toward 1.0
+
+Features are being rolled out across releases toward 1.0. None of these is in tapiOca 1.44.2 yet.
+
+- **Clean audio.** Strong language muted automatically, title by title and person by person, so the whole family can watch the same movie. You choose how strict. *Only with tapiOca's apps.*
+- **Watch Groups.** Watch in sync with family and friends, near or far, with chat, all on your own server. *Only with tapiOca's apps.*
+- **Pearls.** Clip your favorite moments as you watch, collect them into a feed, and share it with the people you choose. *Only with tapiOca's apps.*
+- **Linked servers.** Link your own servers, so a backup takes over if one goes offline, and Media keeps playing at the best quality your device can handle. *Only with tapiOca's apps.*
+- **Music, too.** Your albums, playlists and audiobooks, from your own folders, with gapless playback, listening in the car, synced lyrics, smart playlists and music Stations.
+- **A look that's yours.** Each person picks one of six accent colors and their own theme, and arranges their own Home and pages.
+- **Details with no keys needed.** Descriptions, air dates and more from free, open sources, credited, and intros and credits found automatically for every file, Plex or not. Keys for other services you have are optional, and never required.
+- **Collections and playlists from Plex,** copied once into tapiOca.
+- **Watching on tapiOca's page.** Everything the apps do, Stations and Media included, in the browser, for Admins.
+- **The Apple TV app.**
+- **Asking an Admin to stop seeing what you watch,** with the request shown as Pending, Approved or Denied.
+- **The apps in the App Store, Google Play and Roku's store,** free to start, with a one-time unlock (see [Unlocking the apps](#unlocking-the-apps)).
+
+**Only with tapiOca's apps** means the feature works when tapiOca's apps are paired with tapiOca's server. That's on purpose: the server and the apps are built together, and that's what makes these possible. Media and the family limits already work this way. Plex, Jellyfin and other apps on the tuner get your Stations, but not these.
+
+### Private by design
+
+- **Yours, at home.** tapiOca runs on your own hardware. There's no cloud account and nothing to sign up for outside your home. People sign in to your own server, as people an Admin added.
+- **No ads, no outside tracking.** tapiOca sends nothing to its developer. It connects only to addresses an Admin typed in (Plex, Sonarr, Radarr, alert addresses) and, if an Admin says yes, to GitHub, to see whether a new version is out (see [Updating](#updating)). [PRIVACY.md](PRIVACY.md) says what it keeps and what it contacts.
+- **What Admins see.** Admins can see what each person watches, and their stats, to fix problems and choose what to add. The privacy notice says so. A way to ask an Admin to stop is coming (above).
+- **Open, and never locked.** The server is free and open source. You can see exactly what it does, and it never locks your Media away.
+
+### tapiOca and Plex
+
+Plex is optional. If you have your own Plex Media Server, tapiOca can take your shows and movies from it: their details, artwork, and intro and credits markers come from Plex, and tapiOca reads the files straight from disk. Media folders tapiOca reads itself can sit beside it.
+
+Your Stations can also show up in Plex's **Live TV** guide, on every Plex app, with tapiOca as a network tuner (this needs Plex Pass). The same tuner, playlist and guide work with Jellyfin, Emby, Kodi and other apps, on your home network only (see [Watch your stations](#watch-your-stations)). Plex's terms license Plex Media Server for personal use, on hardware and storage you own (see [What you need](#what-you-need)). Product names are the property of their owners.
+
 ## What you need
 
+- **Your own movies and shows, in folders tapiOca reads itself** (see [Media folders tapiOca reads itself](#media-folders-tapioca-reads-itself)), **in your own Plex Media Server, or both.** tapiOca's own apps, Jellyfin, Emby, Kodi and other apps don't need Plex. To watch your Stations in Plex, you need Plex, and **Plex Pass**, because Plex's Live TV & DVR feature requires it.
 - **If you use Plex: your own Plex Media Server, under Plex's terms.** [Plex's terms](https://www.plex.tv/about/privacy-legal/plex-terms-of-service/) license Plex Media Server for personal use, on hardware and storage you own. Use tapiOca with your Plex server as those terms allow. tapiOca's [privacy notice](PRIVACY.md) says what it keeps, what it contacts, and that it sends nothing to its developer.
-- **Your shows and movies, in Plex Media Server or in folders tapiOca reads itself** (see [Media folders tapiOca reads itself](#media-folders-tapioca-reads-itself)), or both. To watch in Plex, you need Plex, and **Plex Pass**, because Plex's Live TV & DVR feature requires it. Jellyfin, Emby, Kodi, other apps and tapiOca's own apps need neither.
 - **A computer that runs Docker** on your home network (the same one as Plex, if you use it). It can be a NAS (TrueNAS SCALE, Synology, Unraid), a Linux server or virtual machine, a Raspberry Pi 4 or 5 with a 64-bit OS, or a Windows or Mac computer with Docker Desktop. Both x86-64 (Intel/AMD) and ARM64 work.
-- **Access to your media folder** from that computer. tapiOca reads files directly from disk. If it can't see a file Plex has, it streams it from Plex instead, which works but adds load to Plex.
+- **Access to your media folder** from that computer. tapiOca reads files directly from disk. With Plex, if it can't see a file Plex has, it streams it from Plex instead, which works but adds load to Plex.
 - **Enough processing power.** Each station being watched is converted in real time. A modern 4-core CPU can usually run several 720p stations at once. A GPU (Intel Quick Sync, AMD or NVIDIA) handles many more, and 1080p easily. tapiOca can't use the GPU in a Raspberry Pi or a Mac, so plan on one or two stations at smaller picture sizes there. **Test this server** on tapiOca's page measures what your hardware can do (see [Tuners](#tuners)).
 
 ## Install
@@ -57,7 +105,7 @@ You need just one file, which tells Docker how to run tapiOca:
 
 | File | What it's for |
 |---|---|
-| `tapioca-server.yaml` | The app definition for TrueNAS SCALE (`stationplay.yaml` before 1.35.0). |
+| `tapioca-server.yaml` | The app definition for TrueNAS SCALE. |
 | `docker-compose.yml` | The app definition for Docker Compose, for everything else. |
 | `unraid/stationplay.xml` | A template for Unraid's Docker tab. It's in the repo's `unraid` folder. |
 
@@ -65,12 +113,18 @@ Download the first two from the [latest release](https://github.com/egadgetboy/t
 
 To build the image yourself instead, see [Building from source](#building-from-source).
 
-**Before you start, gather four things:**
+The steps for each system below follow that system's own documented way. Not every one has been confirmed on that system yet: if a step doesn't match what you see, please [open an issue](https://github.com/egadgetboy/tapioca-server/issues).
 
-1. **Your Plex server's address**, such as `http://192.168.1.10:32400`. Use the server's network IP address, not `localhost`. Inside a container, `localhost` means the container itself.
-2. **Your Plex token** (see the next section).
-3. **Where your media lives** on the Docker host, such as `/mnt/tank/media`.
-4. **The user tapiOca runs as**, written as `UID:GID` (numbers). This user must be able to read your media and write to tapiOca's data folder. The examples use `1000:1000`. To see who owns your media, run `ls -ln /path/to/media`. The third and fourth columns are the UID and GID.
+A few names are `stationplay`: the container, the app's name on TrueNAS and Synology, the Unraid template, the data folder in the examples and the database file, `stationplay.db`. Use them exactly as shown, so the steps on this page and tapiOca's own update steps work.
+
+**Before you start, gather these:**
+
+1. **Where your media lives** on the Docker host, such as `/mnt/tank/media`.
+2. **The user tapiOca runs as**, written as `UID:GID` (numbers). This user must be able to read your media and write to tapiOca's data folder. The examples use `1000:1000`. To see who owns your media, run `ls -ln /path/to/media`. The third and fourth columns are the UID and GID.
+3. **If you use Plex: your Plex server's address**, such as `http://192.168.1.10:32400`. Use the server's network IP address, not `localhost`. Inside a container, `localhost` means the container itself.
+4. **If you use Plex: your Plex token** (see the next section).
+
+**No Plex?** Delete the `PLEX_URL` and `PLEX_TOKEN` lines from your YAML or compose file (on Unraid, clear both), and add a Media folder on tapiOca's page after it starts (see [Media folders tapiOca reads itself](#media-folders-tapioca-reads-itself)).
 
 #### Finding your Plex token
 
@@ -92,7 +146,7 @@ The `data` folder holds your stations and settings, so the user tapiOca runs as 
 **2. Install the app.** Go to **Apps → Discover Apps → ⋮ (top right) → Install via YAML**. Name the app `stationplay` and paste the contents of `tapioca-server.yaml`. Then change every line marked `<- CHANGE`:
 
 - **The two folder paths:** the `data` folder and your media folder. On each `volumes` line, change only the folder on your server, the part before `:/data` or `:/media`, such as `/mnt/tank/media:/media:ro`. Leave `MEDIA_DIR` as `/media`: that's where tapiOca sees the folder.
-- **Plex and time zone:** `PLEX_URL`, `PLEX_TOKEN` and `TZ` (your time zone, such as `America/Chicago`).
+- **Plex and time zone:** `PLEX_URL` and `PLEX_TOKEN` (or delete those two lines, without Plex), and `TZ` (your time zone, such as `America/Chicago`).
 - **The user:** change `user:` if your media belongs to another user. TrueNAS's built-in apps user is `568:568`. If you use it, also run `sudo chown -R 568:568 /mnt/tank/apps/stationplay/data`.
 
 Leave `TAPIOCA_INSTALL` set to `truenas`. Also check the GPU lines (see [GPU encoding](#gpu-encoding)). The Intel/AMD lines are turned on in this file. If the server has no Intel or AMD graphics, delete them, or the app won't start.
@@ -113,7 +167,7 @@ mkdir -p data && sudo chown -R 1000:1000 data      # use your UID:GID
 
 (Or download `docker-compose.yml` from the [latest release](https://github.com/egadgetboy/tapioca-server/releases/latest) in a browser, and put it in that folder.)
 
-Open `docker-compose.yml` in a text editor and change every line marked `<- CHANGE`: the user, Plex's address, your Plex token, your time zone and your media folder. Leave `TAPIOCA_INSTALL` set to `compose`. For a GPU, uncomment its lines (see [GPU encoding](#gpu-encoding)). Then start tapiOca:
+Open `docker-compose.yml` in a text editor and change every line marked `<- CHANGE`: the user, Plex's address and your Plex token (or delete those two lines, without Plex), your time zone and your media folder. Leave `TAPIOCA_INSTALL` set to `compose`. For a GPU, uncomment its lines (see [GPU encoding](#gpu-encoding)). Then start tapiOca:
 
 ```
 docker compose up -d
@@ -160,7 +214,7 @@ The simplest way is tapiOca's template, from the repo's `unraid` folder. You can
    ```
 
 2. On the **Docker** tab, choose **Add Container**, and pick **stationplay** under **Template**. That's the container's name, as on every other kind of install.
-3. Fill in Plex's address, your Plex token, your time zone and your media folder (such as `/mnt/user/media`). The data folder is already `/mnt/user/appdata/stationplay/data`, the same folder a compose install there uses. Leave `TAPIOCA_INSTALL` set to `unraid`. The template runs tapiOca as `99:100`: to change that, turn on **Advanced View** and edit `--user` under **Extra Parameters**.
+3. Fill in your time zone and your media folder (such as `/mnt/user/media`), and Plex's address and your Plex token if you use Plex (without Plex, clear both). The data folder is already `/mnt/user/appdata/stationplay/data`, the same folder a compose install there uses. Leave `TAPIOCA_INSTALL` set to `unraid`. The template runs tapiOca as `99:100`: to change that, turn on **Advanced View** and edit `--user` under **Extra Parameters**.
 4. Choose **Apply**. Unraid downloads the image and starts tapiOca.
 
 **With the compose file instead.** From the **Apps** tab, install the **Compose Manager** plugin, which adds the `docker compose` command. Then follow the [Docker Compose](#docker-compose-linux-proxmox-raspberry-pi) steps in `/mnt/user/appdata/stationplay`, with `user: "99:100"` and `chown -R 99:100 data`. Set `TAPIOCA_INSTALL` to `"compose"`, since you'll update it with `docker compose`, not from the Docker tab.
@@ -209,9 +263,10 @@ docker run -d --name stationplay --restart unless-stopped --init \
   ghcr.io/egadgetboy/tapioca-server:latest
 ```
 
-Save your command in a file (such as `stationplay.sh`). You'll run the same one each time you update.
+Save your command in a file (such as `tapioca.sh`). You'll run the same one each time you update.
 
 - **The page and apps from the internet.** The `3311` port and `PUBLIC_PORT` are for that (see [Security and remote access](#security-and-remote-access)). If you don't need it, remove `-p 3311:3311` and `-e PUBLIC_PORT=3311`.
+- **No Plex.** Remove the `PLEX_URL` and `PLEX_TOKEN` lines.
 - **Intel or AMD GPU.** Add `--device /dev/dri:/dev/dri --group-add <group number>` (see [GPU encoding](#gpu-encoding)).
 - **NVIDIA GPU.** Add `--gpus all` (needs the NVIDIA Container Toolkit).
 
@@ -297,7 +352,7 @@ Put `PUBLIC_PORT` behind a Cloudflare Tunnel or a reverse proxy with HTTPS. [Rea
 
 ## Updating
 
-**tapiOca's page can tell you when a new version is out,** if an Admin says yes (see **The update check** below). Admins then see a banner at the top: "tapiOca 1.35.0 is available." It shows the steps for your kind of install (from `TAPIOCA_INSTALL`), with **What's new** (the release's notes), **Back up now**, **All the steps** (this section) and **Not now**, which hides the banner for that version in this browser. While a newer version is out, Admins also see a small **tapiOca 1.35.0 is out** pill in the page's header (just **Update** on a phone), even after **Not now**. Choose it to see the banner again, with how to update. tapiOca never downloads or updates anything by itself.
+**tapiOca's page can tell you when a new version is out,** if an Admin says yes (see **The update check** below). Admins then see a banner at the top: "tapiOca 1.45.0 is available." It shows the steps for your kind of install (from `TAPIOCA_INSTALL`), with **What's new** (the release's notes), **Back up now**, **All the steps** (this section) and **Not now**, which hides the banner for that version in this browser. While a newer version is out, Admins also see a small **tapiOca 1.45.0 is out** pill in the page's header (just **Update** on a phone), even after **Not now**. Choose it to see the banner again, with how to update. tapiOca never downloads or updates anything by itself.
 
 Your stations, settings, logos, Intro Bumper videos and Broken files list live in the `data` folder, so updates keep them. Existing stations keep their settings. New defaults apply only to stations you make afterward. The version you're running is shown at the bottom of tapiOca's page.
 
@@ -323,8 +378,8 @@ then your `docker run` command. Removing the container keeps your data, because 
 
 **Staying on one version.** `:latest` is always the newest release. To stay on one, change the end of `image:` (on Unraid, **Repository**; with `docker run`, the last line):
 
-- `ghcr.io/egadgetboy/tapioca-server:1.34` gets fixes for 1.34 (1.34.1, 1.34.2 and so on), but not 1.35.
-- `ghcr.io/egadgetboy/tapioca-server:1.34.0` stays on exactly 1.34.0.
+- `ghcr.io/egadgetboy/tapioca-server:1.44` gets fixes for 1.44 (1.44.1, 1.44.2 and so on), but not 1.45.
+- `ghcr.io/egadgetboy/tapioca-server:1.44.2` stays on exactly 1.44.2.
 
 The update steps above then fetch only what that tag allows. Change it back to `:latest` to follow every release again. Images are published from 1.34.0 on.
 
@@ -377,7 +432,7 @@ To go back to the version you had before an update:
    Remove-Item stationplay.db-wal, stationplay.db-shm -ErrorAction SilentlyContinue
    ```
    Use your own folder and the copy's name. Copying over the old file keeps its owner, so tapiOca can still write to it.
-3. **Ask for the previous version's image.** Change the end of `image:` from `:latest` to that version, such as `ghcr.io/egadgetboy/tapioca-server:1.34.0`, and start it. On TrueNAS, edit the app and save it, then start it if it doesn't start by itself. With Docker Compose, run `docker compose up -d`. On Unraid, edit the container's **Repository** and apply. On Synology, edit `docker-compose.yml`, then connect over SSH and run `sudo docker compose up -d` in its folder. With docker run, run `docker rm stationplay`, then your `docker run` command with that version at the end.
+3. **Ask for the previous version's image.** Change the end of `image:` from `:latest` to that version, such as `ghcr.io/egadgetboy/tapioca-server:1.44.1`, and start it. On TrueNAS, edit the app and save it, then start it if it doesn't start by itself. With Docker Compose, run `docker compose up -d`. On Unraid, edit the container's **Repository** and apply. On Synology, edit `docker-compose.yml`, then connect over SSH and run `sudo docker compose up -d` in its folder. With docker run, run `docker rm stationplay`, then your `docker run` command with that version at the end.
 
 It stays on that version until you change `image:` back to `:latest`. Images are published from 1.34.0 on. To go back to an earlier version, build it from its zip (see [Building from source](#building-from-source)).
 
@@ -446,22 +501,22 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 
 ### tapiOca's own apps
 
-**tapiOca for Android** is a beta test build, in private testing. It isn't in any app store yet. The Apple app and the Roku app are coming. The apps connect directly to your tapiOca server, so you can watch your stations without Plex Pass or any other app.
+tapiOca's apps are in beta, in private testing, and not in any app store yet. They'll come to the App Store, Google Play and Roku's store. The apps connect directly to your tapiOca server, so you can watch your stations, and your Media, without Plex Pass or any other app.
 
-- **Platforms.** In private testing: Android phones, foldables and tablets, Google TV and Android TV, in tapiOca for Android. Coming: iPhone, iPad and Apple TV, and Roku.
+- **Platforms.** In private testing: tapiOca for Android (phones, foldables and tablets, Google TV and Android TV), tapiOca for iPhone and iPad, and tapiOca for Roku. Planned for 1.0: the Apple TV app.
 - **A guide for every screen.** On a TV, you browse it with your remote. On a phone, you see every station at a glance and swipe through the hours. On a tablet, the selected program and a live picture sit above the guide.
 - **Changing stations.** While a station tunes in, you see its card in the same colors as its Intro Bumper. Flip up and down through your stations, enter a station number on your remote, or jump back to the last station you watched. If every tuner is in use, the app says so and lets you join a station that's already playing.
 - **Favorites.** Mark the stations you watch most, and choose to show only those in the guide.
 - **Night mode.** It brings loud scenes down close to the voices, so you can watch late without disturbing anyone. It only ever turns sound down: loud scenes the most, voices only a little, and nothing gets louder, so there's no need to change the volume. From 1.36.4, it also cuts deep rumble, under 50 Hz. Some devices can't change the sound themselves (Apple's player, a Roku). For those, tapiOca makes the station's night-mode sound on the server, only while someone is watching that way. The picture is copied unchanged, it uses the station's one tuner, and everyone else keeps the usual sound.
 - **Sleep timer.** Choose 15 minutes to 2 hours, a clock time, or your own number of minutes, from anything playing. In the last 30 seconds, the picture fades to black. Then playback stops and the screen stays dark until you press a button, so the TV or device can go to sleep.
-- **Phone and tablet extras.** Keep watching in picture-in-picture, choose whether the picture fits or fills the screen, and send it to your TV with AirPlay (Apple) or Cast (Android).
+- **Phone and tablet extras.** Keep a station playing in picture-in-picture, choose whether the picture fits or fills the screen, and send a station to your TV with AirPlay (Apple) or Cast (Android). Picture-in-picture and casting for Media are coming.
 - **Secure sign-in.** On a TV, the app shows a short code. You enter it on tapiOca's page from your phone or computer, so you never type a password with a remote. The dash in the code fills in by itself as you type. On a phone or tablet, you can use your name and password instead. Every signed-in app appears under **Signed-in apps** on the **Access** tab, where an Admin can sign it out.
 - **Watching away from home.** When an Admin turns this on, the apps also work away from home, for stations and Media alike. They connect over HTTPS through the same reverse proxy that serves tapiOca's page (see [Reaching tapiOca from outside your home](#reaching-tapioca-from-outside-your-home)).
 - **Built for stability.** An Admin sets how many devices can watch at once, including how many away from home. tapiOca tests what your server and internet connection can handle and recommends limits. When a limit is reached, the app explains why and asks the viewer to try again later.
 - **Media.** Browse your shows and movies by title, genre, what's new or what you haven't watched. Jump to a letter, search, and pick up where you left off from the Resume row. Each title's page shows its cast and crew and titles like it. Skip an episode's intro and credits with one button, and choose subtitles and audio tracks. From tapiOca 1.37.0, with the apps that use it, you can also shuffle a show, and jump through a folder by month or year added, or by decade. These are tapiOca's apps' own: Plex, Jellyfin and other apps on the tuner see only your stations.
 - **The best picture and sound.** Each device gets the best picture and sound it supports, including Dolby Vision and Dolby Atmos. A file is repackaged or converted only when a device can't play it directly.
 
-**Which tapiOca the apps need.** The apps need tapiOca 1.22.0 or newer. With an older version, the app says so: "The tapiOca at … is version …, but this app needs 1.22.0 or newer." For every feature, use the newest version:
+**Which tapiOca the apps need.** The apps need tapiOca 1.22.0 or newer, and browse fastest with 1.43.0 or newer. With an older version, the app says so: "The tapiOca at … is version …, but this app needs 1.22.0 or newer." For every feature, use the newest version:
 
 | tapiOca | What the apps gain |
 |---|---|
@@ -472,7 +527,11 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 | 1.30.0 | Report a problem |
 | 1.34.0 | Automatic subtitles |
 | 1.37.0 | Shuffle on a show's page (**Shuffle all**, or **Shuffle unwatched**), and jumping through a Media folder by letter, by month or year added, or by decade, as it's sorted |
+| 1.36.0 | Trusted networks: a device on one is linked without signing in |
 | 1.38.0 | An Admin's password on **Who's tuning in?** for Admin tasks, an Admin's PIN in Light sign-in, and invite codes for people with neither a password nor a PIN |
+| 1.39.0 | "Restricted program": a program someone may not watch is blocked for them while it airs, and their station comes back by itself |
+| 1.40.0 | Limits checked while a title plays, so a change stops it within seconds |
+| 1.43.0 | Media folders that open on the first try, and fast scrolling |
 
 The apps read the stations and guide through [tapiOca's API](#tapiocas-api), like any other program. They sign in, test connections and browse Media through their own addresses, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
 
@@ -513,13 +572,13 @@ Subtitles the device can't show are drawn into a copy. If an episode's chosen su
 
 ### Unlocking the apps
 
-tapiOca and its page are free and unlimited. tapiOca's apps will be free to download, with a free tier, and unlocked with one purchase in each platform's store:
+tapiOca's server and its page are free and unlimited. tapiOca's apps will be free to download, with a free tier, and unlocked with one purchase in each platform's store:
 
-- **Free.** Each server's first station, for up to 2 hours a day on each device, and the first 10 minutes of each title in Media.
-- **The unlock.** One-time purchase, no subscription. Bought in the App Store, Google Play or Roku's store, it unlocks everything, on every server, for every user, on that store account's devices. Each platform is bought separately. Refunds go through each store.
+- **Free.** On each server, the first station each person may see, for up to 2 hours of playing a day on each device, across all servers. In Media, the first 10 minutes of each title (the first third of anything under 30 minutes). Casting and AirPlay come with the unlock.
+- **The unlock.** A one-time purchase, with no subscription. Bought in the App Store, Google Play or Roku's store, it unlocks everything, on every server, for every person, on that store account's devices. Each platform is bought separately. Refunds go through each store.
 - **Nothing on the server.** tapiOca itself needs no purchase and never locks anything. Plex, Jellyfin and other apps are never limited.
 
-Unlocking comes with the apps' store releases. Until then, the apps play as they do now.
+Unlocking comes with the apps' store releases. Until then, the test builds play as they do now.
 
 ## Reaching tapiOca from outside your home
 
@@ -1192,7 +1251,7 @@ List your reverse proxy or tunnel under **Trusted proxies** on the **Access** ta
 
 - **Never by headers alone.** tapiOca never decides a device is a proxy because it sends forwarding headers. Only a listed proxy is believed.
 - **Who the visitor is.** From a listed proxy, tapiOca reads the last address in each of `X-Real-IP`, `X-Forwarded-For` and `Forwarded` it sends. They must all name the same visitor. If they don't, tapiOca can't tell who it is, and treats the request as from the internet. The access log calls it "an unnamed visitor via" the proxy, and its wrong passwords count on their own, never as the proxy's address, which everyone through it shares.
-- **Headers from anything else.** They're ignored: they never say who a visitor is, and never give trust. They can only take trust away. If they name an internet address, or can't be read, the request is treated as from the internet. Admins get an alert: "tapiOca is ignoring forwarding headers from a device that isn't a trusted proxy. If it's your reverse proxy, add it under Trusted proxies on the Access tab." The alert never gives the address. The **Access** tab shows it to Admins, until the proxy is listed: "A proxy at 192.168.50.2 isn't trusted, so tapiOca ignored what it said about its visitors."
+- **Headers from anything else.** They're ignored: they never say who a visitor is, and never give trust. They can only take trust away. If they name an internet address, or can't be read, the request is treated as from the internet. Admins get an alert: "tapiOca is ignoring forwarding headers from a device that isn't a trusted proxy. If it's your reverse proxy, add it under Trusted proxies on the Access tab." The alert never gives the address. The **Access** tab shows it to Admins, until the proxy is listed: "A proxy at 192.168.1.30 isn't trusted, so tapiOca ignored what it said about its visitors."
 - **HTTPS.** tapiOca believes a proxy saying a request came over HTTPS only from a listed proxy. So tapiOca's apps from the internet need their proxy listed.
 - **The proxy's own computer.** A listed proxy sending no forwarding headers at all, asked for by an address or a home name, may be its own computer: Plex there, say. From 1.36.2, Plex's tuner, guide and logos are its computer's, at home, so Plex keeps them (before, Plex lost the tuner). Anything else from it, the page or the API, is still a proxy's, for the internet, and nothing from it skips signing in. **Known limit:** a proxy that sends no headers at all (HAProxy without `option forwardfor`, a plain TCP forward), listed and pointed at the home port by mistake, can't be told from its computer, so the tuner is reachable through it, as through any proxy not listed. Point a proxy at the public port, 3311, and the outside check says so if it isn't.
 - **Trust this proxy.** When tapiOca checks its address from outside (under **tapiOca's apps away from home**, and in the setup's **Watching away from home**) and finds it came through a proxy that isn't listed yet, it names the proxy's address and offers **Trust this proxy**, which lists just that address and checks again. It's not offered for an internet address, or when 10 are listed already. Clicking it checks again first, and lists the address only if that check sees it too.
@@ -1436,7 +1495,7 @@ Alerts are kept in tapiOca's database, so a restart doesn't repeat them. An open
 - **The app keeps restarting, and the log says it can't write to `/data`.** The data folder isn't owned by the user tapiOca runs as. The message shows the `chown` command to run. Fill in your data folder's path, run it, then restart the app.
 - **The app won't start, and mentions `/dev/dri`.** The GPU lines are in the YAML, but the server has no Intel/AMD graphics. Remove the `devices:` and `group_add:` lines.
 - **Docker says port 3310 or 3311 "is already allocated" or "address already in use".** Another app on the server uses that port. Change only the first number of the port line (for example, `"3320:3310"`). Then use the new port in every address: in your browser, and in Plex or your other apps.
-- **After updating, the page still shows the old version.** Docker didn't fetch the newest image, or didn't start tapiOca from it. Check that `image:` ends in `:latest` (`:1.34` or `:1.34.0` stays on that version). Then fetch it yourself: on TrueNAS, in **System**, then **Shell**, run `sudo docker pull ghcr.io/egadgetboy/tapioca-server:latest`, then edit the app and save it; with Compose, run `docker compose up -d --pull always` (with `sudo` first on Synology).
+- **After updating, the page still shows the old version.** Docker didn't fetch the newest image, or didn't start tapiOca from it. Check that `image:` ends in `:latest` (`:1.44` or `:1.44.2` stays on that version). Then fetch it yourself: on TrueNAS, in **System**, then **Shell**, run `sudo docker pull ghcr.io/egadgetboy/tapioca-server:latest`, then edit the app and save it; with Compose, run `docker compose up -d --pull always` (with `sudo` first on Synology).
 - **Docker says there's "no matching manifest" for your system.** The image is for 64-bit machines only: x86-64 (Intel/AMD) and ARM64. On a Raspberry Pi, use a 64-bit OS.
 - **The page shows "Nothing to play yet"** or **"Plex didn't accept the token in PLEX_TOKEN".** Add a Media folder for tapiOca to read itself on the **Setup** tab, or fix those two settings to use Plex (with the YAML's sample token left in place, tapiOca doesn't use Plex: paste your token, or delete the PLEX_URL and PLEX_TOKEN lines). Users (not Admins) see only "Plex: not connected". If Plex runs in Docker on the same machine, use the machine's network IP in `PLEX_URL`, not `localhost`.
 
@@ -1522,7 +1581,7 @@ It uses its own ports, stops only what it started, and cleans up afterward. `--f
 **Releases.** Each release's notes are in `docs/releases/v<version>.md`. Their first lines name the commit of that version (`commit: <its full ID>`), which must be a commit `main` was tested at (for a merge, the merge commit). `.github/workflows/release.yml` runs each time the image workflow finishes on `main`. For each version not yet published, it checks that the commit is on `main`, is that version, and passed the image workflow's tests on both machines (on that commit, or on a later one that changed only release notes). Then it makes the release on GitHub, first as a draft:
 
 - **The tag** at that commit, and the notes.
-- **The files built from that commit:** `tapioca-<version>.zip`, `tapioca-server.yaml` (`stationplay.yaml` before 1.35.0) and `docker-compose.yml`.
+- **The files built from that commit:** `tapioca-<version>.zip`, `tapioca-server.yaml` and `docker-compose.yml`.
 - **Two lists of packages:** `tapioca-<version>-packages.txt` (amd64) and `tapioca-<version>-packages-arm64.txt`. Each lists every package in the image that was tested (the tests' own additions aside), at its exact version, with a link to its source. The image workflow run that tested the commit makes them after its tests and keeps them with the run for 90 days. Without them, nothing is published, and the release run says to re-run that image run.
 - **`tapioca-<version>-source.tar`:** the source of every GPL and LGPL package in the images, as Debian publishes it, fetched from inside the tested image. If any of it can't be fetched, nothing is published, and the run says which.
 - **`SHA256SUMS`:** the SHA-256 of each of the release's files, and the image's digest for each of its tags.
