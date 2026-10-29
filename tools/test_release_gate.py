@@ -188,6 +188,25 @@ class AHistoryThatStartsAtARelease(unittest.TestCase):
         finally:
             g.ROOT = kept
 
+    def last_before(self, where: Path, version: str, rev: str = "HEAD") -> str | None:
+        kept, g.ROOT = g.ROOT, where
+        try:
+            return g.last_release_before("server", version, rev)
+        finally:
+            g.ROOT = kept
+
+    def test_a_release_is_measured_from_the_one_before_it_once_tagged_too(self):
+        """1.44.3's manifest, linted after its tag was made, was measured from
+        its own tag: no code since, so its readiness record (a commit in the
+        apps' repository) was looked for here, and every later push failed."""
+        where = self.repository()
+        (where / "f").write_text("later")
+        self.git(where, "commit", "-qam", "later")
+        self.assertEqual(self.last_before(where, "1.0.3"), "v1.0.2")
+        self.assertEqual(self.last_before(where, "1.0.3", "v1.0.2"), "v1.0.2")
+        self.assertEqual(self.last_before(where, "1.0.4"), "v1.0.3")
+        self.assertIsNone(self.last_before(where, "1.0.1"))
+
     def test_a_tag_on_the_first_commit_starts_it(self):
         where = self.repository()
         self.assertTrue(self.starts(where, "v1.0.1"))
