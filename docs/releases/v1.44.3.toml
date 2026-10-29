@@ -1,0 +1,37 @@
+release = "Sign out always takes you off the list"
+row = 178
+class = "D"
+features = []
+readiness = "Sign out always takes you off the list"
+readiness_commit = "10b727497afa1560128a8da32c733ababfb9a1b0"
+threat_model = "docs/threat-models/signout-ends.md"
+
+[[review]]
+kind = "cold-audit"
+report = "docs/reviews/1.44.3-cold-audit-1.md"
+commit = "7da13e873e5ddd85826b4db85ad4843811f52a1c"
+
+[[review]]
+kind = "cold-audit"
+report = "docs/reviews/1.44.3-cold-audit-2.md"
+commit = "9c8f940446a720f56ad4b009514c1a811678c8c1"
+
+[modularity]
+component = "app/db.py (device_sign_ins and its rule), app/appapi.py (the remove), app/access.py (the Gate's open list), app/backups.py (a restore forgets the record)"
+contract = "docs/internal-api.md (POST /api/internal/picker/remove); docs/threat-models/signout-ends.md"
+off = "not optional: a security fix"
+deleted = [
+  "the remove's entries in FOR_USERS and FOR_WATCHERS, dead once it's open at the Gate",
+  "the remove handler's separate sign-out after taking the person off: one transaction now",
+]
+
+[limits]
+run = "quality 40832934827: Soak: headless clients, 30 minutes, on ed5e5b0"
+memory_mb = 153
+cpu_s_per_min = 48.9
+
+[[soak]]
+platform = "server"
+run = "quality 40832934827: Soak: headless clients, 30 minutes, on ed5e5b0"
+minutes = 30
+result = "passed"
