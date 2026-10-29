@@ -1017,7 +1017,9 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                                   headers={"stationplay-device": lee["key"]},
                                   json={"name": LEE["name"], "password": LEE_NEW})  # fmt: skip
             newer = replaced.json().get("token", "")
-            checks.ok(bool(newer), f"on {before}, Lee signs in on the Roku again", replaced.text[:200])
+            checks.ok(
+                bool(newer), f"on {before}, Lee signs in on the Roku again", replaced.text[:200]
+            )
         stopped(checks, sp, before)
         checks.ok(kept_alerts(as_is) == kept, "it leaves the alerts as they were",
                   kept_alerts(as_is))  # fmt: skip

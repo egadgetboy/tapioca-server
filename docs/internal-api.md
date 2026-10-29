@@ -611,9 +611,20 @@ Answers 429 after 10 wrong tries on this device in 15 minutes.
 
 ## POST /api/internal/picker/remove
 
-Sent with the device's key and the token of whoever is signed in on it.
-Takes them off this device's picker, and signs them out. Answers
+Sign out: sent with the device's key and the token of whoever is signed in
+on it, as a Bearer token. Takes them off this device's picker, and signs
+them out, ending every sign-in of theirs on this device. Answers
 `{"ok": true}`.
+
+From 1.44.3 it works even when tapiOca has already ended that sign-in (a
+password changed on another device, a role or PIN changed, a day unused,
+someone else signing in on the device), as long as it's the person's newest
+sign-in on this device, or the one a password changed on this device
+renewed (until the new one is first used, five minutes or more after it was
+made). Such a sign-in does nothing else. Answers 401 for a sign-in that's
+neither, an older one, another device's or a browser's, or for no token; 403
+for an API token; and the key's own answers first (401 for no key or an
+unknown one, 403 for a trusted network's device away from that network).
 
 | Field | Type | What it is |
 |---|---|---|
