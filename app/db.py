@@ -2534,32 +2534,26 @@ class Database:
         return out
 
     def set_device_person(
-        self, device_id: int, user_id: int, how: str | None, by_password: bool = False
+        self, device_id: int, user_id: int, how: str, by_password: bool = False
     ) -> None:
-        """How a person is on a device's picker (None: not at all). Signed
-        in there (how 'signed-in'): `by_password`, with their password, which
-        stays so until they're taken off it (1.38.0)."""
+        """How a person is on a device's picker. Signed in there (how
+        'signed-in'): `by_password`, with their password, which stays so
+        until they're taken off it (1.38.0)."""
         with self._lock, self._conn:
             self._set_device_person(device_id, user_id, how, by_password)
 
     def _set_device_person(
-        self, device_id: int, user_id: int, how: str | None, by_password: bool = False
+        self, device_id: int, user_id: int, how: str, by_password: bool = False
     ) -> None:
         """set_device_person, inside a transaction that holds the lock."""
-        if how is None:
-            self._conn.execute(
-                "DELETE FROM device_people WHERE device_id = ? AND user_id = ?",
-                (device_id, user_id),
-            )
-        else:
-            self._conn.execute(
-                "INSERT INTO device_people (device_id, user_id, how, by_password) "
-                "VALUES (?, ?, ?, ?) ON CONFLICT (device_id, user_id) DO UPDATE SET "
-                "by_password = CASE WHEN excluded.how = 'signed-in' AND how = 'signed-in' "
-                "THEN MAX(by_password, excluded.by_password) ELSE excluded.by_password END, "
-                "how = excluded.how",
-                (device_id, user_id, how, int(by_password and how == "signed-in")),
-            )
+        self._conn.execute(
+            "INSERT INTO device_people (device_id, user_id, how, by_password) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT (device_id, user_id) DO UPDATE SET "
+            "by_password = CASE WHEN excluded.how = 'signed-in' AND how = 'signed-in' "
+            "THEN MAX(by_password, excluded.by_password) ELSE excluded.by_password END, "
+            "how = excluded.how",
+            (device_id, user_id, how, int(by_password and how == "signed-in")),
+        )
 
     def remove_signed_in(self, device_id: int, user_id: int, token_hash: str) -> None:
         """Someone takes themselves off a device's picker with a sign-in of
