@@ -30,6 +30,7 @@ from app.plex import PlexClient, PlexError
 from app.relays import Relays
 
 from .fakeplex import FakePlex
+from .timing import within
 
 ADA = {"name": "Ada", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple", "role": "user"}
@@ -926,7 +927,7 @@ def test_a_failing_web_address_holds_nothing_up(app, monkeypatch):
                 )
             assert home.get("/api/internal/alerts").status_code == 200
             assert home.get("/api/status").status_code == 200
-            assert time.monotonic() - began < 2
+            within(time.monotonic() - began, 2)
         assert len(ctx.alerts.now()) == 2 * many
 
 

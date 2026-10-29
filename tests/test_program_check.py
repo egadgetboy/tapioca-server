@@ -27,6 +27,7 @@ from app.viewing import EVERYONE, UNRESTRICTED, Level, Viewer
 
 from . import test_who_sees_what as who
 from .test_who_sees_what import ADA, KIT, TV, kid_level, set_up, sign_in_app
+from .timing import within
 
 # (Who sees what's library and app, as its tests have them.)
 plex = who.plex
@@ -257,7 +258,7 @@ def test_playing_never_waits_on_plex_for_the_check(app, monkeypatch):
         began = time.monotonic()
         for _ in range(3):
             assert file_of(phone, played.json(), as_kit).status_code == 200
-        assert time.monotonic() - began < 3
+        within(time.monotonic() - began, 3)
         assert admin.portal.call(app.state.ctx.stop_restricted) == 0
         assert asked == []
         assert app.state.ctx.plays.find(played.json()["session"]) is not None

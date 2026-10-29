@@ -25,6 +25,7 @@ from app.tsstitch import TsStitcher
 
 from .fakeplex import FakePlex
 from .test_skipping import FakeGpu, item
+from .timing import within
 
 # Stand-ins for ffmpeg: frames for half a second, then nothing (hung); and
 # frames steadily for about four seconds.
@@ -58,7 +59,7 @@ async def test_a_killed_ffmpeg_slow_to_go_isnt_waited_for(monkeypatch, caplog):
     result = await b._run_ffmpeg(HANGS, TsStitcher(), bc.TS_BASE_S, first_frame_timeout=5)
     took = time.monotonic() - started
     assert result.stalled and not result.completed
-    assert took < 6, took  # (not the minute it would hang for)
+    within(took, 6)  # (not the minute it would hang for)
     assert "slow to stop" in caplog.text
     # It's killed for good, and reaped, meanwhile.
     reaping = list(bc._REAPING)

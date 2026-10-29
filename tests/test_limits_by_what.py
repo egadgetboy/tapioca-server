@@ -23,6 +23,7 @@ from app.viewing import Blocks, Level, Person, Reach, Viewer, reach_of
 
 from .fakeplex_library import LibraryPlex
 from .test_who_sees_what import KIT, kid_level, sign_in_app
+from .timing import within
 
 NO_TAGS = Tags()  # (known, and none of them)
 HORROR = Tags(genres=("Comedy", "Mystery", "Thriller", "Horror"))
@@ -458,7 +459,8 @@ def test_media_on_a_big_folder_answers_in_time_and_keeps_what_plex_said(tmp_path
         return took, partly, asked_before_small, small_known
 
     took, partly, asked_before_small, small_known = asyncio.run(run())
-    assert took < 0.38 and partly == 2 * titles_module.ENSURE_AT_ONCE  # (two batches back in time)
+    within(took, 0.38)
+    assert partly == 2 * titles_module.ENSURE_AT_ONCE  # (two batches back in time)
     # (Behind at most what was already going and one batch of the rest: the
     # same big folder asked for again put one batch ahead, and its rest waits
     # its turn a batch at a time, so of the batches asked after the small

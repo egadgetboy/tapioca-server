@@ -32,6 +32,7 @@ from app.plex import PlexClient
 
 from .fakeplex import FakePlex
 from .test_alerts import Address, DiscordWebhook
+from .timing import within
 
 NTFY = "https://ntfy.example.com/stationplay-secret-topic"
 DISCORD = "https://discord.com/api/webhooks/1558849916279722034/2j5Kd-secret_token"
@@ -221,7 +222,7 @@ async def test_a_slow_address_never_delays_the_others(db, monkeypatch):
         sender.unsent()
     finally:
         task.cancel()
-    assert took < 1.0
+    within(took, 1.0)
     assert (said.done, said.failed) == (3, 0)
 
 
@@ -526,7 +527,7 @@ async def test_moving_on_the_list_never_puts_one_behind_another_s_backlog(db, mo
         began = time.monotonic()
         sender.send("Plex is back.", "plex", "fixed")
         assert await until(lambda: len(quick.asked) == 4, 1.0)
-        assert time.monotonic() - began < 0.4
+        within(time.monotonic() - began, 0.4)
         assert await until(lambda: len(slow.asked) == 4, 4.0)
     finally:
         task.cancel()

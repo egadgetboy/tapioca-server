@@ -23,6 +23,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .test_media_solid import library, limited, refused, shared
+from .timing import within
 
 
 def server(plex, data_dir):
@@ -115,7 +116,7 @@ def test_a_changed_picture_that_cant_be_made_now_keeps_the_one_kept(home):
         began = time.monotonic()
         got = home.get("/api/internal/art/300?w=320")
         assert got.status_code == 200 and got.content == first.content, unwell
-        assert time.monotonic() - began < 2
+        within(time.monotonic() - began, 2)
     assert home.app.state.ctx.app_pictures.get(("300", "poster", 320)) is not None, "still kept"
     home.plex.odd = {}
     home.plex.odd["/photo/:/transcode"] = httpx.Response(

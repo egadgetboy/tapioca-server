@@ -197,6 +197,8 @@ import socket  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
 
+from ..timing import within  # noqa: E402
+
 
 def _system_names(monkeypatch, answer):
     """The real lookup (safefetch._resolve), with the system's getaddrinfo answering `answer(host)`."""
@@ -237,8 +239,8 @@ def test_a_slow_lookup_ends_with_the_requests_connect_timeout_and_never_holds_up
     finally:
         gate.set()
     assert all(isinstance(r, httpx.ConnectTimeout) for r in results), results
-    assert took < 1.5, took
-    assert disk_wait < 0.5, disk_wait
+    within(took, 1.5)
+    within(disk_wait, 0.5)
 
 
 @pytest.mark.parametrize("address", ["http://192.168.1..5:8989/", "http://" + "a" * 70 + ".example/"])

@@ -29,7 +29,7 @@ jobs:
           token=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
           echo "::stop-commands::$token"
           failed=0
-          for t in tools/test_release_gate.py tools/test_changed_lines.py tools/test_dep_scan.py tools/test_dupes.py tools/test_size_ratchet.py tools/test_claude_rules.py tools/test_mutate.py tools/test_diff_cover.py; do python3 "$t" || failed=1; done
+          for t in tools/test_release_gate.py tools/test_changed_lines.py tools/test_dep_scan.py tools/test_dupes.py tools/test_size_ratchet.py tools/test_claude_rules.py tools/test_mutate.py tools/test_diff_cover.py tools/test_suite_times.py; do python3 "$t" || failed=1; done
           echo "::$token::"
           if [ "$failed" != 0 ]; then echo "::error::A check's own tests failed (above)"; exit 1; fi
       - name: The gates

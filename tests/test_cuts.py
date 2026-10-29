@@ -26,6 +26,7 @@ from app.sources import MediaAccess, ResolvedSource, readable
 
 from .test_e2e import ff
 from .test_e2e_skipping import sectioned
+from .timing import within
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 S = 1000
@@ -333,7 +334,7 @@ async def test_saving_a_station_waits_no_longer_than_allowed(tmp_path):
     known = {k: [Marker(INTRO, 5500, 14500)] for k in ("201", "202")}
     began = time.monotonic()
     got = await finder.refined(items, known, look_s=0.3)
-    assert time.monotonic() - began < 1.5
+    within(time.monotonic() - began, 1.5)
     assert got["201"] == got["202"] == [Marker(INTRO, 7500, 12500)]
     assert asked == ["201"]
     release.set()
@@ -353,7 +354,7 @@ async def test_the_hourly_update_doesnt_wait(tmp_path):
     finder = cuts.CutFinder(SETTINGS, tmp_path, resolve)
     began = time.monotonic()
     await finder.refined([_item("/x.mkv", 60 * S)], {"201": [Marker(INTRO, 5500, 14500)]})
-    assert time.monotonic() - began < 0.5
+    within(time.monotonic() - began, 0.5)
     finder.stop()
 
 
@@ -427,7 +428,7 @@ async def test_while_the_share_isnt_answering_looking_waits(tmp_path, monkeypatc
     known = {k: [Marker(INTRO, 5500, 14500)] for k in ("201", "202")}
     began = time.monotonic()
     await finder.refined(items, known, look_s=5)
-    assert time.monotonic() - began < 1  # (no waiting on a share that isn't there)
+    within(time.monotonic() - began, 1)  # (no waiting on a share that isn't there)
     await asyncio.wait_for(finder._worker, 5)
     assert [k for k, _ in asked] == ["201", "201", "202"]
     assert asked[1][1] - asked[0][1] >= 0.2
@@ -545,7 +546,7 @@ async def test_a_station_with_many_programs_to_look_at_doesnt_wait(tmp_path):
     many = [_item(f"/{n}.mkv", 60 * S, str(n)) for n in range(cuts.LOOK_NOW_MOST + 1)]
     began = time.monotonic()
     await finder.refined(many, {i.rating_key: [Marker(INTRO, 5500, 14500)] for i in many}, 5)
-    assert time.monotonic() - began < 0.5
+    within(time.monotonic() - began, 0.5)
     finder.stop()
 
 
@@ -774,7 +775,7 @@ def test_stopping_stationplay_stops_what_is_being_read(tmp_path, monkeypatch):
         assert _running(str(stuck))
         began = time.monotonic()
     assert not _running(str(stuck))
-    assert time.monotonic() - began < cuts.CLOSE_WAIT_S + 3
+    within(time.monotonic() - began, cuts.CLOSE_WAIT_S + 3)
 
 
 def test_stopping_stationplay_keeps_alerts_and_ends_streams_before_cuts(
@@ -902,7 +903,7 @@ async def test_closing_waits_for_whats_being_read_a_moment_at_most(tmp_path):
     finder._worker = asyncio.create_task(stubborn())
     began = time.monotonic()
     await finder.close()
-    assert time.monotonic() - began < cuts.CLOSE_WAIT_S + 1
+    within(time.monotonic() - began, cuts.CLOSE_WAIT_S + 1)
     going = False
     finder._worker.cancel()
 
@@ -1127,7 +1128,7 @@ async def test_bulk_made_stations_go_first_and_never_wait(tmp_path):
         await asyncio.sleep(0.01)
     began = time.monotonic()
     await finder.refined([_item("/c.mkv", 60 * S, "300")], known, look_s=cuts.FIRST_NO_WAIT_S)
-    assert time.monotonic() - began < 0.1
+    within(time.monotonic() - began, 0.1)
     assert next(iter(finder._queue)) == "300:60000"
     stuck.set()
     await asyncio.wait_for(finder._worker, 10)

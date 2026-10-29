@@ -13,6 +13,8 @@ import pytest
 from app.db import Item
 from app.schedule import MAX_IN_A_ROW, build_playlist, fresh_window, show_key, shuffle_spread
 
+from .timing import within
+
 
 def reference_shuffle(
     pool: list[Item],
@@ -138,7 +140,7 @@ def test_a_huge_station_shuffles_quickly():
     pool = build_playlist(items, "shuffle")
     started = time.perf_counter()
     order = shuffle_spread(pool, random.Random(1), previous=shuffle_spread(pool, random.Random(0)))
-    assert time.perf_counter() - started < 10
+    within(time.perf_counter() - started, 10)
     assert len(order) == len(pool)
     run = 1
     for a, b in itertools.pairwise(order):

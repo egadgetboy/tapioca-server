@@ -19,6 +19,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .timing import within
 
 
 def make(tmp_path, fp: FakePlex | None = None, **settings) -> TestClient:
@@ -203,7 +204,7 @@ def test_the_first_step_checks_the_server_without_waiting_for_plex(tmp_path, mon
         checks = {x["id"]: x for x in c.get("/api/setup/checks").json()["checks"]}
         took = time.monotonic() - began
     assert asked == []
-    assert took < 4, took
+    within(took, 4)
     assert list(checks) == ["media", "encoding", "clock", "backups"]
     assert checks["media"]["title"] == "Your media folder"
     assert checks["media"]["state"] == "good"
@@ -371,7 +372,7 @@ def test_with_plex_down_its_tuner_isnt_looked_for(tmp_path, monkeypatch):
         "tapiOca can’t reach Plex at plex.test: nothing answered. Check that PLEX_URL is your "
         "Plex server’s address, and that Plex is running."
     ]
-    assert took < 4, took
+    within(took, 4)
 
 
 def test_media_in_the_apps_says_plainly_when_plex_isnt_answering(tmp_path, monkeypatch):
@@ -385,7 +386,7 @@ def test_media_in_the_apps_says_plainly_when_plex_isnt_answering(tmp_path, monke
         began = time.monotonic()
         got = c.get("/api/app-libraries").json()
         took = time.monotonic() - began
-    assert took < 4, took
+    within(took, 4)
     assert got["libraries"] == [] and got["shared"] == ["1"]
     assert got["problem"] == (
         "Plex isn’t answering, so tapiOca can’t list your Media folders right now. "
@@ -604,7 +605,7 @@ def test_your_own_folders_dont_wait_long_for_plex(tmp_path, monkeypatch):
         took = time.monotonic() - began
     assert listed.status_code == 200 and listed.json()["plexProblem"]
     assert browsed.status_code == 200 and browsed.json()["folders"] == ["TV"]
-    assert took < 4, took
+    within(took, 4)
 
 
 def test_media_dir_set_to_the_servers_own_path(tmp_path, monkeypatch):

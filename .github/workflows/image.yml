@@ -200,14 +200,21 @@ jobs:
           # (Under coverage, for the check that changed lines are covered: the
           # image's own command, measured; Python's low-cost monitoring.)
           mkdir -p "$RUNNER_TEMP/cov" && chmod 777 "$RUNNER_TEMP/cov"
-          docker run --rm --init -e COLUMNS=400 -e COVERAGE_CORE=sysmon -v "$RUNNER_TEMP/cov:/tmp/cov" stationplay:test \
+          docker run --rm --init -e COLUMNS=400 -e COVERAGE_CORE=sysmon -e TAPIOCA_TIMINGS=/tmp/cov/timings.txt -v "$RUNNER_TEMP/cov:/tmp/cov" stationplay:test \
             python -m coverage run --data-file=/tmp/cov/.coverage --source=app -m pytest -v -p no:cacheprovider -rfE \
+            --junitxml=/tmp/cov/junit.xml \
             2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
             grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -9 | cut -c1-1600 | sed 's/^/::error::/'
             why=$(grep -E "^E   " "$RUNNER_TEMP/tests.txt" | head -40 | cut -c1-300 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
             [ -n "$why" ] && echo "::error title=Why::$why"
             exit 1
           }
+          # (Each file's time, one notice, for splitting the tests into
+          # balanced parts: the CI audit, P4, measured first.)
+          python3 tools/suite_times.py "$RUNNER_TEMP/cov/junit.xml"
+          # (Each timing test's measure against its limit, the thinnest first:
+          # P13, recorded over the next runs before any limit changes.)
+          python3 tools/suite_times.py --timings "$RUNNER_TEMP/cov/timings.txt"
       # Changed lines are covered: each line of app/ changed since the last
       # release, with code on it, runs in a test (tools/diff_cover.py).
       - name: Changed lines covered

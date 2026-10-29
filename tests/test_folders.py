@@ -21,6 +21,7 @@ from app.folders import FolderSource, NotFolder
 from app.library import LibraryError, NoPicture
 
 from .folderlib import Clips, jellyfin_movies, plex_tv, put, radarr_movies, remove, sonarr_tv
+from .timing import within
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 
@@ -581,10 +582,10 @@ async def test_a_big_library_never_holds_everything_else_up(tmp_path, monkeypatc
     lib = source.add_library("TV", "show", [str(tv)])
     stall, changed = await _worst_stall(source.scan(lib.id))
     assert changed and source.counts(lib.id)["episode"] == 20_000
-    assert stall < 1.0, f"the first scan held everything up for {stall:.1f}s"
+    within(stall, 1.0, f"the first scan held everything up for {stall:.1f}s")
     stall, changed = await _worst_stall(source.scan(lib.id))
     assert not changed
-    assert stall < 1.0, f"a scan finding nothing new held everything up for {stall:.1f}s"
+    within(stall, 1.0, f"a scan finding nothing new held everything up for {stall:.1f}s")
     # Every episode of 10 shows renamed: each keeps its key.
     renamed = {}
     for t in list(source.things.values()):
@@ -598,20 +599,20 @@ async def test_a_big_library_never_holds_everything_else_up(tmp_path, monkeypatc
     assert changed and source.counts(lib.id)["episode"] == 20_000
     assert {p: t.id for t in source.things.values() for v in t.files for p in v
             if p in renamed} == renamed  # fmt: skip
-    assert stall < 1.0, f"a scan finding renamed files held everything up for {stall:.1f}s"
+    within(stall, 1.0, f"a scan finding renamed files held everything up for {stall:.1f}s")
     # A station of the whole library: its programs worked out the same way.
     stall, items = await _worst_stall(
         source.items_for_source({"type": "section", "key": lib.key, "sectionType": "show"})
     )
     assert len(items) == 20_000
-    assert stall < 1.0, f"a station of every episode held everything up for {stall:.1f}s"
+    within(stall, 1.0, f"a station of every episode held everything up for {stall:.1f}s")
     # Every show's folder renamed (as when Sonarr renames them all): found
     # again by title and year, each episode in its place.
     keys = {t.id for t in source.things.values()}
     _renamed_shows(tv, 400)
     stall, changed = await _worst_stall(source.scan(lib.id))
     assert changed and {t.id for t in source.things.values()} == keys
-    assert stall < 1.0, f"a scan finding every show renamed held everything up for {stall:.1f}s"
+    within(stall, 1.0, f"a scan finding every show renamed held everything up for {stall:.1f}s")
     # 3,000 movies in 400 collections (each movie.nfo's <set>): the
     # collections listed, as the station editor and the hourly check do.
     movies = Path(source.settings.media_dir) / "Movies"
@@ -620,7 +621,7 @@ async def test_a_big_library_never_holds_everything_else_up(tmp_path, monkeypatc
     await source.scan(films.id)
     stall, collections = await _worst_stall(source.collections())
     assert len(collections) == 400 and sum(c["count"] for c in collections) == 3000
-    assert stall < 1.0, f"listing collections held everything up for {stall:.1f}s"
+    within(stall, 1.0, f"listing collections held everything up for {stall:.1f}s")
 
 
 async def test_a_library_removed_while_its_being_read_stays_removed(tmp_path, clips, monkeypatch):
@@ -938,7 +939,7 @@ def test_an_nfo_full_of_addresses_is_read_quickly():
         began = time.monotonic()
         with pytest.raises(nfo.NfoError):
             nfo.parse(data[: nfo.MOST_BYTES])
-        assert time.monotonic() - began < 0.5
+        within(time.monotonic() - began, 0.5)
     said = nfo.parse(b"https://thetvdb.com/?tab=series&id=81111\n")
     assert said == [{"kind": "", "ids": {"tvdb": "81111"}}]
     said = nfo.parse(b"https://www.thetvdb.com/series/81112-northbound\n")
