@@ -488,7 +488,22 @@ def server_plan(manifest: dict, code: list[str]) -> dict:
     return {"readiness": readiness, "register_ids": ids, "record_before_code": before}
 
 
-def context_at(rev: str, platform: str, paths: list[str], manifest: dict | None = None) -> Context:
+def last_release_before(platform: str, version: str, rev: str) -> str | None:
+    """The newest release before `version` in `rev`'s history: what the
+    release is measured from, before its own tag is made and after."""
+    prefix = TAGS[platform]
+    tags = [
+        t
+        for t in git("tag", "--list", f"{prefix}*", "--merged", rev).split()
+        if re.fullmatch(re.escape(prefix) + r"\d+\.\d+\.\d+", t)
+        and numbers(t[len(prefix) :]) < numbers(version)
+    ]
+    return max(tags, key=lambda t: numbers(t[len(prefix) :])) if tags else None
+
+
+def context_at(
+    rev: str, platform: str, version: str, paths: list[str], manifest: dict | None = None
+) -> Context:
     readiness: dict[str, str] = {}
     ids: set[str] = set()
     if not SERVER:
@@ -498,13 +513,7 @@ def context_at(rev: str, platform: str, paths: list[str], manifest: dict | None 
                 "release_gate: the plan isn't fetched (git fetch origin +refs/heads/plan-update:refs/remotes/origin/plan-update)"
             )
         readiness, ids = plan_tables(plan)
-    prefix = TAGS[platform]
-    tags = [
-        t
-        for t in git("tag", "--list", f"{prefix}*", "--merged", rev).split()
-        if re.fullmatch(re.escape(prefix) + r"\d+\.\d+\.\d+", t)
-    ]
-    last = tags and max(tags, key=lambda t: [int(x) for x in t[len(prefix) :].split(".")])
+    last = last_release_before(platform, version, rev)
     span = f"{last}..{rev}" if last else rev
     code = git("log", "--reverse", "--format=%H", span, "--", *CODE).split()
     files = {p: t for p in paths if (t := at(rev, p)) is not None}
@@ -540,7 +549,7 @@ def check(platform: str, version: str, rev: str = "HEAD") -> list[str]:
     if m is None:
         return [f"{path}: {p}" for p in found]
     paths = [r.get("report", "") for r in m.get("review", [])] + [m.get("threat_model", "")]
-    ctx = context_at(rev, platform, [p for p in paths if p], m)
+    ctx = context_at(rev, platform, version, [p for p in paths if p], m)
     ctx.starts_history = starts_history(TAGS[platform] + version)
     return [f"{path}: {p}" for p in problems(m, version, ctx)]
 
