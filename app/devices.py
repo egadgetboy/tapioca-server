@@ -345,9 +345,20 @@ class Devices:
         PIN there for Admin tasks (see choose)."""
         self.db.set_device_person(device.id, user.id, SIGNED_IN_HERE, by_password)
 
-    def remove(self, device: Device, user: User) -> None:
-        """Someone takes themselves off a device's picker."""
-        self.db.set_device_person(device.id, user.id, REMOVED)
+    def remove(self, device: Device, user: User, token_hash: str) -> None:
+        """Someone takes themselves off a device's picker, with a sign-in of
+        theirs that's still good (by its hash): it ends, and so does every
+        sign-in of theirs there."""
+        self.db.remove_signed_in(device.id, user.id, token_hash)
+
+    def remove_ended(self, device: Device, token_hash: str) -> User | None:
+        """Someone takes themselves off a device's picker with their newest
+        sign-in there, or the one a changed password renewed it from, after
+        it ended (by its hash), while they're on it anywhere, at home or away:
+        the one thing it still does (1.44.3). Who came off, or None."""
+        return self.db.remove_by_ended_sign_in(
+            device.id, token_hash, lambda user, how: self.on_picker(user, how, at_home=True)
+        )
 
     # Picking someone ---------------------------------------------------------------
 

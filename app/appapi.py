@@ -596,7 +596,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         except access.NotAllowed:
             raise HTTPException(403, access.ADMINS_ONLY) from None
         token = ctx.access.start_session(
-            user, signed.app, signed.device_id, how=access.HOW_PASSWORD
+            user,
+            signed.app,
+            signed.device_id,
+            how=access.HOW_PASSWORD,
+            renewed_from=access.bearer(request.scope),
         )
         ctx.access.record(
             logging.INFO, f"{user.name} changed their password in {in_sentence(signed.app)}"
@@ -712,15 +716,28 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/api/internal/picker/remove")
     async def picker_remove(request: Request):
+        """Sign out in an app: someone takes themselves off this device's
+        picker. Open at the Gate (access.OPEN): the device's key says which
+        device, and the app's sign-in whose person, never a browser's. A
+        sign-in still good works as anywhere; one that's ended, only if it's
+        their newest there, or the one a changed password renewed it from
+        (1.44.3: devices.remove_ended). An API token gets the Gate's answer."""
         device = this_device(request)
-        user = access.signed_in(request)
-        if user is None:
-            raise HTTPException(401, "Sign in to tapiOca")
-        ctx.devices.remove(device, user)
         token = access.bearer(request.scope)
-        if token:
-            ctx.access.end_session(token)
-        ctx.access.record(logging.INFO, f"{user.name} took themselves off {device.name}")
+        if token is None:
+            raise HTTPException(401, access.SIGN_IN)
+        if token.startswith(access.API_TOKEN_PREFIX):
+            refused = request.scope["state"].get("token_refused")
+            raise HTTPException(*(refused or (401, access.SIGN_IN)))
+        hashed = access.session_hash(token)
+        user = access.signed_in(request)
+        ended = user is None
+        if user is not None:
+            ctx.devices.remove(device, user, hashed)
+        elif (user := ctx.devices.remove_ended(device, hashed)) is None:
+            raise HTTPException(401, access.SIGN_IN)
+        said = " (their sign-in there had ended)" if ended else ""
+        ctx.access.record(logging.INFO, f"{user.name} took themselves off {device.name}{said}")
         return {"ok": True}
 
     # On tapiOca's page: entering an app's code, and the apps signed in.

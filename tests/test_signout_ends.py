@@ -214,9 +214,10 @@ def test_an_ended_sign_in_does_nothing_else(app, tv_room):
     assert people(tv, key) == ["Ada", "Pat"]
 
 
-def test_someone_listed_only_at_home_signs_out_from_away(tmp_path):
+def test_someone_listed_only_at_home_signs_out_from_away(tmp_path, monkeypatch):
     # (P11b: no password, no PIN, so listed only at home; their ended sign-in
-    # sent from away still takes them off.)
+    # sent from away still takes them off. It ends by a day unused: a role
+    # change needs a password first.)
     app = two_ports(tmp_path)
     with TestClient(app) as admin:
         assert admin.post("/api/access/users", json=ADA).status_code == 201
@@ -229,9 +230,9 @@ def test_someone_listed_only_at_home_signs_out_from_away(tmp_path):
             headers=device(key),
         ).json()["token"]  # fmt: skip
         assert people(tv, key) == ["Ada", "Kids"]
-        assert (
-            admin.put(f"/api/access/users/{kids['id']}", json={"role": "admin"}).status_code == 200
-        )
+        later = access._now() + access.PICKED_MS + 60_000
+        monkeypatch.setattr(access, "_now", lambda: later)
+        assert tv.get("/api/v1/stations", headers=bearer(token)).status_code == 401
         away = away_from_home(app)
         gone = away.post(REMOVE, headers={**device(key), **bearer(token)})
         assert gone.status_code == 200, gone.text
@@ -360,7 +361,7 @@ def test_a_live_sign_in_of_another_device_also_ends_theirs_here(app, tv_room):
 def _tv_id(app) -> int:
     with sqlite3.connect(Path(app.state.ctx.db.path)) as c:
         return c.execute(
-            "SELECT id FROM linked_devices WHERE name = ?", (TV["deviceName"],)
+            "SELECT id FROM linked_devices WHERE name = ?", (f"{TV['app']} on {TV['deviceName']}",)
         ).fetchone()[0]
 
 

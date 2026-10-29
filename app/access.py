@@ -124,6 +124,7 @@ SEEN_EVERY_MS = 5 * 60_000  # how often a session's "last seen" is saved
 IDLE_SIGN_OUT_S = 3600
 ACTIVE_EVERY_MS = 10_000  # how often a browser's last use is saved, at most
 IDLE_SIGNED_OUT = "You were signed out after an hour without activity."
+SIGN_IN = "Sign in to tapiOca"  # (the Gate's answer with no sign-in it takes)
 IDLED_KEPT = 1000  # browsers signed out that way that are told why, at most (the newest)
 PICKED_MS = 24 * 3600_000  # a sign-in from a linked device's picker lasts this long unused
 # (1.36.2, the owner, October 14: "Password strength needs to be industry
@@ -344,6 +345,10 @@ OPEN = (
     | {"/api/internal/sign-in", "/api/internal/link", "/api/internal/link/check"}
     # (A linked device's picker: its key, not a sign-in, says who may ask.)
     | {"/api/internal/picker", "/api/internal/picker/choose", "/api/internal/picker/sign-in"}
+    # (Taking yourself off a device's picker: its key, and a sign-in of
+    # yours there, still good or your newest there after it ended, which the
+    # handler decides: see appapi.py, 1.44.3.)
+    | {"/api/internal/picker/remove"}
     # (A trusted network's: where the request comes from says who may: see
     # trustedapi.py, 1.36.0.)
     | {"/api/access/trusted-sign-in", "/api/internal/trusted"}
@@ -381,7 +386,7 @@ FOR_USERS = {
         "/api/logos/plex", "/api/bumpers", "/api/smart/split", "/api/smart/stations",
         "/api/internal/sign-out", "/api/internal/speed-test", "/api/access/link",
         "/api/internal/play", "/api/internal/progress", "/api/internal/report",
-        "/api/internal/problem", "/api/internal/picker/remove", "/api/access/active",
+        "/api/internal/problem", "/api/access/active",
         "/api/internal/pin", "/api/internal/password", "/api/internal/report-problem",
         "/api/internal/watched",
     ),
@@ -404,9 +409,9 @@ FOR_WATCHERS = {
     "POST": (
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
         "/api/access/link", "/api/internal/play", "/api/internal/progress",
-        "/api/internal/report", "/api/internal/problem", "/api/internal/picker/remove",
-        "/api/access/active", "/api/internal/pin", "/api/internal/password",
-        "/api/internal/report-problem", "/api/internal/watched",
+        "/api/internal/report", "/api/internal/problem", "/api/access/active",
+        "/api/internal/pin", "/api/internal/password", "/api/internal/report-problem",
+        "/api/internal/watched",
     ),
     "PUT": ("/api/internal/languages", "/api/internal/items/"),
     "DELETE": ("/api/internal/items/",),
@@ -972,6 +977,7 @@ class Access:
         watching: bool = False,
         *,
         how: str,
+        renewed_from: str | None = None,
     ) -> str:
         """A new token for a browser (or `app`, one of tapiOca's: which,
         on what device; `device_id`: a linked device, from its picker, and
@@ -982,7 +988,8 @@ class Access:
         works on (see trusted.py). For an Admin, `admin_pin`: made with
         their PIN in Light sign-in; `watching`: for watching only (see
         for_watching). `how`: how it was made, one of HOWS, always said (see
-        without_secret)."""
+        without_secret). `renewed_from`: the sign-in a changed password
+        renews, on a linked device (see Database.remove_by_ended_sign_in)."""
         if how not in HOWS:
             raise ValueError(f"No such way to make a sign-in: {how!r}")
         prefix = (
@@ -992,6 +999,7 @@ class Access:
         self.db.add_session(
             session_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id, unlocked,
             asked_from.get() if at is None else at, trusted, admin_pin, watching, how,
+            session_hash(renewed_from) if renewed_from else None,
         )  # fmt: skip
         return token
 
@@ -1657,7 +1665,10 @@ class Gate:
         token = app_token or _cookie(scope, COOKIE)
         if token and token.startswith(API_TOKEN_PREFIX):
             refused = self._api_token(scope, token)
-            return None if path in OPEN else refused
+            if path in OPEN:
+                state["token_refused"] = refused  # (for a handler that asks: one decision)
+                return None
+            return refused
         user, idle = None, False
         made: list[SignedIn] = []
         if token:
@@ -1692,7 +1703,7 @@ class Gate:
         if path in OPEN:
             return None
         if user is None:
-            return 401, IDLE_SIGNED_OUT if idle else "Sign in to tapiOca"
+            return 401, IDLE_SIGNED_OUT if idle else SIGN_IN
         if user.role != ADMIN and not _for_users(path, scope["method"]):
             return 403, ADMINS_ONLY
         if (

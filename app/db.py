@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 from functools import cached_property
@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from .languages import Choice
+from .releases import VERSION_META, as_tuple
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS channels (
@@ -325,6 +326,19 @@ CREATE TABLE IF NOT EXISTS device_people (
     how          TEXT    NOT NULL,            -- 'signed-in', 'chosen' or 'removed'
     PRIMARY KEY (device_id, user_id)
 );
+-- Each person's newest sign-in on each linked device, and the one a changed
+-- password renewed it from, by their hashes (from 1.44.3): after it ends,
+-- it can still take that person off that device's picker, and nothing else
+-- (see Database.remove_by_ended_sign_in). Never in a backup.
+CREATE TABLE IF NOT EXISTS device_sign_ins (
+    device_id    INTEGER NOT NULL REFERENCES linked_devices(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_hash TEXT    NOT NULL,
+    renewed_from TEXT,
+    made_ms      INTEGER NOT NULL,
+    PRIMARY KEY (device_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS device_sign_ins_by_hash ON device_sign_ins (session_hash);
 -- Invite codes (see devices.py): one at a time for each user, by a hash.
 CREATE TABLE IF NOT EXISTS invites (
     user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -993,14 +1007,16 @@ class CachedMarkers:
 
 def copy_database(source: Path, dest: Path, sign_ins: bool = False) -> None:
     """A consistent copy of a database for a backup, read through a connection
-    of its own so nothing else waits for it. Sign-ins (and the browsers they
-    were on) aren't copied unless asked (`sign_ins`): a backup restored later
-    signs everyone out, and one passed around can't be used to sign in."""
+    of its own so nothing else waits for it. Sign-ins (and the browsers and
+    devices they were on) aren't copied unless asked (`sign_ins`): a backup
+    restored later signs everyone out, and one passed around can't be used
+    to sign in, or say who signed in where."""
     src = sqlite3.connect(source)
     out = sqlite3.connect(dest)
     try:
         src.backup(out)
-        for table in () if sign_ins else ("sessions", "devices", "browser_people"):
+        emptied = ("sessions", "devices", "browser_people", "device_sign_ins")
+        for table in () if sign_ins else emptied:
             if out.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (table,)).fetchone():
                 out.execute(f"DELETE FROM {table}")
         out.commit()
@@ -1008,6 +1024,66 @@ def copy_database(source: Path, dest: Path, sign_ins: bool = False) -> None:
     finally:
         out.close()
         src.close()
+
+
+# device_sign_ins (see the schema), from the first version that keeps it up
+# to date; FILLED_META: it was filled from sessions, to the end.
+KEEPS_DEVICE_SIGN_INS = (1, 44, 3)
+FILLED_META = "device_sign_ins_filled"
+# Each person's newest sign-in on each linked device, as sessions has them.
+_NEWEST_ON_DEVICES = (
+    "SELECT s.device_id, s.user_id, s.token_hash, s.created_ms FROM sessions s "
+    "JOIN linked_devices d ON d.id = s.device_id JOIN users u ON u.id = s.user_id "
+    "WHERE s.rowid = (SELECT n.rowid FROM sessions n WHERE n.device_id = s.device_id "
+    "AND n.user_id = s.user_id ORDER BY n.created_ms DESC, n.rowid DESC LIMIT 1)"
+)
+_FILL_META = "SELECT key, value FROM meta WHERE key IN (?, ?)"
+# A device's sign-in without its row (see device_sign_ins_fill).
+_UNROWED = (
+    f"SELECT 1 FROM ({_NEWEST_ON_DEVICES}) n WHERE NOT EXISTS (SELECT 1 FROM device_sign_ins r "
+    "WHERE r.device_id = n.device_id AND r.user_id = n.user_id "
+    "AND r.session_hash = n.token_hash) LIMIT 1"
+)
+
+
+def device_sign_ins_fill(*, table: bool, mark: bool, version_started: str, unrowed: bool) -> bool:
+    """Whether device_sign_ins is filled afresh from sessions as the database
+    opens: it's new (`table` False); a start stopped before its fill finished
+    (no `mark`); a version that didn't keep it may have run since
+    (`version_started` before KEEPS_DEVICE_SIGN_INS, or not a version; empty
+    says nothing: a bare open, or a version before 1.34.0); or a device's
+    sign-in has no row of its own (`unrowed`), so other code signed someone in
+    there. changes_needed and Database._upgrade both ask it, so the database
+    is always backed up first."""
+    if not (table and mark) or unrowed:
+        return True
+    if not version_started:
+        return False
+    started = as_tuple(version_started)
+    return started is None or started < KEEPS_DEVICE_SIGN_INS
+
+
+def _fills_device_sign_ins(conn: sqlite3.Connection, table: bool) -> bool:
+    """device_sign_ins_fill, for the database `conn` is open on (`table`:
+    whether device_sign_ins was there before this start)."""
+    if not table:
+        return True
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    meta: dict[str, str] = {}
+    if "meta" in tables:
+        meta = dict(conn.execute(_FILL_META, (FILLED_META, VERSION_META)).fetchall())
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    unrowed = (
+        "linked_devices" in tables
+        and "device_id" in columns
+        and conn.execute(_UNROWED).fetchone() is not None
+    )
+    return device_sign_ins_fill(
+        table=True,
+        mark=FILLED_META in meta,
+        version_started=meta.get(VERSION_META, ""),
+        unrowed=unrowed,
+    )
 
 
 def changes_needed(path: Path) -> list[str]:
@@ -1045,6 +1121,8 @@ def changes_needed(path: Path) -> list[str]:
             out.append("stations' programs kept as eras")
         if ("index", "views_by_start") in found:
             out.append("an old index dropped")
+        if ("table", "device_sign_ins") in found and _fills_device_sign_ins(have, table=True):
+            out.append("device sign-ins rebuilt")
         dated = ("table", "channels") in found and any(
             row[1] == "created_ms" for row in have.execute("PRAGMA table_info(channels)")
         )
@@ -1068,11 +1146,14 @@ class Database:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
         # (1.38.0's browser_people starts with the browsers devices has: see _upgrade.)
-        browsers_new = not self._conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'browser_people'"
-        ).fetchone()
+        browsers_new, sign_ins_new = (
+            not self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+            ).fetchone()
+            for table in ("browser_people", "device_sign_ins")
+        )
         self._conn.executescript(SCHEMA)
-        self._upgrade(browsers_new)
+        self._upgrade(browsers_new, sign_ins_new)
         # Each station's eras are cached in memory; an era never changes, and
         # they're read on every schedule lookup.
         self._eras_cache: dict[int, list[Era]] = {}
@@ -1117,13 +1198,14 @@ class Database:
                     (min(k for k in known if k), row["id"]),
                 )
 
-    def _upgrade(self, browsers_new: bool = False) -> None:
+    def _upgrade(self, browsers_new: bool = False, sign_ins_new: bool = False) -> None:
         """Brings a database made by an earlier version up to date. (What's
         done here must be found by changes_needed too, so the database is
         backed up before it's changed: see backups.before_update.)
         `browsers_new`: browser_people was made just now, so it starts with
         each browser someone signed in on before 1.38.0, as theirs, and
-        whether their PIN works there."""
+        whether their PIN works there. `sign_ins_new`: device_sign_ins was
+        made just now (see device_sign_ins_fill)."""
         with self._conn:
             self._conn.execute("DROP INDEX IF EXISTS views_by_start")  # (an early 1.9.0's)
         for table, column, definition in _ADDED_COLUMNS:
@@ -1147,6 +1229,18 @@ class Database:
                             "UPDATE linked_devices SET linked_by_id = (SELECT id FROM users "
                             "WHERE users.name = linked_devices.linked_by)"
                         )
+        if _fills_device_sign_ins(self._conn, table=not sign_ins_new):  # (after sessions.device_id)
+            with self._conn:
+                self._conn.execute("DELETE FROM device_sign_ins")
+                self._conn.execute(
+                    "INSERT INTO device_sign_ins (device_id, user_id, session_hash, made_ms) "
+                    + _NEWEST_ON_DEVICES
+                )
+                self._conn.execute(
+                    "INSERT INTO meta (key, value) VALUES (?, '1') "
+                    "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                    (FILLED_META,),
+                )
         if browsers_new:  # (after devices.pin_ok, from 1.27)
             with self._conn:
                 self._conn.execute(
@@ -2096,12 +2190,16 @@ class Database:
         admin_pin: bool = False,
         watching: bool = False,
         how: str = "old",
+        renewed_from: str | None = None,
     ) -> None:
         """Signs a browser (or `app`, one of tapiOca's; on a linked
         device, from its picker: `device_id`, and `unlocked` when picked
         without a PIN) in as a user, from `where` (an address), keeping only their `keep` newest sign-ins
         (the rest are signed out). On a linked device, whoever was signed in
-        there before is signed out. `admin_pin`, `watching`, `how`: see SignedIn."""
+        there before is signed out, and this is their newest there in
+        device_sign_ins, with `renewed_from`, the hash of the sign-in a
+        changed password renewed it from. `admin_pin`, `watching`, `how`:
+        see SignedIn."""
         with self._lock, self._conn:
             if device_id is not None:
                 self._conn.execute("DELETE FROM sessions WHERE device_id = ?", (device_id,))
@@ -2112,6 +2210,14 @@ class Database:
                 (token_hash, user_id, now, now, app, device_id, now, int(unlocked), trusted,
                  int(admin_pin), int(watching), how),
             )  # fmt: skip
+            if device_id is not None:
+                self._conn.execute(
+                    "INSERT INTO device_sign_ins (device_id, user_id, session_hash, renewed_from, "
+                    "made_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT (device_id, user_id) DO UPDATE SET "
+                    "session_hash = excluded.session_hash, renewed_from = excluded.renewed_from, "
+                    "made_ms = excluded.made_ms",
+                    (device_id, user_id, token_hash, renewed_from, now),
+                )
             # (Kept apart by where they work: a trusted network's sign-ins
             # never push out someone's others, 1.36.0.)
             self._conn.execute(
@@ -2161,9 +2267,17 @@ class Database:
         return row["app"] if row else None
 
     def seen(self, token_hash: str, now: int) -> None:
+        """A sign-in was used (at most every access.SEEN_EVERY_MS). Once a
+        changed password's new sign-in is, the one it renewed from no longer
+        takes its person off its device (see remove_by_ended_sign_in)."""
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE sessions SET seen_ms = ? WHERE token_hash = ?", (now, token_hash)
+            )
+            self._conn.execute(
+                "UPDATE device_sign_ins SET renewed_from = NULL "
+                "WHERE session_hash = ? AND renewed_from IS NOT NULL",
+                (token_hash,),
             )
 
     def active(self, token_hash: str, now: int) -> None:
@@ -2413,20 +2527,68 @@ class Database:
         in there (how 'signed-in'): `by_password`, with their password, which
         stays so until they're taken off it (1.38.0)."""
         with self._lock, self._conn:
-            if how is None:
-                self._conn.execute(
-                    "DELETE FROM device_people WHERE device_id = ? AND user_id = ?",
-                    (device_id, user_id),
-                )
-            else:
-                self._conn.execute(
-                    "INSERT INTO device_people (device_id, user_id, how, by_password) "
-                    "VALUES (?, ?, ?, ?) ON CONFLICT (device_id, user_id) DO UPDATE SET "
-                    "by_password = CASE WHEN excluded.how = 'signed-in' AND how = 'signed-in' "
-                    "THEN MAX(by_password, excluded.by_password) ELSE excluded.by_password END, "
-                    "how = excluded.how",
-                    (device_id, user_id, how, int(by_password and how == "signed-in")),
-                )
+            self._set_device_person(device_id, user_id, how, by_password)
+
+    def _set_device_person(
+        self, device_id: int, user_id: int, how: str | None, by_password: bool = False
+    ) -> None:
+        """set_device_person, inside a transaction that holds the lock."""
+        if how is None:
+            self._conn.execute(
+                "DELETE FROM device_people WHERE device_id = ? AND user_id = ?",
+                (device_id, user_id),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO device_people (device_id, user_id, how, by_password) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT (device_id, user_id) DO UPDATE SET "
+                "by_password = CASE WHEN excluded.how = 'signed-in' AND how = 'signed-in' "
+                "THEN MAX(by_password, excluded.by_password) ELSE excluded.by_password END, "
+                "how = excluded.how",
+                (device_id, user_id, how, int(by_password and how == "signed-in")),
+            )
+
+    def remove_signed_in(self, device_id: int, user_id: int, token_hash: str) -> None:
+        """Someone takes themselves off a device's picker with a sign-in of
+        theirs that's still good (`token_hash`): it ends, and so does every
+        sign-in of theirs on that device."""
+        with self._lock, self._conn:
+            self._take_off(device_id, user_id)
+            self._conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+
+    def remove_by_ended_sign_in(
+        self, device_id: int, token_hash: str, on_picker: Callable[[User, str | None], bool]
+    ) -> User | None:
+        """Someone takes themselves off a device's picker with their newest
+        sign-in there, or the one a changed password renewed it from, after
+        it ended (`token_hash`), while they're on it (`on_picker`, given them
+        and how they're on it there: see devices.on_picker). Every sign-in of
+        theirs there ends. Who came off; None if no one did (1.44.3)."""
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT users.*, device_people.how FROM device_sign_ins "
+                "JOIN users ON users.id = device_sign_ins.user_id "
+                "LEFT JOIN device_people ON device_people.device_id = device_sign_ins.device_id "
+                "AND device_people.user_id = device_sign_ins.user_id "
+                "WHERE device_sign_ins.device_id = ? AND ? IN (session_hash, renewed_from)",
+                (device_id, token_hash),
+            ).fetchone()
+            if row is None or not on_picker(_user(row), row["how"]):
+                return None
+            self._take_off(device_id, row["id"])
+        return _user(row)
+
+    def _take_off(self, device_id: int, user_id: int) -> None:
+        """Someone off a device's picker, with every sign-in of theirs there
+        and their newest in device_sign_ins, inside a transaction that holds
+        the lock."""
+        self._set_device_person(device_id, user_id, "removed")
+        self._conn.execute(
+            "DELETE FROM sessions WHERE device_id = ? AND user_id = ?", (device_id, user_id)
+        )
+        self._conn.execute(
+            "DELETE FROM device_sign_ins WHERE device_id = ? AND user_id = ?", (device_id, user_id)
+        )
 
     def set_chosen_devices(self, user_id: int, device_ids: list[int]) -> None:
         """The devices an Admin chose for someone (Selected devices) are
