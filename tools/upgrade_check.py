@@ -55,6 +55,15 @@ back; and an install with signing in off keeps working at home, answers a
 name that isn't home's with only its page, asks that one setup question
 again, and alerts an Admin.
 
+From 1.44.3: the update fills the device sign-ins' record from the
+sign-ins it finds (the linked device's app sign-in has its row), and a
+sign-in a password changed on another device ended still takes its person
+off its device; then, with the release before started on that database as
+it is, signing someone in again on a device and their sign-in left unused
+for a day, this checkout started again rebuilds the record: the sign-in
+from before refused (it was replaced), and the ended one from the release
+before taking its person off.
+
 From 1.34.0: this checkout's update check never reaches GitHub here (a
 stand-in answers, and notes each time it's asked), and must ask nothing
 at all, as no Admin answers whether it may; the first start after the
@@ -103,7 +112,7 @@ sys.path.insert(0, str(ROOT))
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 
-from app import __version__  # noqa: E402
+from app import __version__, access  # noqa: E402
 from app.broken import CHECK, DEEP_SCAN, BrokenFiles  # noqa: E402
 from app.db import Item, changes_needed  # noqa: E402
 from tests.fakeplex import FakePlex  # noqa: E402
@@ -117,6 +126,11 @@ KIDS = {"name": "Kids", "role": "user"}  # (no password, no PIN)
 NEW = {"name": "Bo", "password": "horse staple battery", "role": "user"}
 PASSCODE = "4321"
 APP = {"app": "tapiOca for Android", "deviceName": "Den"}
+# (From 1.44.3: someone signing out on a device after their sign-in there ended.)
+LEE = {"name": "Lee", "password": "lee's own long password", "role": "user"}
+LEE_NEW = "lee's newer long password"
+HALL = {"app": "tapiOca for Roku", "deviceName": "Hall"}
+PHONE = {"app": "tapiOca for Android", "deviceName": "Lee's phone"}
 STATION = {"number": 5, "name": "Upgrade TV", "sources": [{"type": "show", "ratingKey": "100"}]}
 # (From 1.35.0: a station from a Media folder of tapiOca's own.)
 OWN_STATION = (42, "Own Folders TV")
@@ -441,6 +455,45 @@ def old_sign_ins(checks: Checks, url: str, made: dict, where: str) -> dict:
               f"{where}: the Admin's password signs in again", signed.text[:200])  # fmt: skip
     return {**made, "cookies": dict(fresh.cookies),
             "bearer": {"Authorization": f"Bearer {app.json().get('token')}"}}  # fmt: skip
+
+
+def removed(url: str, key: str, token: str) -> int:
+    """Sign out on a linked device: its answer's status."""
+    headers = {"stationplay-device": key, "Authorization": f"Bearer {token}"}
+    return httpx.post(f"{url}/api/internal/picker/remove", headers=headers, timeout=30).status_code
+
+
+def kept_by_hash(data: Path) -> set[str]:
+    """The newest sign-ins the device sign-ins' record keeps, by hash."""
+    with contextlib.closing(sqlite3.connect(data / "stationplay.db")) as db:
+        return {row[0] for row in db.execute("SELECT session_hash FROM device_sign_ins")}
+
+
+def sign_out_ended(checks: Checks, url: str, made: dict) -> dict:
+    """From 1.44.3: Lee signs in on a Hall Roku, changes their password on
+    their phone, and Sign out on the Roku, with the sign-in that ended,
+    still takes them off it; then signs in there again. Lee, the Roku's
+    key and that sign-in."""
+    page = httpx.Client(headers=PAGE, base_url=url, timeout=30, cookies=made["cookies"])
+    app = httpx.Client(base_url=url, timeout=30)
+    added = page.post("/api/access/users", json={**LEE, "showOn": "signed-in"})
+    hall = app.post("/api/internal/sign-in", json={**ADMIN, **HALL, "picker": True}).json()
+    key = {"stationplay-device": hall.get("deviceKey", "")}
+    first = app.post("/api/internal/picker/sign-in", headers=key, json=LEE).json().get("token", "")
+    phone = app.post("/api/internal/sign-in", json={**LEE, **PHONE})
+    changed = app.post("/api/internal/password", json={"current": LEE["password"], "new": LEE_NEW},
+                       headers={"Authorization": f"Bearer {phone.json().get('token')}"})  # fmt: skip
+    checks.ok((added.status_code, bool(first), changed.status_code) == (201, True, 200),
+              "Lee signs in on a Hall Roku, then changes their password on their phone",
+              (added.text[:200], changed.text[:200]))  # fmt: skip
+    gone = removed(url, key["stationplay-device"], first)
+    listed = [p["name"] for p in app.get("/api/internal/picker", headers=key).json()["people"]]
+    checks.ok(gone == 200 and LEE["name"] not in listed,
+              "Sign out on the Roku, with the sign-in that ended, takes Lee off it", (gone, listed))  # fmt: skip
+    again = app.post("/api/internal/picker/sign-in", headers=key,
+                     json={"name": LEE["name"], "password": LEE_NEW}).json().get("token", "")  # fmt: skip
+    checks.ok(bool(again), "Lee signs in on the Roku again")
+    return {"key": key["stationplay-device"], "token": again}
 
 
 def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> None:
@@ -768,6 +821,10 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         if sp is None:
             return
         made_before = made  # (the sign-ins the copy puts back)
+        if version_of(before) < (1, 44, 3) <= version_of(__version__):
+            den = made["bearer"]["Authorization"].removeprefix("Bearer ")
+            checks.ok(access.session_hash(den) in kept_by_hash(data),
+                      "the device sign-ins' record has the linked device's app sign-in")  # fmt: skip
         made = admin_again(checks, sp.url, made, before, "updated")
         page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
         notify = {"on": True, "url": f"{plex.url}/notify", "format": "json",
@@ -775,6 +832,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         checks.ok(page.put("/api/notify", json=notify).status_code == 200,
                   "alerts are sent to a web address")  # fmt: skip
         has_data(checks, sp.url, made, __version__, "updated")
+        lee = sign_out_ended(checks, sp.url, made) if version_of(__version__) >= (1, 44, 3) else {}
         if (1, 42, 0) <= version_of(before) < (1, 43, 0) <= version_of(__version__):
             # (1.43.0 removes 1.42's picture cache once, 30 s after it starts.)
             end = time.monotonic() + 60
@@ -953,9 +1011,28 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             tuner = page.get("/discover.json").status_code
             checks.ok(tuner == 200, "it ignores Tuner access by network: any device at home "
                       "uses the tuner, as the notes say", tuner)  # fmt: skip
+        if lee and version_of(before) < (1, 44, 3):
+            # (Lee signs in on the Roku again: the release before keeps no record of it.)
+            replaced = httpx.post(f"{sp.url}/api/internal/picker/sign-in", timeout=30,
+                                  headers={"stationplay-device": lee["key"]},
+                                  json={"name": LEE["name"], "password": LEE_NEW})  # fmt: skip
+            newer = replaced.json().get("token", "")
+            checks.ok(bool(newer), f"on {before}, Lee signs in on the Roku again", replaced.text[:200])
         stopped(checks, sp, before)
         checks.ok(kept_alerts(as_is) == kept, "it leaves the alerts as they were",
                   kept_alerts(as_is))  # fmt: skip
+        if lee and version_of(before) < (1, 44, 3):
+            # (Its sign-in left unused for a day: ended, and still among the sign-ins.)
+            with contextlib.closing(sqlite3.connect(as_is / "stationplay.db")) as db, db:
+                db.execute("UPDATE sessions SET seen_ms = seen_ms - ? WHERE token_hash = ?",
+                           (2 * 86_400_000, access.session_hash(newer)))  # fmt: skip
+            sp = start(ROOT, as_is, f"{__version__}-as-is-signed-out")
+            if sp is None:
+                return
+            checks.ok((removed(sp.url, lee["key"], lee["token"]), removed(sp.url, lee["key"], newer))
+                      == (401, 200), "updated again, the record is rebuilt: Lee's sign-in from "
+                      f"before is refused, and the one {before} made, ended since, takes Lee off")  # fmt: skip
+            stopped(checks, sp, __version__)
         if version_of(__version__) >= (1, 36, 0) and version_of(before) < (1, 36, 0):
             sp = start(ROOT, as_is, f"{__version__}-as-is-again")
             if sp is None:
