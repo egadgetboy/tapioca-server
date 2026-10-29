@@ -403,11 +403,14 @@ def test_a_remove_racing_a_pick(app, tv_room, monkeypatch):
 
     worker = threading.Thread(target=pick)
     worker.start()
-    assert checking.wait(10)
-    assert remove(tv, key, t1).status_code == 200
-    go.set()
-    worker.join(10)
+    try:
+        assert checking.wait(10)
+        removed = remove(tv, key, t1).status_code
+    finally:
+        go.set()  # (whatever the remove answered: the held check never hangs the test)
+        worker.join(10)
     assert not worker.is_alive()
+    assert removed == 200
     picked = answers["pick"]
     assert picked.status_code == 200, picked.text
     assert people(tv, key) == ["Ada"]
@@ -684,11 +687,14 @@ def test_a_remove_while_a_password_change_is_being_checked(app, tv_room, monkeyp
 
     worker = threading.Thread(target=change)
     worker.start()
-    assert checking.wait(10)
-    assert remove(tv, key, t1).status_code == 200
-    go.set()
-    worker.join(10)
+    try:
+        assert checking.wait(10)
+        removed = remove(tv, key, t1).status_code
+    finally:
+        go.set()  # (whatever the remove answered: the held check never hangs the test)
+        worker.join(10)
     assert not worker.is_alive()
+    assert removed == 200
     changed = answers["password"]
     assert changed.status_code == 200, changed.text
     assert tv.get("/api/internal/me", headers=bearer(changed.json()["token"])).status_code == 200
