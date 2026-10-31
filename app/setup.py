@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import backups, playback
+from . import backups, mediaread, playback
 from .playing import ago
 from .plex import PlexError
 from .sources import find_first, learn_mapping, local_candidates
@@ -653,9 +653,15 @@ async def media_check(ctx: AppContext, plex_ok: bool, present: bool) -> Check:
         ])  # fmt: skip
     plex_file = files[0]
     name = os.path.basename(plex_file)
-    found, timed_out = await find_first(
-        local_candidates(ctx.settings, ctx.media_access, plex_file), FIND_FILES_S
-    )
+    try:
+        found, timed_out = await find_first(
+            local_candidates(ctx.settings, ctx.media_access, plex_file),
+            mediaread.Policy.of(ctx.settings, ctx.library.plex_locations),
+            FIND_FILES_S,
+        )
+    except mediaread.Refused:
+        # (Found, but not where Media is: streamed from Plex, as one tapiOca can't see is. The log says why.)
+        found, timed_out = None, False
     problem = await asyncio.to_thread(_read_problem, found.path) if found is not None else None
     if found is not None and problem is None:
         learn_mapping(ctx.media_access, found)

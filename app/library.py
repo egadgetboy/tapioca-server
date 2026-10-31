@@ -132,6 +132,11 @@ class Library:
         return self.plex.configured
 
     @property
+    def plex_locations(self) -> tuple[str, ...]:
+        """Plex's library folders, as Plex last listed them (none without Plex)."""
+        return self.plex.locations if self.plex_on else ()
+
+    @property
     def folders_on(self) -> bool:
         """Whether there's a folder library."""
         found = self.folders

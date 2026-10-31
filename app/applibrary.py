@@ -64,7 +64,7 @@ from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
 from .library import LibraryError, NoPicture, is_folder_key
 from .ondemand import NotShared
 from .plex import NOT_ANSWERING
-from .sources import find_file, learn_mapping, part_starts
+from .sources import part_starts, read_here
 from .text import plain, possessive
 
 if TYPE_CHECKING:
@@ -1251,10 +1251,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         can read it itself; otherwise Plex's address for it)."""
         path = None
         if media.file:
-            found, _timed_out = await find_file(settings, ctx.media_access, e.key, media.file)
-            if found is not None:
-                learn_mapping(ctx.media_access, found)
-                path = found.path
+            path = await read_here(
+                settings, ctx.media_access, e.key, media.file, ctx.library.plex_locations
+            )
         stream = (
             ctx.library.stream_url(e.key, media.part_key)
             if path is None and media.part_key and ctx.library.configured
@@ -1959,10 +1958,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return over_the_limit(over, body, request, e, tag)
         path = None
         if media.file:
-            found, _timed_out = await find_file(settings, ctx.media_access, e.key, media.file)
-            if found is not None:
-                learn_mapping(ctx.media_access, found)
-                path = found.path
+            path = await read_here(
+                settings, ctx.media_access, e.key, media.file, ctx.library.plex_locations
+            )
         stream = (
             ctx.library.stream_url(e.key, media.part_key)
             if path is None and media.part_key and ctx.library.configured

@@ -277,6 +277,9 @@ class PlexClient:
         self._bulk = asyncio.Semaphore(BULK_REQUESTS)
         self._marker_slots = asyncio.Semaphore(MARKER_REQUESTS)
         self._choices: dict[tuple[str, str, int], tuple[float, list[dict[str, str]]]] = {}
+        # Plex's library folders, as it last listed them: where a file Plex names may be
+        # read as it is (mediaread's roots).
+        self.locations: tuple[str, ...] = ()
         # Collections Plex made again, and shows and movies Plex added again
         # (removed and found again, or matched afresh): the rating key a
         # station has, and the new one.
@@ -497,7 +500,7 @@ class PlexClient:
 
     async def sections(self) -> list[dict[str, Any]]:
         data = await self._get("/library/sections")
-        return [
+        found = [
             {
                 "key": d["key"],
                 "title": d.get("title", ""),
@@ -512,6 +515,8 @@ class PlexClient:
             for d in _listed(data, "Directory")
             if d.get("type") in ("show", "movie") and str(d.get("key") or "").isdigit()
         ]
+        self.locations = tuple(loc for section in found for loc in section["locations"])
+        return found
 
     async def counts(
         self, since_s: int, keys: Collection[str] | None = None
