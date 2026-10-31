@@ -18,6 +18,8 @@ jobs:
           img=ghcr.io/egadgetboy/tapioca-server:1.44.3
           docker pull -q "$img"
           v=$(docker run --rm --entrypoint ffmpeg "$img" -hide_banner -version | head -1)
+          mr=$(docker run --rm --entrypoint ffmpeg "$img" -hide_banner -h protocol=http | grep -A1 -- '-max_redirects' | tr -s ' ' | tr '\n' ' ')
+          echo "::notice title=max_redirects::$mr"
           echo "::notice title=version::$v"
           opts=$(docker run --rm --entrypoint ffmpeg "$img" -hide_banner -h protocol=http | awk '{print $1}' | grep '^-' | tr '\n' ' ')
           echo "::notice title=http options::$opts"
@@ -43,7 +45,7 @@ jobs:
           PY
           python3 /tmp/s.py & pid=$!
           sleep 1
-          for flags in "" "-reconnect 0"; do
+          for flags in "" "-max_redirects 0" "-max_redirects 1"; do
             rm -f /tmp/hit
             docker run --rm --network host --entrypoint ffprobe "$img" -hide_banner -v error $flags -protocol_whitelist http,tcp -i http://127.0.0.1:18081/movie.mkv >/dev/null 2>&1 || true
             if [ -f /tmp/hit ]; then echo "::notice title=302 followed ($flags)::yes, to $(cat /tmp/hit)"; else echo "::notice title=302 followed ($flags)::no"; fi
