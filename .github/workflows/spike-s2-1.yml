@@ -1,0 +1,51 @@
+# Spike S2-1 for The security suite: breadth and depth (docs/threat-models/security-suite-2.md in the apps
+# repo): whether the published image's FFmpeg can refuse an HTTP redirect, and which demuxers it has. A
+# spike's own branch only; never merged.
+name: Spike S2-1
+on:
+  push:
+    branches: [spike/s2-1]
+permissions:
+  contents: read
+jobs:
+  spike:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: The image's FFmpeg
+        run: |
+          set -u
+          img=ghcr.io/egadgetboy/tapioca-server:1.44.3
+          docker pull -q "$img"
+          v=$(docker run --rm --entrypoint ffmpeg "$img" -hide_banner -version | head -1)
+          echo "::notice title=version::$v"
+          opts=$(docker run --rm --entrypoint ffmpeg "$img" -hide_banner -h protocol=http | awk '{print $1}' | grep '^-' | tr '\n' ' ')
+          echo "::notice title=http options::$opts"
+          demux=$(docker run --rm --entrypoint ffmpeg "$img" -hide_banner -demuxers | awk 'NR>4 {print $2}' | tr '\n' ' ')
+          echo "::notice title=demuxers (1)::${demux:0:3500}"
+          echo "::notice title=demuxers (2)::${demux:3500:3500}"
+      - name: Does it follow a 302?
+        run: |
+          set -u
+          img=ghcr.io/egadgetboy/tapioca-server:1.44.3
+          cat > /tmp/s.py <<'PY'
+          import http.server, sys, threading
+          class R(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(302); self.send_header("Location", "http://127.0.0.1:18082/target.mp4"); self.end_headers()
+              def log_message(self, *a): pass
+          class T(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  open("/tmp/hit", "w").write(self.path); self.send_response(404); self.end_headers()
+              def log_message(self, *a): pass
+          threading.Thread(target=http.server.HTTPServer(("127.0.0.1", 18082), T).serve_forever, daemon=True).start()
+          http.server.HTTPServer(("127.0.0.1", 18081), R).serve_forever()
+          PY
+          python3 /tmp/s.py & pid=$!
+          sleep 1
+          for flags in "" "-reconnect 0"; do
+            rm -f /tmp/hit
+            docker run --rm --network host --entrypoint ffprobe "$img" -hide_banner -v error $flags -protocol_whitelist http,tcp -i http://127.0.0.1:18081/movie.mkv >/dev/null 2>&1 || true
+            if [ -f /tmp/hit ]; then echo "::notice title=302 followed ($flags)::yes, to $(cat /tmp/hit)"; else echo "::notice title=302 followed ($flags)::no"; fi
+          done
+          kill "$pid"
