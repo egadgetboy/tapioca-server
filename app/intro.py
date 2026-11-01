@@ -745,7 +745,7 @@ def _reel_inputs(
     args += ["-f", "lavfi", "-i", ";".join(g)]
     dial = "0:a:0" if sound is None else "1:a:0"
     if sound is not None:
-        args += ["-i", str(sound.path)]
+        args += mediainput.own(str(sound.path))
     if land is None or show is None:
         if sound is None:
             return [*args, "-map", "0:v:0", "-map", dial, "-t", f"{length:.3f}"]
@@ -774,7 +774,7 @@ def _reel_inputs(
         f"afade=t=in:st=0:d=0.5,adelay={delay}|{delay}[show];"
     )
     if landing:
-        args += ["-i", str(LANDING)]
+        args += mediainput.own(str(LANDING))
         mix += f"[{shown + 1}:a]{_STEREO},adelay={delay}|{delay}[landing];[dial][landing][show]amix=inputs=3"
     else:
         mix += "[dial][show]amix=inputs=2"
@@ -815,7 +815,7 @@ def _ident_inputs(
     fade = max(0.2, min(0.6, length / 6))
     sound = f"[1:a]{_STEREO},afade=t=out:st={length - fade:.3f}:d={fade:.3f},apad[aout]"
     return [
-        *args, "-f", "lavfi", "-i", ";".join(g), "-i", str(jingle_),
+        *args, "-f", "lavfi", "-i", ";".join(g), *mediainput.own(str(jingle_)),
         "-filter_complex", _PICTURE + sound, "-map", "[vout]", "-map", "[aout]", "-t", f"{length:.3f}",
     ]  # fmt: skip
 

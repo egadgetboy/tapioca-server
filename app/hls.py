@@ -143,7 +143,7 @@ def command(ffmpeg: str, folder: Path, night: bool = False) -> list[str]:
         streams = ["-map", "0", "-c", "copy"]
     return [
         ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error",
-        "-f", "mpegts", "-i", "pipe:0",
+        "-f", "mpegts", "-protocol_whitelist", "pipe", "-i", "pipe:0",
         *streams,
         "-f", "hls",
         "-hls_time", str(PIECE_S),

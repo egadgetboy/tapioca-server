@@ -89,6 +89,15 @@ def options(source: str) -> list[str]:
     return said
 
 
+# tapiOca's own files FFmpeg reads (an Intro Bumper's picture it made, the sounds it ships): mp4 and m4a.
+OWN_FORMATS = "mov,mp4,m4a,3gp,3g2,mj2"
+
+
+def own(path: str) -> list[str]:
+    """FFmpeg's input for one of tapiOca's own files: its whitelists, then `-i`."""
+    return ["-format_whitelist", OWN_FORMATS, "-protocol_whitelist", "file", "-i", path]
+
+
 def read(source: str) -> list[str]:
     """FFmpeg's input for reading `source` as Media: its options once enforced, then `-i`."""
     return [*(options(source) if ENFORCED else []), "-i", source]

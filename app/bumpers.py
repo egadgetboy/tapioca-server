@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from . import ffmpeg as ff
+from . import mediainput
 from .config import Settings
 from .text import name_from_file
 
@@ -221,7 +222,7 @@ def _sound_command(
     """ffmpeg arguments for the finished copy: the picture, and the sound in
     stereo, evened out to the programs' loudness, exactly as long as the
     picture (cut short, or run on in silence)."""
-    args = [settings.ffmpeg_path, *_START, "-i", str(picture)]
+    args = [settings.ffmpeg_path, *_START, *mediainput.own(str(picture))]
     if probed.audio_index is None:
         args += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
         sound = "[1:a]anull[a]"

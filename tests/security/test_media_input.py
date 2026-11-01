@@ -240,10 +240,6 @@ def test_report_only_a_folder_scan_of_an_ffconcat_list_is_logged_once_and_read(
 # made or ships) or an upload under its own options. A new input fails here until it's one of them.
 APP = Path(__file__).resolve().parents[2] / "app"
 OWN = {
-    ("bumpers.py", "str(picture)"): "the Intro Bumper's picture, which tapiOca made",
-    ("intro.py", "str(sound.path)"): "a sound tapiOca ships (assets/bumper)",
-    ("intro.py", "str(LANDING)"): "a sound tapiOca ships (assets/bumper)",
-    ("intro.py", "str(jingle_)"): "a jingle tapiOca ships (assets/ident)",
     ("hls.py", "'pipe:0'"): "tapiOca's own stream, on its pipe",
 }
 UPLOADS = {"ff.UPLOADED_VIDEO", "ff.UPLOADED_PICTURE", "UPLOADED_PICTURE", "UPLOADED_VIDEO"}
