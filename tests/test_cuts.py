@@ -471,7 +471,9 @@ async def test_looking_doesnt_ask_plex_or_count_as_a_file_played(tmp_path):
     film = tmp_path / "1.mkv"
     film.write_bytes(b"x")
     access = MediaAccess()
-    library = SimpleNamespace(configured=True, stream_url=lambda key, part: f"http://plex/{part}")
+    library = SimpleNamespace(
+        configured=True, stream_url=lambda key, part: f"http://plex/{part}", plex_locations=()
+    )
     item = replace(_item(str(film), 60 * S), part_key="/library/parts/7/file.mkv")
     got = await readable(SETTINGS, library, item, access)  # type: ignore[arg-type]
     assert got.source == str(film)
@@ -491,14 +493,14 @@ async def test_a_share_that_stops_answering_holds_one_check_at_most(tmp_path, mo
     release = threading.Event()
     calls: list[int] = []
 
-    def stuck(candidates):
+    def stuck(candidates, policy):
         calls.append(1)
         release.wait(10)
 
     monkeypatch.setattr(sources, "_first_existing", stuck)
     monkeypatch.setattr(sources, "SHARE_WAIT_S", 0.1)
     check = sources.ShareCheck()
-    library = SimpleNamespace(configured=False)
+    library = SimpleNamespace(configured=False, plex_locations=())
     item = _item("/media/1.mkv", 60 * S)
     try:
         for _ in range(3):
@@ -922,7 +924,7 @@ def test_looking_checks_the_share_one_check_at_a_time(tmp_path, monkeypatch):
     release = threading.Event()
     calls: list[int] = []
 
-    def stuck(candidates):
+    def stuck(candidates, policy):
         calls.append(1)
         release.wait(10)
 
@@ -951,11 +953,11 @@ async def test_a_share_check_stuck_for_long_is_said_once(tmp_path, monkeypatch, 
 
     caplog.set_level(logging.WARNING, logger="app.sources")
     release = threading.Event()
-    monkeypatch.setattr(sources, "_first_existing", lambda candidates: release.wait(10))
+    monkeypatch.setattr(sources, "_first_existing", lambda candidates, policy: release.wait(10))
     monkeypatch.setattr(sources, "SHARE_WAIT_S", 0.05)
     monkeypatch.setattr(sources, "STUCK_SAID_AFTER_S", 0.3)
     check = sources.ShareCheck()
-    library = SimpleNamespace(configured=False)
+    library = SimpleNamespace(configured=False, plex_locations=())
     item = _item("/media/1.mkv", 60 * S)
 
     def stuck_lines() -> int:

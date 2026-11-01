@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import ffmpeg as ff
-from . import naming
+from . import mediainput, naming
 from .folderart import BACKDROP_NAMES, BANNER_NAMES, LOGO_NAMES, POSTER_NAMES, TYPES
 
 log = logging.getLogger(__name__)
@@ -218,6 +218,8 @@ async def read_file(ffprobe: str, path: str, timeout: float = PROBE_S) -> dict[s
     while True:
         entries = _ENTRIES + (_DOLBY_VISION if _asks_dolby_vision else "")
         args = [*ff.low_priority(), ffprobe, "-v", "error", "-show_entries", entries, "-of", "json"]
+        if mediainput.ENFORCED:
+            args += mediainput.options(path)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args, path,
@@ -247,6 +249,8 @@ async def read_file(ffprobe: str, path: str, timeout: float = PROBE_S) -> dict[s
         data = json.loads(out or b"{}")
     except ValueError:
         return {"ok": False, "error": "ffprobe's answer couldn't be read"}
+    if not mediainput.ENFORCED:
+        mediainput.note(path, str((data.get("format") or {}).get("format_name") or ""))
     return _small(data)
 
 

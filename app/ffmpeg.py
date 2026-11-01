@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from . import mediainput
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -268,12 +269,15 @@ async def probe(
     settings: Settings, source: str, timeout: float = 30.0, options: list[str] | None = None
 ) -> ProbeResult:
     """Checks a file opens and has a video stream, and picks an audio track.
-    `options`: for reading it (UPLOADED_VIDEO for an upload)."""
+    `options`: for reading it (UPLOADED_VIDEO for an upload; with none, it's read as Media)."""
     global _asks_dolby_vision
     while True:
         entries = _ENTRIES + (_DOLBY_VISION if _asks_dolby_vision else "")
         args = [settings.ffprobe_path, "-v", "error", "-show_entries", entries, "-of", "json"]
-        args += options or []
+        if options is not None:
+            args += options
+        elif mediainput.ENFORCED:
+            args += mediainput.options(source)
         if source.startswith(("http://", "https://")):
             args += ["-rw_timeout", str(int(timeout * 1_000_000))]
         args.append(source)
@@ -320,6 +324,8 @@ async def probe(
         data = json.loads(out or b"{}")
     except ValueError:
         return ProbeResult(ok=False, error="ffprobe returned unreadable output")
+    if options is None and not mediainput.ENFORCED:
+        mediainput.note(redact(source), str(data.get("format", {}).get("format_name") or ""))
 
     streams = data.get("streams", [])
     # Cover art counts as a video stream in some files; it isn't the video.
