@@ -13,11 +13,15 @@ Conventions inside a chapter (docs only; see tools/manual/README.md):
 
 A dev tool only (Python's Markdown and WeasyPrint, from tools/manual/requirements.txt): never in the image or an app.
 """
-import hashlib, html, json, re, sys
+import hashlib
+import html
+import json
+import re
+import sys
 from pathlib import Path
 
 import markdown
-from weasyprint import HTML, CSS
+from weasyprint import CSS, HTML
 from weasyprint.text.fonts import FontConfiguration
 
 HERE = Path(__file__).resolve().parent
@@ -25,7 +29,8 @@ HERE = Path(__file__).resolve().parent
 
 def slug(text: str, seen: dict) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", re.sub(r"<[^>]+>", "", text).lower()).strip("-") or "section"
-    n = seen.get(s, 0); seen[s] = n + 1
+    n = seen.get(s, 0)
+    seen[s] = n + 1
     return s if n == 0 else f"{s}-{n}"
 
 
@@ -45,7 +50,8 @@ def chapter_html(md_text: str, seen: dict, toc: list) -> str:
         for inner in filter(str.strip, parts):
             k = re.match(r"\s*<p><strong>(Tip|Note|Important|Warning)", inner)
             if not k and out:
-                out[-1] = out[-1][:-len("</aside>")] + inner + "</aside>"; continue
+                out[-1] = out[-1][:-len("</aside>")] + inner + "</aside>"
+                continue
             kind = k.group(1).lower() if k else "note"
             out.append(f'<aside class="callout {kind}">{inner}</aside>')
         return "".join(out)
@@ -66,16 +72,15 @@ def source_digest(manual_dir: Path) -> str:
     """One hash of everything the PDF is made from: the chapters, the cover and this kit."""
     h = hashlib.sha256()
     for f in [manual_dir / "manual.json", *sorted((manual_dir / "src").glob("*.md")), HERE / "build.py", HERE / "manual.css"]:
-        h.update(f.name.encode()); h.update(f.read_bytes())
+        h.update(f.name.encode())
+        h.update(f.read_bytes())
     return h.hexdigest()[:16]
 
 
 def build(manual_dir: Path) -> Path:
     meta = json.loads((manual_dir / "manual.json").read_text())
-    seen, toc, chapters = {}, [], []
-    srcs = sorted((manual_dir / "src").glob("*.md"))
-    for f in srcs:
-        chapters.append(chapter_html(f.read_text(), seen, toc))
+    seen, toc = {}, []
+    chapters = [chapter_html(f.read_text(), seen, toc) for f in sorted((manual_dir / "src").glob("*.md"))]
     digest = source_digest(manual_dir)
     rel = "".join(f'<div class="rel"><span>{html.escape(a)}</span><b>{html.escape(b)}</b></div>' for a, b in meta["releases"])
     rels_line = " · ".join(f"{a} {b}" for a, b in meta["releases"])
