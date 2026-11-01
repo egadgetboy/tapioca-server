@@ -493,3 +493,112 @@ async def test_enforced_a_station_takes_a_refused_file_off_the_air_as_unsupporte
     assert [(e["ratingKey"], e["problem"], e["reason"]) for e in entries] == [
         ("201", "unsupported", mediainput.REFUSED)
     ]
+
+
+# A fixture for each vetted container: made here, then read under a Media read's options by ffprobe and by FFmpeg,
+# its demuxer the one vetted. (On a build without a fixture's encoder, that one is skipped, and says so.)
+FIXTURES = {
+    "matroska,webm": [
+        ("film.mkv", ["-c:v", "mpeg4"]),
+        ("film.webm", ["-c:v", "libvpx", "-b:v", "200k"]),
+    ],
+    "mov,mp4,m4a,3gp,3g2,mj2": [
+        ("film.mp4", ["-c:v", "mpeg4"]),
+        ("film.mov", ["-c:v", "mpeg4"]),
+        ("film.3gp", ["-c:v", "mpeg4", "-s", "176x144"]),
+    ],
+    "avi": [("film.avi", ["-c:v", "mpeg4"])],
+    "mpegts": [("film.ts", ["-c:v", "mpeg2video"])],
+    "mpeg": [
+        ("film.vob", ["-c:v", "mpeg2video", "-f", "vob"]),
+        ("film.mpg", ["-c:v", "mpeg1video", "-r", "25"]),
+    ],
+    "mpegvideo": [("film.m2v", ["-c:v", "mpeg2video", "-f", "mpeg2video"])],
+    "asf": [("film.wmv", ["-c:v", "wmv2"])],
+    "wtv": [("film.wtv", ["-c:v", "mpeg2video", "-f", "wtv"])],
+    "flv": [("film.flv", ["-c:v", "flv"])],
+    "ogg": [("film.ogv", ["-c:v", "libtheora"])],
+    "rm": [("film.rm", ["-c:v", "rv10"])],
+    "nut": [("film.nut", ["-c:v", "mpeg4"])],
+    "mxf": [
+        (
+            "film.mxf",
+            [
+                "-c:v",
+                "mpeg2video",
+                "-pix_fmt",
+                "yuv422p",
+                "-b:v",
+                "5M",
+                "-s",
+                "720x576",
+                "-r",
+                "25",
+            ],
+        )
+    ],
+    "dv": [
+        ("film.dv", ["-c:v", "dvvideo", "-pix_fmt", "yuv411p", "-s", "720x480", "-r", "30000/1001"])
+    ],
+    "m4v": [("film.m4v", ["-c:v", "mpeg4", "-f", "m4v"])],
+    "h264": [("film.264", ["-c:v", "libx264", "-f", "h264"])],
+    "hevc": [("film.265", ["-c:v", "libx265", "-f", "hevc", "-x265-params", "log-level=error"])],
+}
+# (FFmpeg has no VC-1 encoder to make one: a raw VC-1 stream is vetted by its name alone.)
+NO_FIXTURE = {"vc1"}
+
+
+def test_every_vetted_container_has_a_fixture():
+    assert set(FIXTURES) | NO_FIXTURE == set(mediainput.ALLOWED)
+    assert not set(FIXTURES) & NO_FIXTURE
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    "name, file, codec",
+    [(name, file, codec) for name, made in FIXTURES.items() for file, codec in made],
+)
+def test_a_real_file_in_each_vetted_container_is_read(tmp_path, name, file, codec):
+    path = tmp_path / file
+    made = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x96:r=25:d=1",
+            *codec,
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if made.returncode != 0:
+        pytest.skip(f"this FFmpeg can't make {file}: {made.stderr.strip()[-120:]}")
+    probed = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0",
+         *mediainput.options(str(path)), str(path)],
+        capture_output=True,
+        text=True,
+    )  # fmt: skip
+    assert probed.returncode == 0, probed.stderr
+    assert probed.stdout.strip().strip('"') == name
+    played = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            *mediainput.options(str(path)),
+            "-i",
+            str(path),
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert played.returncode == 0, played.stderr
