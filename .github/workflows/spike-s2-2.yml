@@ -1,0 +1,34 @@
+# Spike S2-2 for The security suite: breadth and depth (docs/threat-models/security-suite-2.md in the apps
+# repo): slice 2's tests for an FFmpeg that limits redirects, which skip on the development machine's 6.1, run
+# 20 times in the published image's FFmpeg (7.1.5) before they're merged. A spike's own branch only; never merged.
+name: Spike S2-2
+on:
+  push:
+    branches: [spike/s2-2]
+permissions:
+  contents: read
+jobs:
+  spike:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: The tests, in the image's FFmpeg
+        run: |
+          set -eu
+          img=ghcr.io/egadgetboy/tapioca-server:1.44.3
+          docker pull -q "$img"
+          docker run --rm -u 0 -v "$PWD:/src:ro" --entrypoint sh "$img" -c '
+            set -eu
+            pip install -q --root-user-action=ignore pytest==9.1.1 pytest-asyncio==1.4.0
+            cp -r /src /tmp/w && cd /tmp/w
+            echo "::notice title=FFmpeg::$(ffmpeg -version | head -1)"
+            python -m pytest -q -p no:cacheprovider -rs tests/security/test_media_input.py tests/security/test_spawn.py 2>&1 | tail -8
+            for i in $(seq 20); do
+              python -m pytest -q -p no:cacheprovider tests/security/test_media_input.py -k "passes_the_check_at_start or redirect_from_plexs" 2>&1 | tail -1 | sed "s/ in .*//"
+            done > /tmp/twenty.txt
+            sort /tmp/twenty.txt | uniq -c
+            echo "::notice title=20 runs::$(sort /tmp/twenty.txt | uniq -c | tr -s " " | tr "\n" ";")"
+            [ "$(grep -c "^2 passed, " /tmp/twenty.txt)" = 20 ]'
