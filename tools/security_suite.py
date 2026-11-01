@@ -66,6 +66,10 @@ LAYERS = {
         "A Media read opens only a vetted video container, failing closed (MED-FFMPEG-01)",
         "Medium",
     ),
+    "test_media_outputs.py": (
+        "What FFmpeg writes lands only in tapiOca's own places, whatever a file is called (MED-02)",
+        "High",
+    ),
     "test_spawn.py": (
         "Every program started through one function: no proxy, each input's whitelists (MED-FFMPEG-01)",
         "Medium",
