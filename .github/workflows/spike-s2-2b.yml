@@ -1,0 +1,35 @@
+# Spike S2-2b for The security suite: breadth and depth (docs/threat-models/security-suite-2.md in the apps
+# repo): slice 2's tests that run only in the image (an FFmpeg that limits redirects, and the image's user, 1000),
+# run in the published image as its user, 20 times for the new ones. A spike's own branch only; never merged.
+name: Spike S2-2b
+on:
+  push:
+    branches: [spike/s2-2b]
+permissions:
+  contents: read
+jobs:
+  spike:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: The tests, in the image, as its user
+        run: |
+          set -eu
+          img=ghcr.io/egadgetboy/tapioca-server:1.44.3
+          docker pull -q "$img"
+          docker run --rm -u 1000:1000 -e HOME=/tmp -v "$PWD:/src:ro" --entrypoint sh "$img" -c '
+            set -eu
+            pip install -q --target /tmp/pkgs pytest==9.1.1 pytest-asyncio==1.4.0 2>&1 | grep -v "^\[notice\]" || true
+            export PYTHONPATH=/tmp/pkgs
+            cp -r /src /tmp/w && cd /tmp/w
+            echo "::notice title=Who::$(id -u):$(id -g); $(ffmpeg -version | head -1); ldd at $(command -v ldd || echo none)"
+            python -m pytest -q -p no:cacheprovider -rfEs --tb=short tests/security/test_media_input.py tests/security/test_spawn.py tests/security/test_inventory.py 2>&1 | grep -vE "^\.+ *\[|^$" | tail -60 || true
+            for i in $(seq 20); do
+              python -m pytest -q -p no:cacheprovider tests/security/test_spawn.py tests/security/test_media_input.py -k "cant_be_changed or passes_the_check_at_start or redirect_from_plexs" 2>&1 | tail -1 | sed "s/ in .*//"
+            done > /tmp/twenty.txt
+            sort /tmp/twenty.txt | uniq -c
+            echo "::notice title=20 runs::$(sort /tmp/twenty.txt | uniq -c | tr -s " " | tr "\n" ";")"
+            [ "$(grep -c "^3 passed, " /tmp/twenty.txt)" = 20 ]'
