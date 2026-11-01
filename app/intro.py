@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from . import ffmpeg as ff
+from . import mediainput
 from .markers import across, pieces
 from .sources import part_starts
 
@@ -764,7 +765,7 @@ def _reel_inputs(
     # (A recording's or a DVD's seek, on its own clock: see ff.seek_args. As
     # usual, from its sound alone, FFmpeg misplaced where it starts.)
     seek = ff.seek_args(show.source, show.start_s, show.container, show.file_start_s)
-    args += [*seek, "-t", f"{length - land + 0.5:.3f}", "-i", show.source]
+    args += [*seek, "-t", f"{length - land + 0.5:.3f}", *mediainput.read(show.source)]
     delay = round(land * 1000)
     level = f",loudnorm={ff.LOUDNESS_TARGET}" if show.normalize else ""
     mix = (

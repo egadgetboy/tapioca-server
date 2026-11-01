@@ -89,7 +89,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field, fields, replace
 from typing import TYPE_CHECKING
 
-from . import catalog, infostation, ondemand
+from . import catalog, infostation, mediainput, ondemand
 from . import ffmpeg as ff
 from .broadcaster import fmt_offset, played_whole
 from .broken import (
@@ -394,7 +394,7 @@ def _decode_args(
         args += ["-ss", f"{start_s:.3f}"]
     if keyframes_only:
         args += ["-skip_frame", "nokey"]
-    args += ["-i", source]
+    args += mediainput.read(source)
     if seconds is not None:
         args += ["-t", f"{seconds:.3f}"]
     for kind, index in (("v", video_index), ("a", audio_index)):

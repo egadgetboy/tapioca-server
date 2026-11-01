@@ -80,6 +80,11 @@ def options(source: str) -> list[str]:
     return said
 
 
+def read(source: str) -> list[str]:
+    """FFmpeg's input for reading `source` as Media: its options once enforced, then `-i`."""
+    return [*(options(source) if ENFORCED else []), "-i", source]
+
+
 def _protocols(source: str) -> str:
     if source.startswith("https://"):
         return "https,tls,tcp"

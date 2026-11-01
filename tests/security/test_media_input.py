@@ -220,3 +220,101 @@ def test_report_only_a_folder_scan_of_an_ffconcat_list_is_logged_once_and_read(
     assert first["ok"], "report-only: read as before"
     said = [r.getMessage() for r in caplog.records if "concat" in r.getMessage()]
     assert len(said) == 1, said
+
+
+# Every FFmpeg input in the server, by what it reads (the census). A Media read takes mediainput.read, which gives
+# it its options once enforced; anything else is tapiOca's own (a lavfi graph, its own stream on a pipe, a file it
+# made or ships) or an upload under its own options. A new input fails here until it's one of them.
+APP = Path(__file__).resolve().parents[2] / "app"
+OWN = {
+    ("bumpers.py", "str(picture)"): "the Intro Bumper's picture, which tapiOca made",
+    ("intro.py", "str(sound.path)"): "a sound tapiOca ships (assets/bumper)",
+    ("intro.py", "str(LANDING)"): "a sound tapiOca ships (assets/bumper)",
+    ("intro.py", "str(jingle_)"): "a jingle tapiOca ships (assets/ident)",
+    ("hls.py", "'pipe:0'"): "tapiOca's own stream, on its pipe",
+}
+UPLOADS = {"ff.UPLOADED_VIDEO", "ff.UPLOADED_PICTURE", "UPLOADED_PICTURE", "UPLOADED_VIDEO"}
+
+
+def _inputs():
+    import ast
+
+    for file in sorted(APP.rglob("*.py")):
+        if file.name == "mediainput.py":
+            continue
+        for node in ast.walk(ast.parse(file.read_text())):
+            if not isinstance(node, (ast.List, ast.Tuple)):
+                continue
+            items = node.elts
+            for n, item in enumerate(items):
+                if isinstance(item, ast.Constant) and item.value == "-i":
+                    before = [ast.unparse(e) for e in items[max(0, n - 2) : n]]
+                    read = ast.unparse(items[n + 1]) if n + 1 < len(items) else ""
+                    yield file.name, item.lineno, before, read
+
+
+def test_every_ffmpeg_input_is_media_through_read_or_tapiocas_own():
+    unknown = []
+    for name, line, before, read in _inputs():
+        lavfi = before[-2:] == ["'-f'", "'lavfi'"]
+        upload = bool(before) and before[-1].lstrip("*") in UPLOADS
+        if not (lavfi or upload or (name, read) in OWN):
+            unknown.append(f"{name}:{line}: -i {read}")
+    assert not unknown, "a Media read takes mediainput.read(source):\n" + "\n".join(unknown)
+
+
+def test_the_census_sees_every_kind_of_input():
+    found = list(_inputs())
+    assert any(before[-2:] == ["'-f'", "'lavfi'"] for _, _, before, _ in found)
+    assert any(before and before[-1].lstrip("*") in UPLOADS for _, _, before, _ in found)
+    assert {(name, read) for name, _, _, read in found} >= set(OWN), (
+        "an OWN entry no longer in the code"
+    )
+
+
+def test_a_media_input_takes_its_options_only_once_enforced(monkeypatch):
+    source = "/media/Movies/A/a.mkv"
+    monkeypatch.setattr(mediainput, "ENFORCED", False)
+    assert mediainput.read(source) == ["-i", source]
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    assert mediainput.read(source) == [*mediainput.options(source), "-i", source]
+
+
+def _program(source: str) -> list[str]:
+    return ff.program_command(SMALL, source, 0.0, 60.0, 0.0, 0.0, 0, "Night Owl")
+
+
+def test_a_programs_inputs_are_media_reads(monkeypatch):
+    monkeypatch.setattr(mediainput, "ENFORCED", False)
+    today = _program("/media/Movies/A/a.mkv")
+    assert today.count("-format_whitelist") == 0, "report-only: as before"
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    local = _program("/media/Movies/A/a.mkv")
+    remote = _program("http://192.168.1.20:32400/library/parts/1/file.mkv?X-Plex-Token=t")
+    # (A local file is read twice, for its picture and its sound: see program_command.)
+    assert local.count("-i") == 2 and local.count("-format_whitelist") == 2
+    assert remote.count("-i") == 1 and remote.count("-format_whitelist") == 1
+    for args in (local, remote):
+        for at in (n for n, a in enumerate(args) if a == "-i"):
+            assert "-protocol_whitelist" in args[max(0, at - 12) : at], (
+                "each input's own options, just before it"
+            )
+    assert remote[remote.index("-max_redirects") + 1] == "0"
+
+
+@needs_ffmpeg
+def test_enforced_a_station_plays_a_real_video_under_the_options(tmp_path, monkeypatch):
+    # (A Station's whole command, run for a second: its paced reading for the picture, and a local file's second
+    # reading for its sound, each under the options.)
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    video = tmp_path / "film.mkv"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=10:d=2", "-f", "lavfi", "-i",
+         "sine=f=440:d=2", "-c:v", "mpeg4", "-c:a", "aac", str(video)],
+        check=True,
+    )  # fmt: skip
+    args = ff.program_command(SMALL, str(video), 0.0, 1.0, 0.0, 5.0, 0, "Night Owl")
+    assert args.count("-format_whitelist") == 2
+    played = subprocess.run(args, capture_output=True, timeout=60)
+    assert played.returncode == 0, played.stderr.decode(errors="replace")[-600:]
+    assert len(played.stdout) > 1000, "a stream came out"

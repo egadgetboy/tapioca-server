@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from . import ffmpeg as ff
+from . import mediainput
 from .library import NoPicture
 
 log = logging.getLogger(__name__)
@@ -182,7 +183,7 @@ async def cover(
     target = _kept(data_dir, "covers", f"{file}|{size}|{stream}", ext)
     data = await _made(
         target,
-        [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", file,
+        [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y", *mediainput.read(file),
          "-map", f"0:{stream}", "-frames:v", "1", "-c", "copy", "-f", "image2"],
     )  # fmt: skip
     if not data or len(data) > PICTURE_MOST:

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import ffmpeg as ff
+from . import mediainput
 from .config import Settings
 from .ffmpeg import ProbeResult, Subtitles, SubtitleTrack
 
@@ -288,7 +289,7 @@ async def _extract(settings: Settings, job: Extraction) -> bool:
             return True
         args = [
             settings.ffmpeg_path, "-hide_banner", "-nostdin", "-v", "error", "-threads", "1",
-            "-i", job.source, "-map", f"0:s:{job.stream}", "-c:s", "ass", "-f", "ass", "-y",
+            *mediainput.read(job.source), "-map", f"0:s:{job.stream}", "-c:s", "ass", "-f", "ass", "-y",
             str(part),
         ]  # fmt: skip
         try:

@@ -581,7 +581,7 @@ async def find_picture(
     for at in points:
         args = [
             settings.ffmpeg_path, "-hide_banner", "-nostdin", "-v", "info",
-            "-ss", f"{at:.1f}", "-i", source,
+            "-ss", f"{at:.1f}", *mediainput.read(source),
             "-map", f"0:v:{probe.video_index}", "-frames:v", "12", "-an", "-sn",
             "-vf", "cropdetect=limit=0.1:round=2:reset=0", "-f", "null", "-",
         ]  # fmt: skip
@@ -1355,7 +1355,7 @@ def program_command(
     args += [*reading, *paced(burst_s), *hw_input_args(encoder)]
     if subtitles is not None and subtitles.image and subtitles.forced_only:
         args += [f"-forced_subs_only:s:{subtitles.stream}", "1"]
-    args += [*start, "-i", source]
+    args += [*start, *mediainput.read(source)]
     graph = _video_filter(
         settings, encoder, aspect_mode, source_aspect, picture, watermark, banner, tone_map,
         subtitles, offset_s if offset_s > 0.05 else 0.0, video_index, info,
@@ -1384,7 +1384,7 @@ def program_command(
         # twice: the two readings keep close together, so one mostly reads
         # what the other left in the system's cache, except where the sound
         # ends early, when the sound's reading runs on to the end at once.
-        args += [*reading, *start, "-i", source]
+        args += [*reading, *start, *mediainput.read(source)]
         sound = f"[1:a:{audio_index}]{_audio_filter(normalize_audio)}[aout]"
     # The picture and the sound in one filter graph, so FFmpeg schedules them
     # together. (In graphs of their own, FFmpeg 7 hung for good on a file

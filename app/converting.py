@@ -46,7 +46,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import catalog
+from . import catalog, mediainput
 from .catalog import Media, Track
 from .ffmpeg import (
     CPU,
@@ -299,7 +299,7 @@ def command(
         args += ["-ss", f"{start:.3f}"]  # (exactly: the picture's made from here)
     if subs is not None and subs.image and subs.forced_only:
         args += [f"-forced_subs_only:s:{subs.stream}", "1"]
-    args += ["-i", source]
+    args += mediainput.read(source)
     if plan.copies_picture:
         video = ["-map", f"0:V:{video_index}", "-c:v", "copy"]
         if plan.picture == "h264":

@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ffmpeg as ff
+from . import mediainput
 from .config import Settings
 from .db import Item
 from .markers import CREDITS, INTRO, MIN_KEEP_MS, Marker
@@ -863,7 +864,7 @@ class CutFinder:
             *ff.low_priority(), self.settings.ffmpeg_path, "-hide_banner", "-nostdin",
             "-v", "info", "-threads", "1",
             *ff.seek_args(source, first / 1000, probe.container, probe.start_s),
-            "-t", f"{(last - first) / 1000:.3f}", "-i", source,
+            "-t", f"{(last - first) / 1000:.3f}", *mediainput.read(source),
             "-map", f"0:v:{probe.video_index}", "-an", "-sn", "-dn", "-vf", chain, "-f", "null", "-",
         ]  # fmt: skip
         try:
