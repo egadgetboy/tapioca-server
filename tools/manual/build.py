@@ -2,7 +2,9 @@
 
 Usage: python3 tools/manual/build.py manual
 
-  manual/manual.json  the cover: {"file", "title", "subtitle", "releases": [["Server", "1.44.3"]], "date", "label"}
+  manual/manual.json  the cover: {"file", "title", "subtitle", "releases": [["Server", "1.44.3"]], "date", "label"},
+                      and optionally "kind" ("manual" or "remaining") and "edition" (the contents page's last line,
+                      with {releases} and {date})
   manual/src/NN-*.md  the chapters, in order; each starts with one "# " heading.
 
 Conventions inside a chapter (docs only; see tools/manual/README.md):
@@ -34,12 +36,27 @@ def slug(text: str, seen: dict) -> str:
     return s if n == 0 else f"{s}-{n}"
 
 
+def plain_brackets(md_text: str) -> str:
+    """A "<title>" written as words stays words: outside code, a < that doesn't open a comment is escaped,
+    so a placeholder never becomes an HTML tag that swallows the rest of the chapter."""
+    out, fenced = [], False
+    for line in md_text.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        if not fenced:
+            parts = re.split(r"(`+[^`]*`+)", line)
+            line = "".join(x if x.startswith("`") else re.sub(r"<(?!!--)", "&lt;", x) for x in parts)
+        out.append(line)
+    return "\n".join(out)
+
+
 def chapter_html(md_text: str, seen: dict, toc: list) -> str:
+    md_text = plain_brackets(md_text)
     # screenshot placeholders, before Markdown sees them
     def shot(m):
         return ('\n<figure class="shot"><div class="shot-box"><span class="shot-label">Screenshot to come</span>'
                 f'<span class="shot-what">{html.escape(m.group(1).strip())}</span></div></figure>\n')
-    md_text = re.sub(r"^\[\[screenshot:\s*(.+?)\]\]\s*$", shot, md_text, flags=re.M)
+    md_text = re.sub(r"^\[\[screenshot:\s*(.+?)\]\]\s*$", shot, md_text, flags=re.MULTILINE)
     body = markdown.markdown(md_text, extensions=["tables", "def_list", "attr_list", "fenced_code", "sane_lists"])
 
     # callouts: a blockquote whose first word is Tip, Note or Important
@@ -55,7 +72,7 @@ def chapter_html(md_text: str, seen: dict, toc: list) -> str:
             kind = k.group(1).lower() if k else "note"
             out.append(f'<aside class="callout {kind}">{inner}</aside>')
         return "".join(out)
-    body = re.sub(r"<blockquote>(.*?)</blockquote>", callout, body, flags=re.S)
+    body = re.sub(r"<blockquote>(.*?)</blockquote>", callout, body, flags=re.DOTALL)
 
     # ids on headings, and the contents (h1 and h2)
     def head(m):
@@ -64,7 +81,7 @@ def chapter_html(md_text: str, seen: dict, toc: list) -> str:
         if lvl <= 2:
             toc.append((lvl, hid, html.unescape(re.sub(r"<[^>]+>", "", inner))))
         return f'<h{lvl} id="{hid}">{inner}</h{lvl}>'
-    body = re.sub(r"<h([1-4])>(.*?)</h\1>", head, body, flags=re.S)
+    body = re.sub(r"<h([1-4])>(.*?)</h\1>", head, body, flags=re.DOTALL)
     return f'<section class="chapter">{body}</section>'
 
 
@@ -102,7 +119,7 @@ def build(manual_dir: Path) -> Path:
   <p class="cover-label">{html.escape(meta.get('label', ''))}</p>
 </section>
 <section class="contents"><h1 class="contents-title">Contents</h1><ol class="toc">{toc_html}</ol>
-<p class="edition">This manual covers {html.escape(rels_line)}, as released on {html.escape(meta['date'])}. It replaces every earlier edition.</p></section>
+<p class="edition">{html.escape(meta.get("edition", "This manual covers {releases}, as released on {date}. It replaces every earlier edition.").format(releases=rels_line, date=meta["date"]))}</p></section>
 {''.join(chapters)}
 </body></html>"""
     out = manual_dir / meta["file"]
