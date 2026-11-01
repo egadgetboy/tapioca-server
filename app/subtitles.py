@@ -37,10 +37,12 @@ from .ffmpeg import ProbeResult, Subtitles, SubtitleTrack
 log = logging.getLogger(__name__)
 
 MODES = ("off", "forced", "always")
-# In the data folder: plain-named links to subtitle files, and the text
-# subtitles read out of programs' files.
+# In the data folder: the text subtitles read out of programs' files and
+# of the subtitle files beside them, as tapiOca's own .ass.
 FOLDER = "subtitles"
 EXTRACT_TIMEOUT_S = 30 * 60  # (a big file on a slow share)
+# A read-out .ass's bytes, at most: FFmpeg stops writing there, and a program whose subtitles reach it plays without.
+MOST = 20 << 20
 EXTRACTS_AT_ONCE = 2
 RETRY_FAILED_S = 24 * 3600  # subtitles that couldn't be read aren't tried again sooner
 KEEP_UNUSED_S = 30 * 24 * 3600  # subtitles read out and not used for this long go
@@ -266,13 +268,15 @@ async def _extract(settings: Settings, job: Extraction) -> bool:
         args = [
             settings.ffmpeg_path, "-hide_banner", "-nostdin", "-v", "error", "-threads", "1",
             *(mediainput.subtitle if job.sidecar else mediainput.read)(job.source),
-            "-map", f"0:s:{job.stream}", "-c:s", "ass", "-f", "ass", "-y",
+            "-map", f"0:s:{job.stream}", "-c:s", "ass", "-f", "ass", "-fs", str(MOST), "-y",
             str(part),
         ]  # fmt: skip
         try:
             code, said = await ff.run_to_end(args, EXTRACT_TIMEOUT_S)
             if code != 0 or not part.exists():
                 raise RuntimeError(ff.redact(said or f"exit code {code}"))
+            if part.stat().st_size >= MOST:
+                raise RuntimeError(f"they're over {MOST >> 20} MB")
             await asyncio.to_thread(os.replace, part, job.target)
         except (OSError, TimeoutError, RuntimeError) as e:
             _failed[job.target] = time.time()

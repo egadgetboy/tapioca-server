@@ -367,6 +367,31 @@ async def test_a_subtitle_file_is_read_out_whatever_it_is_called(tmp_path):
     assert all(not p.name.endswith(".part") for p in (tmp_path / subtitles.FOLDER).iterdir())
 
 
+async def test_subtitles_over_the_cap_play_without_and_never_fill_the_disk(tmp_path, monkeypatch):
+    # (MED-05, the security suite's slice 2: a subtitle file or stream read out into tapiOca's own .ass stops at
+    # the cap, as FFmpeg writes it, and plays without. The cap here is a few kilobytes for a file of hundreds.)
+    monkeypatch.setattr(subtitles, "MOST", 4096)
+    given: list[list[str]] = []
+    real = ff.run_to_end
+
+    async def watched(args, timeout):
+        given.append(list(args))
+        return await real(args, timeout)
+
+    monkeypatch.setattr(ff, "run_to_end", watched)
+    many = [(n * 0.01, n * 0.01 + 0.005, f"line {n} " + "W" * 40) for n in range(5000)]
+    beside = black(tmp_path / "Film (1999).mkv")
+    srt(tmp_path / "Film (1999).en.srt", many)
+    inside = with_text_tracks(tmp_path, (many, "eng", False))
+    for film in (beside, inside):
+        choice = await picked(tmp_path, film, "always")
+        assert isinstance(choice, subtitles.Extraction) and choice.sidecar == (film == beside)
+        assert not await subtitles.extract(SMALL, choice), "too big: it plays without"
+        assert not choice.target.exists()
+        assert given[-1][given[-1].index("-fs") + 1] == "4096", "FFmpeg stops writing at the cap"
+    assert all(not p.name.endswith(".part") for p in (tmp_path / subtitles.FOLDER).iterdir())
+
+
 async def test_subtitles_that_cant_be_read_out_arent_tried_again_straight_away(tmp_path):
     film = with_text_tracks(tmp_path, ([EARLY], "eng", False))
     choice = await picked(tmp_path, film, "always")
