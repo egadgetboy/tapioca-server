@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from . import spawn
+
 log = logging.getLogger(__name__)
 
 # (Off until the soak's report shows no real video refused: then on, in the same release.)
@@ -138,7 +140,7 @@ def judge(demuxers: str, http: str) -> str | None:
 async def _printed(ffmpeg: str, *args: str) -> str:
     """What `ffmpeg args` prints, or "" if it can't be run in time."""
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.start(
             ffmpeg, "-hide_banner", *args,
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )  # fmt: skip

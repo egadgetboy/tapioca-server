@@ -11,7 +11,7 @@ import secrets
 import time
 from pathlib import Path
 
-from . import infostation
+from . import infostation, spawn
 from .db import Database
 from .ffmpeg import UPLOADED_PICTURE
 from .text import name_from_file
@@ -269,7 +269,7 @@ async def _redrawn(data: bytes, ffmpeg_path: str, fit: str) -> bytes:
 async def _ffmpeg(args: list[str], data: bytes) -> tuple[int, bytes, bytes]:
     """Runs ffmpeg with `data` as its input: (exit code, output, messages)."""
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.start(
             *args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

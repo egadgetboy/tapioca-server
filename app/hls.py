@@ -44,7 +44,7 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import playing
+from . import playing, spawn
 
 if TYPE_CHECKING:
     from .broadcaster import Broadcaster, Viewer
@@ -474,7 +474,7 @@ class HlsStream:
         labeling = asyncio.create_task(self._label_pieces())
         listening: asyncio.Task | None = None
         try:
-            self._proc = proc = await asyncio.create_subprocess_exec(
+            self._proc = proc = await spawn.start(
                 *command(self.b.ctx.settings.ffmpeg_path, self.folder, self.night),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,

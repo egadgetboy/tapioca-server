@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import ffmpeg as ff
-from . import intro, subtitles, upnext
+from . import intro, spawn, subtitles, upnext
 from .config import Settings
 from .db import STATION_SETTINGS, Database
 
@@ -252,7 +252,7 @@ async def busy_stream(
     """The "all tuners in use" card, as a stream BUSY_S long (drawn on the
     CPU: it takes little)."""
     args = ff.card_command(settings, BUSY_S, 10.0, 2.0, name, str(logo) if logo else None, lines)
-    proc = await asyncio.create_subprocess_exec(
+    proc = await spawn.start(
         *args,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,

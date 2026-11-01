@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from . import ffmpeg as ff
-from . import mediainput
+from . import mediainput, spawn
 from .library import NoPicture
 
 log = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ def _kept(data_dir: Path, what: str, key: str, ext: str) -> Path:
 async def _run(args: list[str], timeout: float = MAKE_S) -> bytes | None:
     """ffmpeg at the lowest priority: what it wrote to its output, or None."""
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.start(
             *ff.low_priority(), *args,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
@@ -203,7 +203,7 @@ async def sized(
 
 async def _scaled(ffmpeg: str, data: bytes, width: int, height: int) -> bytes | None:
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.start(
             *ff.low_priority(nice=10, idle_io=False), ffmpeg, "-hide_banner", "-nostdin",
             "-loglevel", "error", *ff.UPLOADED_PICTURE, "-i", "pipe:0", "-frames:v", "1",
             "-vf", f"scale='min({width},iw)':'min({height},ih)':force_original_aspect_ratio=decrease",

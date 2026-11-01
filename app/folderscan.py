@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import ffmpeg as ff
-from . import mediainput, naming
+from . import mediainput, naming, spawn
 from .folderart import BACKDROP_NAMES, BANNER_NAMES, LOGO_NAMES, POSTER_NAMES, TYPES
 
 log = logging.getLogger(__name__)
@@ -221,7 +221,7 @@ async def read_file(ffprobe: str, path: str, timeout: float = PROBE_S) -> dict[s
         if mediainput.ENFORCED:
             args += mediainput.options(path)
         try:
-            proc = await asyncio.create_subprocess_exec(
+            proc = await spawn.start(
                 *args, path,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,

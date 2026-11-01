@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import ffmpeg as ff
+from . import spawn
 from .config import Settings
 from .ffmpeg import CPU, Encoder
 
@@ -97,7 +98,7 @@ def _permission_note(node: str) -> str:
 
 
 async def _run(args: list[str], timeout: float) -> tuple[int, str, str]:
-    proc = await asyncio.create_subprocess_exec(
+    proc = await spawn.start(
         *args,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,

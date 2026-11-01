@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ffmpeg as ff
-from . import mediainput
+from . import mediainput, spawn
 from .config import Settings
 from .db import Item
 from .markers import CREDITS, INTRO, MIN_KEEP_MS, Marker
@@ -868,7 +868,7 @@ class CutFinder:
             "-map", f"0:v:{probe.video_index}", "-an", "-sn", "-dn", "-vf", chain, "-f", "null", "-",
         ]  # fmt: skip
         try:
-            proc = await asyncio.create_subprocess_exec(
+            proc = await spawn.start(
                 *args,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.DEVNULL,

@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from . import ffmpeg as ff
-from . import mediainput
+from . import mediainput, spawn
 from .markers import across, pieces
 from .sources import part_starts
 
@@ -202,7 +202,7 @@ async def colours(settings: Settings, logo: str | None) -> tuple[str, str, str]:
         return _COLOURS[key]
     size = 48
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.start(
             settings.ffmpeg_path, "-hide_banner", "-nostdin", "-loglevel", "error",
             "-i", str(logo), "-frames:v", "1",
             "-vf", f"scale={size}:{size}:flags=area,format=rgba", "-f", "rawvideo", "pipe:1",

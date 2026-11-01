@@ -58,6 +58,8 @@ _SPAWN = {
     ("subprocess", "check_output"),
     ("subprocess", "check_call"),
     ("os", "system"),
+    # (Every FFmpeg and ffprobe tapiOca starts: app/spawn.py, with no proxy in its environment.)
+    ("spawn", "start"),
     ("os", "popen"),
 }
 # What writes or moves a file (a Path's replace and rename take one argument; str.replace takes two).
@@ -259,25 +261,26 @@ EGRESS = {
 # INJ-02, MED-01). "ffmpeg"/"ffprobe" are the image's own; "ionice" is the
 # system's.
 SPAWN = {
-    "app/broadcaster.py:_run_ffmpeg asyncio.create_subprocess_exec": "ffmpeg: a Station's broadcast",
+    "app/broadcaster.py:_run_ffmpeg spawn.start": "ffmpeg: a Station's broadcast",
     "app/cleanup.py:_idle_disk subprocess.run": "ionice: the clean-up thread's disk priority",
-    "app/converting.py:_start asyncio.create_subprocess_exec": "ffmpeg: a converted copy",
-    "app/cuts.py:_read asyncio.create_subprocess_exec": "ffprobe: a file's keyframes",
-    "app/ffmpeg.py:find_picture asyncio.create_subprocess_exec": "ffmpeg: a frame for a picture",
-    "app/ffmpeg.py:probe asyncio.create_subprocess_exec": "ffprobe: what a file holds",
-    "app/ffmpeg.py:run_to_end asyncio.create_subprocess_exec": "ffmpeg: a short job run to its end",
-    "app/folderart.py:_run asyncio.create_subprocess_exec": "ffmpeg: a Media folder's art",
-    "app/folderart.py:_scaled asyncio.create_subprocess_exec": "ffmpeg: a Media folder's art, resized",
-    "app/folderscan.py:read_file asyncio.create_subprocess_exec": "ffprobe: a Media folder's file",
-    "app/gpu.py:_run asyncio.create_subprocess_exec": "ffmpeg: the GPU's check at start",
-    "app/hls.py:_run asyncio.create_subprocess_exec": "ffmpeg: a Station's HLS",
-    "app/intro.py:colours asyncio.create_subprocess_exec": "ffmpeg: an intro card's colors",
-    "app/logos.py:_ffmpeg asyncio.create_subprocess_exec": "ffmpeg: a logo",
-    "app/main.py:render_icon asyncio.create_subprocess_exec": "ffmpeg: an app icon",
-    "app/mediainput.py:_printed asyncio.create_subprocess_exec": "ffmpeg: its demuxers and http options, checked at start",
-    "app/playback.py:busy_stream asyncio.create_subprocess_exec": "ffmpeg: the busy notice's stream",
-    "app/scanner.py:_run asyncio.create_subprocess_exec": "ffprobe: the file check",
-    "app/scanner.py:decode_through asyncio.create_subprocess_exec": "ffmpeg: the deep file check",
+    "app/converting.py:_start spawn.start": "ffmpeg: a converted copy",
+    "app/cuts.py:_read spawn.start": "ffprobe: a file's keyframes",
+    "app/ffmpeg.py:find_picture spawn.start": "ffmpeg: a frame for a picture",
+    "app/ffmpeg.py:probe spawn.start": "ffprobe: what a file holds",
+    "app/ffmpeg.py:run_to_end spawn.start": "ffmpeg: a short job run to its end",
+    "app/folderart.py:_run spawn.start": "ffmpeg: a Media folder's art",
+    "app/folderart.py:_scaled spawn.start": "ffmpeg: a Media folder's art, resized",
+    "app/folderscan.py:read_file spawn.start": "ffprobe: a Media folder's file",
+    "app/gpu.py:_run spawn.start": "ffmpeg: the GPU's check at start",
+    "app/hls.py:_run spawn.start": "ffmpeg: a Station's HLS",
+    "app/intro.py:colours spawn.start": "ffmpeg: an intro card's colors",
+    "app/logos.py:_ffmpeg spawn.start": "ffmpeg: a logo",
+    "app/main.py:render_icon spawn.start": "ffmpeg: an app icon",
+    "app/mediainput.py:_printed spawn.start": "ffmpeg: its demuxers and http options, checked at start",
+    "app/playback.py:busy_stream spawn.start": "ffmpeg: the busy notice's stream",
+    "app/scanner.py:_run spawn.start": "ffprobe: the file check",
+    "app/scanner.py:decode_through spawn.start": "ffmpeg: the deep file check",
+    "app/spawn.py:start asyncio.create_subprocess_exec": "every FFmpeg and ffprobe, started with no proxy in its environment",
 }
 
 # Every place tapiOca writes, moves or deletes a file, by where: "data" is the

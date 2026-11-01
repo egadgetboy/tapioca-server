@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import mediainput
+from . import mediainput, spawn
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ async def run_to_end(args: list[str], timeout_s: float) -> tuple[int, str]:
     TimeoutError if it takes longer than `timeout_s`. It never outlives the
     call: it's stopped if it times out or the caller is cancelled. OSError
     if it can't be started."""
-    proc = await asyncio.create_subprocess_exec(
+    proc = await spawn.start(
         *args,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.DEVNULL,
@@ -284,7 +284,7 @@ async def probe(
             args += ["-rw_timeout", str(int(timeout * 1_000_000))]
         args.append(source)
         try:
-            proc = await asyncio.create_subprocess_exec(
+            proc = await spawn.start(
                 *args,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
@@ -591,7 +591,7 @@ async def find_picture(
             "-vf", "cropdetect=limit=0.1:round=2:reset=0", "-f", "null", "-",
         ]  # fmt: skip
         try:
-            proc = await asyncio.create_subprocess_exec(
+            proc = await spawn.start(
                 *args,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.DEVNULL,

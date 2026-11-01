@@ -46,7 +46,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import catalog, mediainput
+from . import catalog, mediainput, spawn
 from .catalog import Media, Track
 from .ffmpeg import (
     CPU,
@@ -747,7 +747,7 @@ class Copy:
             self._began = True
             on = encoder.label if encoder.is_gpu else "the CPU"
             log.info("Converting a copy of %s on %s", self.name, on)
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.start(
             *args,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,

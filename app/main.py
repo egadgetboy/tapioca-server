@@ -78,6 +78,7 @@ from . import (
     safefetch,
     setup,
     smart,
+    spawn,
     specials,
     stats,
     subtitles,
@@ -4286,7 +4287,7 @@ async def render_icon(settings: Settings, text: str) -> bytes | None:
         "pipe:1",
     ]
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.start(
             *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
         )
         out, _ = await asyncio.wait_for(proc.communicate(), 15)

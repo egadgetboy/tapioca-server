@@ -43,7 +43,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import cliprules, infostation, intro, playing, specials, subtitles, upnext
+from . import cliprules, infostation, intro, playing, spawn, specials, subtitles, upnext
 from . import ffmpeg as ff
 from .breaks import COMMERCIALS, ID_CARD, TRAILERS, clip_at
 from .broken import OPENING, PLAYING, of_part, part_key
@@ -2145,7 +2145,7 @@ class Broadcaster:
         the station counts as back on the air as soon as one is sending.
         `what` names the program, for the log."""
         try:
-            proc = await asyncio.create_subprocess_exec(
+            proc = await spawn.start(
                 *args,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,

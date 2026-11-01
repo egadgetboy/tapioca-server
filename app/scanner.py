@@ -89,7 +89,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field, fields, replace
 from typing import TYPE_CHECKING
 
-from . import catalog, infostation, mediainput, ondemand
+from . import catalog, infostation, mediainput, ondemand, spawn
 from . import ffmpeg as ff
 from .broadcaster import fmt_offset, played_whole
 from .broken import (
@@ -438,7 +438,7 @@ async def _run(args: list[str], timeout: float) -> tuple[int | None, str, str, D
     """Runs ffmpeg to the end: (exit code, its output, its log), or a
     Decoded saying why it couldn't be done."""
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.start(
             *args,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
@@ -690,7 +690,7 @@ async def decode_through(
         fcntl.fcntl(reading, fcntl.F_SETPIPE_SZ, READ_MOST)
     os.set_blocking(reading, False)
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await spawn.start(
             *args, "-stats_period", "0.05", "-debug_ts",
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
