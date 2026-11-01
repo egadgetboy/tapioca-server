@@ -337,8 +337,7 @@ WRITE = {
     "app/main.py:data_dir_problem .unlink": "data: the start's write check",
     "app/main.py:data_dir_problem .write_text": "data: the start's write check",
     "app/main.py:load_device_id .write_text": "data: this server's ID",
-    "app/subtitles.py:link os.replace": "data: a subtitle file's plainly named link",
-    "app/subtitles.py:tidy .unlink": "data: a subtitle file's plainly named link",
+    "app/subtitles.py:tidy .unlink": "data: subtitles read out and unused, and links left from before",
 }
 
 
