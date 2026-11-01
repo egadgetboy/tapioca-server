@@ -25,7 +25,8 @@ jobs:
             pip install -q --root-user-action=ignore pytest==9.1.1 pytest-asyncio==1.4.0
             cp -r /src /tmp/w && cd /tmp/w
             echo "::notice title=FFmpeg::$(ffmpeg -version | head -1)"
-            python -m pytest -q -p no:cacheprovider -rs tests/security/test_media_input.py tests/security/test_spawn.py 2>&1 | tail -8
+            echo "::notice title=The check at start::$(python -c "import asyncio; from app import mediainput; print(asyncio.run(mediainput.problem(\"ffmpeg\")))")"
+            python -m pytest -q -p no:cacheprovider -rfEs --tb=short tests/security/test_media_input.py tests/security/test_spawn.py 2>&1 | grep -vE "^\.+ *\[|^$" | tail -150 || true
             for i in $(seq 20); do
               python -m pytest -q -p no:cacheprovider tests/security/test_media_input.py -k "passes_the_check_at_start or redirect_from_plexs" 2>&1 | tail -1 | sed "s/ in .*//"
             done > /tmp/twenty.txt
