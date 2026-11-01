@@ -15,6 +15,7 @@ from . import inventory
         (inventory.egress_sites, inventory.EGRESS, "outbound request"),
         (inventory.spawn_sites, inventory.SPAWN, "started program"),
         (inventory.write_sites, inventory.WRITE, "file write"),
+        (inventory.filter_sites, inventory.FILTERS, "filter built from a value"),
     ],
 )
 def test_every_site_in_the_code_is_declared_and_every_declared_one_is_there(found, declared, what):
@@ -201,3 +202,18 @@ def test_the_suites_guard_stops_a_name_and_sendmsg(how):
             sock.sendmsg([b"x"], [], 0, ("192.0.2.1", 53))
         else:
             sock.connect(("example.com", 80))
+
+
+def test_the_census_sees_a_value_where_a_filters_name_goes():
+    import ast
+
+    def names(code: str) -> list[str]:
+        node = ast.parse(code, mode="eval").body
+        assert isinstance(node, ast.JoinedStr)
+        return [ast.unparse(v.value) for v in inventory._filter_names(node)]
+
+    assert names("f'{piece},scale=1:2'") == ["piece"]
+    assert names("f'scale=1:2,{piece};[a]{other}[b]'") == ["piece", "other"]
+    assert names("f\"scale=w='min(iw,{x})':h=2\"") == [], "a number in an expression"
+    assert names("f\"drawtext=text='{words}'\"") == [], "a value, quoted"
+    assert names("f'fade=t=in:st={at}:d=1,format=rgba'") == []

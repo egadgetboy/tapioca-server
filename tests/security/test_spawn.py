@@ -1,11 +1,15 @@
 """Every program tapiOca starts goes through one function, app/spawn.py's start (MED-FFMPEG-01, the security suite's
 slice 2): FFmpeg is started with no proxy in its environment, so no proxy ever sees what it reads (Plex's address,
-its token in it, among them), and the census knows each place that starts one."""
+its token in it, among them), and the census knows each place that starts one. Nor is anything loaded into it but
+the image's own (MED-03)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
+import subprocess
 import sys
 
 import pytest
@@ -107,3 +111,47 @@ def test_report_only_inputs_arent_checked(monkeypatch):
     monkeypatch.setattr(mediainput, "ENFORCED", False)
     bare = ["ffmpeg", "-i", "/media/a.mkv", "-f", "null", "-"]
     assert _started(monkeypatch, bare) == [bare]
+
+
+# MED-03: no outside codec or plugin. tapiOca never loads a plugin or library of its own choosing into a program it
+# starts, nor has it read a filter graph or an option from a file; and in the image, nothing the app's user can
+# write is among what FFmpeg runs or loads, nor on the path it's found by.
+_LOADING = (
+    "load_plugin",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "filter_script",
+    "filter_complex_script",
+)
+
+
+def test_no_program_is_given_a_plugin_a_library_or_its_filters_from_a_file():
+    found = [
+        f"{path.relative_to(inventory.APP)}: {word}"
+        for path in sorted(inventory.APP.rglob("*.py"))
+        for word in _LOADING
+        if word in path.read_text(encoding="utf-8")
+    ]
+    assert not found
+    # (FFmpeg's other way to read an option from a file: "-/vf file".)
+    assert not [p for p in inventory.APP.rglob("*.py") if '"-/' in p.read_text(encoding="utf-8")]
+
+
+def _loaded(program: str) -> list[str]:
+    said = subprocess.run(["ldd", program], capture_output=True, text=True, check=True).stdout
+    return [part for line in said.splitlines() for part in line.split() if part.startswith("/")]
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="no FFmpeg here")
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root can write anything (the image's tests run as its user, 1000)"
+)
+def test_what_ffmpeg_runs_and_loads_cant_be_changed_by_tapiocas_user():
+    programs = [shutil.which("ffmpeg"), shutil.which("ffprobe")]
+    files = [p for p in programs if p] + [lib for p in programs if p for lib in _loaded(p)]
+    places = {os.path.dirname(f) for f in files} | {
+        d for d in os.environ.get("PATH", "").split(":") if d
+    }
+    writable = sorted(p for p in {*files, *places} if os.access(p, os.W_OK))
+    assert len(files) > 2 and not writable

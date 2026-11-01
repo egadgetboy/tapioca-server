@@ -1,6 +1,7 @@
 """The security suite's census (DL287, part A.1, the static half): every place
 in tapiOca's code that asks something outside the process (an outbound
-request), starts a program, or writes a file, found by reading the code,
+request), starts a program, writes a file, or builds a filter graph from a
+value where a filter's name goes, found by reading the code,
 never by hand. Each one found is declared below with what it is, so a new
 one fails the suite until someone says what it is and it gets its checks:
 nothing ships untested by omission.
@@ -11,6 +12,7 @@ The runtime half (every route) is in authz_matrix.py.
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -239,6 +241,49 @@ def write_sites() -> list[Site]:
     return _sites("write")
 
 
+# A filter graph is built here as an f-string. A value standing where a filter's name goes (at the start, or after
+# ",", ";" or "]", outside parentheses and quotes) must be a piece tapiOca built itself, never anything from data:
+# a name from a file or a person could add a filter that opens a file or an address (MED-03).
+_FILTER_SHAPE = re.compile(r"(^|[,;\]])[a-z_0-9]+=")
+
+
+def _filter_names(node: ast.JoinedStr) -> list[ast.FormattedValue]:
+    depth, quoted, before, found = 0, False, "", []
+    for value in node.values:
+        if isinstance(value, ast.FormattedValue):
+            if depth == 0 and not quoted and before in ("", ",", ";", "]"):
+                found.append(value)
+            before = "}"
+            continue
+        for ch in str(value.value):
+            quoted = not quoted if ch == "'" else quoted
+            if not quoted:
+                depth = depth + 1 if ch == "(" else max(0, depth - 1) if ch == ")" else depth
+            before = ch
+    return found
+
+
+def filter_sites() -> list[Site]:
+    out: list[Site] = []
+    for path in sorted(APP.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        owner: dict[int, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for inner in ast.walk(node):
+                    owner[id(inner)] = node.name
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.JoinedStr):
+                continue
+            shape = "".join(v.value if isinstance(v, ast.Constant) else "x" for v in node.values)
+            if not _FILTER_SHAPE.search(shape):
+                continue
+            for value in _filter_names(node):
+                where = owner.get(id(node), "<module>")
+                out.append(Site(str(path.relative_to(APP)), where, f"filter {{{ast.unparse(value.value)}}}"))
+    return sorted(set(out), key=str)
+
+
 # ---------------------------------------------------------------------------
 # What each one is (DL287). Provenance (the owner, October 21, DL287): an
 # address an Admin typed into a setting may be on the home network; anything
@@ -338,6 +383,21 @@ WRITE = {
     "app/main.py:data_dir_problem .write_text": "data: the start's write check",
     "app/main.py:load_device_id .write_text": "data: this server's ID",
     "app/subtitles.py:tidy .unlink": "data: subtitles read out and unused, and links left from before",
+}
+
+# Each value standing where a filter's name goes (filter_sites): what tapiOca built that it is (MED-03).
+FILTERS = {
+    "app/bumpers.py:_picture_command filter {ordinary + ',' if ordinary else ''}": "built: ff.to_sdr's tone mapping",
+    "app/converting.py:_converted_picture filter {chain}": "built: the picture's own chain (_video_filter)",
+    "app/ffmpeg.py:tone_mapping_problem filter {to_sdr(hdr)}": "built: to_sdr's tone mapping",
+    "app/ffmpeg.py:_video_filter filter {chain}": "built: the picture's chain, before the subtitles go on",
+    "app/ffmpeg.py:with_overlays filter {put_on}": "built: _watermark's or banner_filter's overlay",
+    "app/intro.py:_reel_inputs filter {_PICTURE}": "constant: the reel's picture format",
+    "app/intro.py:_reel_inputs filter {_STEREO}": "constant: the sound's format",
+    "app/intro.py:_ident_inputs filter {_STEREO}": "constant: the sound's format",
+    "app/intro.py:still filter {until}": "built: the Intro Bumper's length (a trim)",
+    "app/intro.py:plain filter {until}": "built: the Intro Bumper's length (a trim)",
+    "app/intro.py:_moving_logo filter {until}": "built: the Intro Bumper's length (a trim)",
 }
 
 
