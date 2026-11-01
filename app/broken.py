@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from . import infostation
+from . import infostation, mediainput
 from .catalog import part_words
 from .db import Item
 from .ffmpeg import redact
@@ -190,6 +190,9 @@ class BrokenFiles:
             )
             return
         key = version_key(item.rating_key, version)
+        judged = (
+            mediainput.judged() if problem == "unsupported" and reason == mediainput.REFUSED else ""
+        )
         reason = of_part(reason, part)
         self._load(force=True)
         with self._lock:
@@ -217,6 +220,8 @@ class BrokenFiles:
             }
             if version:
                 entry["version"] = version
+            if judged:
+                entry["judged"] = judged
             if part:
                 entry["part"], entry["parts"] = part
             # (What replacing it with Sonarr needs, for a program no station has.)

@@ -189,6 +189,8 @@ class ProbeResult:
     video_duration_s: float | None = None  # how long the picture says it runs
     error: str | None = None
     timed_out: bool = False  # the share may be hung; says nothing about the file
+    # A Media read the allow-list refused (mediainput.REFUSED): unsupported, never broken.
+    refused: bool = False
     # An HDR picture: how its brightness is coded ("smpte2084" for HDR10, and
     # Dolby Vision with an HDR10 picture; "arib-std-b67" for HLG), and its
     # colours (see to_sdr). None for an ordinary (SDR) picture.
@@ -312,7 +314,10 @@ async def probe(
             continue
         break
     if proc.returncode != 0:
-        message = err.decode(errors="replace").strip().splitlines()
+        said = err.decode(errors="replace")
+        if options is None and mediainput.refused(said):
+            return ProbeResult(ok=False, error=mediainput.REFUSED, refused=True)
+        message = said.strip().splitlines()
         return ProbeResult(
             ok=False,
             error=redact(

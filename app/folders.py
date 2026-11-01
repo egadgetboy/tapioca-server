@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import access, catalog, folderart, folderscan, languages, naming, nfo, setup
+from . import access, catalog, folderart, folderscan, languages, mediainput, naming, nfo, setup
 from .catalog import NO_PICTURE, Entry, Media, Track
 from .db import Item
 from .library import FOLDER_PREFIX, LibraryError, NoPicture, is_folder_key
@@ -578,6 +578,7 @@ class FolderSource:
                 and r["size"] == size
                 and r["mtime_ns"] == mtime
                 and not probe.get("slow")
+                and probe.get("refused", mediainput.judged()) == mediainput.judged()
             ):
                 out[path] = probe
             else:

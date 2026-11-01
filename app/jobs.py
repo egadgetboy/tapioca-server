@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from . import infostation, replacing
+from . import infostation, mediainput, replacing
 from .broken import CHECK, STAYS, entry_part, file_key, found_by, of_part
 from .catalog import Media
 from .db import Item
@@ -518,8 +518,12 @@ async def look_at(
             (old_file and part.file != old_file)
             or (old_size and part.size and part.size != old_size)
         )
-    if not changed and (
-        not everything or entry.get("problem") == "unsupported" or found_by(entry) in STAYS
+    # (A refusal judged by another allow-list or FFmpeg is looked at again: MED-FFMPEG-01.)
+    judged_again = entry.get("judged", mediainput.judged()) != mediainput.judged()
+    if (
+        not changed
+        and not judged_again
+        and (not everything or entry.get("problem") == "unsupported" or found_by(entry) in STAYS)
     ):
         return None
     # The quick check, of the file Plex has now: a new one, or the same one

@@ -894,3 +894,19 @@ def test_an_arr_address_that_will_never_be_reached_isnt_saved_even_when_the_admi
     # (Testing one says why, never just the error's name: the cold audit of 1.44.0.)
     tested = c.post("/api/arr/test", json={"app": "sonarr", "url": "http://169.254.169.254:8989", "key": world.sonarr.key})
     assert tested.status_code == 400 and "cloud metadata address" in tested.json()["detail"], tested.text
+
+
+def test_a_file_the_allow_list_refuses_is_never_replaced_or_removed(world):
+    # (MED-FFMPEG-01: a refusal is unsupported, never broken, so an automatic replacement, which removes a broken
+    # file and can't be undone, never acts on one. The world replaces by itself.)
+    from app import mediainput
+
+    s = world.sonarr
+    s.give_file(71, world.file("201").rsplit("/", 1)[1], 1001, downloaded="R1")
+    s.releases[71] = ["R1", "R2"]
+    world.broken("201", mediainput.REFUSED, problem="unsupported", found="playing")
+    world.go()
+    world.go()
+    assert not s.calls and not s.blocklist and not s.recycled
+    assert "replace" not in world.entry("201")
+    assert world.entry("201")["problem"] == "unsupported"

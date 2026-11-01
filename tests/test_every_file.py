@@ -306,3 +306,30 @@ def test_records_are_kept_for_what_media_has(tmp_path, clean):
         client.portal.call(scanner._media_everything)
         scanner._forget_old(ctx.db.scans(), [])
         assert "301" in ctx.db.scans() and "999" not in ctx.db.scans()
+
+
+def test_a_refusal_is_judged_again_when_the_allow_list_or_ffmpeg_moves(
+    tmp_path, clean, monkeypatch
+):
+    # (MED-FFMPEG-01: an unsupported file is looked at again only when its file changes, but a refusal carries what
+    # judged it, the allow-list's version and FFmpeg's, and is looked at again when either moves, so a wrong refusal
+    # doesn't outlive the release that fixes it.)
+    from app import mediainput
+
+    client, _fp = world(tmp_path, clean)
+    with client:
+        w = start(client)
+        ctx = w.ctx
+        episode = client.portal.call(ctx.library.entry, "201", True)
+        item = sc.item_of(episode, episode.media[0])
+        ctx.broken.record(
+            item, mediainput.REFUSED, None, item.file_path, 1000, problem="unsupported", library="1"
+        )
+        assert ctx.broken.entries()[0]["judged"] == mediainput.judged()
+        client.portal.call(jobs.look_again, ctx, jobs.ListCheck(running=True), False)
+        assert ctx.broken.keys() == {"201"}, "judged by what judges now: left as it is"
+        monkeypatch.setattr(mediainput, "ALLOW_VERSION", mediainput.ALLOW_VERSION + 1)
+        client.portal.call(jobs.look_again, ctx, jobs.ListCheck(running=True), False)
+        assert ctx.broken.keys() == set(), (
+            "an older allow-list's refusal, looked at again: the file plays"
+        )

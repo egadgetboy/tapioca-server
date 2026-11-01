@@ -1095,11 +1095,13 @@ async def _quick_file(
     record.size = size or record.size
     probe = await ff.probe(ctx.settings, resolved.source)
     streamed = resolved.source.startswith(("http://", "https://"))
-    if probe.timed_out or (not probe.ok and streamed):
+    if probe.refused:
+        verdict = Verdict("unsupported", probe.error)
+    elif probe.timed_out or (not probe.ok and streamed):
         # Through Plex, a failure may well be Plex's or the share's (a pool
         # offline); playing it will tell.
         return Verdict("skipped", probe.error or ""), None
-    if not probe.ok:
+    elif not probe.ok:
         verdict = Verdict("broken", probe.error or "the file can't be opened")
     else:
 

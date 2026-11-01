@@ -1958,6 +1958,10 @@ class Broadcaster:
                 part=part,
             )  # fmt: skip
         assert probe is not None
+        if probe.refused:
+            return Failure(
+                probe.error, resolved.plex_file, resolved.size, problem="unsupported", part=part
+            )
         if not probe.ok:
             reason = probe.error or "can't open the file"
             return Failure(

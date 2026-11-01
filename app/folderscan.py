@@ -243,7 +243,10 @@ async def read_file(ffprobe: str, path: str, timeout: float = PROBE_S) -> dict[s
             continue
         break
     if proc.returncode != 0:
-        said = err.decode(errors="replace").strip().splitlines()
+        text = err.decode(errors="replace")
+        if mediainput.refused(text):
+            return {"ok": False, "error": mediainput.REFUSED, "refused": mediainput.judged()}
+        said = text.strip().splitlines()
         return {"ok": False, "error": said[-1][:200] if said else "it can't be opened"}
     try:
         data = json.loads(out or b"{}")

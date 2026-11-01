@@ -1266,3 +1266,46 @@ async def test_a_hung_share_is_checked_once_at_a_time_for_own_folders(tmp_path, 
         assert len(started) == 1
     finally:
         release.set()
+
+
+async def test_a_refused_file_is_read_again_when_the_allow_list_or_ffmpeg_moves(
+    tmp_path, clips, monkeypatch
+):
+    # (MED-FFMPEG-01: a folder's file the allow-list refused is kept as refused, with what judged it, and read again
+    # once the allow-list's version or FFmpeg's moves; until then, as any unchanged file, it isn't.)
+    from app import mediainput
+
+    source = make_source(tmp_path)
+    tv = Path(source.settings.media_dir) / "TV"
+    files = sonarr_tv(tv, clips)
+    lib = source.add_library("TV", "show", [str(tv)])
+    read: list[str] = []
+    refused = str(files["e1"])
+
+    async def refusing(ffprobe, path, timeout=60.0):
+        read.append(path)
+        if path == refused:
+            return {"ok": False, "error": mediainput.REFUSED, "refused": mediainput.judged()}
+        return await folderscan_read(ffprobe, path, timeout)
+
+    folderscan_read = folderscan.read_file
+    monkeypatch.setattr(folderscan, "read_file", refusing)
+    await source.scan(lib.id)
+    read.clear()
+    await source.scan(lib.id)
+    assert read == [], "judged by what judges now: not read again"
+    monkeypatch.setattr(mediainput, "ALLOW_VERSION", mediainput.ALLOW_VERSION + 1)
+    await source.scan(lib.id)
+    assert read == [refused]
+
+
+@pytest.mark.skipif(not shutil.which("ffprobe"), reason="no FFmpeg here")
+async def test_enforced_a_folder_scan_keeps_a_refusal_with_what_judged_it(tmp_path, monkeypatch):
+    from app import mediainput
+
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    (tmp_path / "other.mp4").write_bytes(b"")
+    listed = tmp_path / "movie.mkv"
+    listed.write_text("ffconcat version 1.0\nfile 'other.mp4'\n")
+    said = await folderscan.read_file("ffprobe", str(listed))
+    assert said == {"ok": False, "error": mediainput.REFUSED, "refused": mediainput.judged()}

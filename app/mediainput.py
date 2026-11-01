@@ -59,6 +59,12 @@ NEVER = frozenset({
     "libgme", "libopenmpt", "vapoursynth", "avisynth",
 })  # fmt: skip
 
+# The one wording, everywhere, for a file a Media read refuses: "unsupported", never "broken" (an automatic
+# replacement removes a broken file). Judged again when ALLOW_VERSION or FFmpeg's version moves (judged).
+REFUSED = "This file isn't a video tapiOca can play"
+# (One more each time ALLOWED changes: test_the_allow_lists_version_moves_with_it.)
+ALLOW_VERSION = 1
+
 MAX_PIXELS = 35_389_440  # (8K, 7680 x 4320, with room)
 MAX_ALLOC = 1 << 30  # (one allocation: an 8K frame is about 100 MB)
 
@@ -101,6 +107,8 @@ def refused(stderr: str) -> bool:
 
 # What's wrong with the FFmpeg tapiOca runs, for a Media read's allow-list (check_at_start); until it's checked, that.
 FFMPEG_PROBLEM: str | None = "FFmpeg hasn't been checked yet"
+# Its version, as `ffmpeg -version`'s first line says it (check_at_start).
+FFMPEG_VERSION = ""
 NO_REDIRECTS = "its http can't be kept from following a redirect (it has no max_redirects)"
 _CHECK_S = 20.0
 
@@ -152,9 +160,15 @@ async def problem(ffmpeg: str) -> str | None:
     return judge(await _printed(ffmpeg, "-demuxers"), await _printed(ffmpeg, "-h", "protocol=http"))
 
 
+def judged() -> str:
+    """What judges a Media read now: the allow-list's version and FFmpeg's, kept with each refusal."""
+    return f"{ALLOW_VERSION}|{FFMPEG_VERSION}"
+
+
 async def check_at_start(ffmpeg: str) -> None:
     """Checks the FFmpeg tapiOca runs, once as it starts, and says so. Report-only: nothing is refused."""
-    global FFMPEG_PROBLEM
+    global FFMPEG_PROBLEM, FFMPEG_VERSION
+    FFMPEG_VERSION = (await _printed(ffmpeg, "-version")).partition("\n")[0].strip()
     FFMPEG_PROBLEM = await problem(ffmpeg)
     if FFMPEG_PROBLEM:
         log.warning(

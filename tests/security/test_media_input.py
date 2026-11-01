@@ -13,12 +13,16 @@ import logging
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app import ffmpeg as ff
-from app import folderscan, mediainput
+from app import folderscan, jobs, mediainput
 from app.config import Settings
+
+from ..helpers import PAGE
 
 SMALL = Settings(plex_url="", plex_token="", video_width=640, video_height=360)
 needs_ffmpeg = pytest.mark.skipif(
@@ -43,6 +47,15 @@ def _video(path: Path) -> Path:
         ],
         check=True,
     )
+    return path
+
+
+def _with_sound(path: Path, seconds: int) -> Path:
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=s=160x90:r=10:d={seconds}", "-f", "lavfi",
+         "-i", f"sine=f=440:d={seconds}", "-c:v", "mpeg4", "-c:a", "aac", str(path)],
+        check=True,
+    )  # fmt: skip
     return path
 
 
@@ -369,3 +382,114 @@ def test_report_only_the_check_at_start_is_logged(caplog, monkeypatch):
     said = [r for r in caplog.records if r.name == "app.mediainput"]
     assert said and said[-1].levelno == logging.WARNING and "Media" in said[-1].getMessage()
     assert mediainput.FFMPEG_PROBLEM is not None
+
+
+# Enforced, a read the allow-list refuses is "unsupported" with the one wording, never "broken": an automatic
+# replacement removes a broken file, which can't be undone. Each carries what judged it (the allow-list's version and
+# FFmpeg's), so it's judged again when either changes.
+@needs_ffmpeg
+def test_enforced_a_refused_probe_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    listed = _concat(tmp_path, _video(tmp_path / "other.mp4"))
+    probed = asyncio.run(ff.probe(SMALL, str(listed)))
+    assert not probed.ok and probed.refused and probed.error == mediainput.REFUSED
+    real = asyncio.run(ff.probe(SMALL, str(_video(tmp_path / "film.mkv"))))
+    assert real.ok and not real.refused
+    broken = tmp_path / "broken.mkv"
+    broken.write_bytes(b"\x1a\x45\xdf\xa3" + b"\x00" * 64)
+    unreadable = asyncio.run(ff.probe(SMALL, str(broken)))
+    assert not unreadable.ok and not unreadable.refused, "a file that's merely broken stays broken"
+
+
+@needs_ffmpeg
+def test_enforced_the_file_check_calls_a_refused_file_unsupported(tmp_path, monkeypatch):
+    from app import scanner
+    from app.db import Item
+    from app.sources import ResolvedSource
+
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    listed = _concat(tmp_path, _video(tmp_path / "other.mp4"))
+    item = Item(0, 0, 60_000, "201", "episode", "Fog Season", file_path=str(listed))
+    ctx = SimpleNamespace(settings=SMALL)
+    verdict, _ = asyncio.run(
+        scanner._quick_file(ctx, item, ResolvedSource(str(listed), str(listed), 9), None, "201")
+    )
+    assert (verdict.result, verdict.reason) == ("unsupported", mediainput.REFUSED)
+    streamed = ResolvedSource("http://127.0.0.1:9/library/parts/1/file.mkv", str(listed), 9)
+    monkeypatch.setattr(ff, "probe", _refused)
+    verdict, _ = asyncio.run(scanner._quick_file(ctx, item, streamed, None, "201"))
+    assert verdict.result == "unsupported", (
+        "refused through Plex too: never skipped as Plex's failure"
+    )
+
+
+async def _refused(*_a, **_k):
+    return ff.ProbeResult(ok=False, error=mediainput.REFUSED, refused=True)
+
+
+def test_a_refusal_is_recorded_with_what_judged_it(tmp_path, monkeypatch):
+    from app.broken import BrokenFiles
+    from app.db import Item
+
+    monkeypatch.setattr(mediainput, "FFMPEG_VERSION", "ffmpeg version 7.1.5")
+    broken = BrokenFiles(tmp_path / "broken.json")
+    item = Item(0, 0, 60_000, "201", "episode", "Fog Season", file_path="/media/Shows/A/movie.mkv")
+    broken.record(item, mediainput.REFUSED, 5, problem="unsupported")
+    broken.record(
+        Item(0, 0, 60_000, "202", "episode", "Other", file_path="/x.mkv"), "can't open the file", 5
+    )
+    entries = {e["ratingKey"]: e for e in broken.entries()}
+    assert (
+        entries["201"]["judged"]
+        == mediainput.judged()
+        == f"{mediainput.ALLOW_VERSION}|ffmpeg version 7.1.5"
+    )
+    assert "judged" not in entries["202"], "only a refusal carries it"
+
+
+def test_the_allow_lists_version_moves_with_it():
+    # (A change to ALLOWED without a new ALLOW_VERSION would leave files refused under the old list unjudged: the
+    # digest below changes with the list, and ALLOW_VERSION with it.)
+    import hashlib
+
+    digest = hashlib.sha256(",".join(mediainput.ALLOWED).encode()).hexdigest()[:12]
+    assert (mediainput.ALLOW_VERSION, digest) == (1, "91fc55ddbe4e")
+
+
+@needs_ffmpeg
+async def test_enforced_a_station_takes_a_refused_file_off_the_air_as_unsupported(
+    tmp_path, monkeypatch
+):
+    from ..fakeplex import FakePlex
+    from ..test_e2e import record, start_server
+
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    monkeypatch.setattr(jobs, "CHECK_NEW_STATIONS", False)
+    d = tmp_path / "media"
+    d.mkdir()
+    listed = _concat(d, _video(d / "other.mp4"))
+    fine = _with_sound(d / "fine.mkv", 6)
+    plex = FakePlex()
+    plex.add_show("100", "Show")
+    plex.add_episode("201", "100", 1, 1, "Listed", str(listed), 5000)
+    plex.add_episode("202", "100", 1, 2, "Fine", str(fine), 6000)
+    base, app, _settings, srv, task = await start_server(tmp_path, plex)
+    try:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
+            made = await client.post(
+                "/api/channels",
+                json={
+                    "number": 5, "orderMode": "rotate", "introSeconds": 0, "upNextSeconds": 0,
+                    "watermark": "off", "sources": [{"type": "show", "ratingKey": "100"}],
+                },
+            )  # fmt: skip
+            assert made.status_code == 201, made.text
+            data = await record(f"{base}/stream/5", 6)
+    finally:
+        srv.should_exit = True
+        await task
+    assert data, "the Station played the file that opens"
+    entries = app.state.ctx.broken.entries()
+    assert [(e["ratingKey"], e["problem"], e["reason"]) for e in entries] == [
+        ("201", "unsupported", mediainput.REFUSED)
+    ]
