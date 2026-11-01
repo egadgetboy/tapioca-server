@@ -80,3 +80,19 @@ def as_text(entries: list[dict[str, Any]]) -> str:
         f"{e['level']:<7} {e['source']}: {e['message']}"
         for e in entries
     )
+
+
+class _Redacted(logging.Formatter):
+    """The console's log, with Plex tokens and any name and password in an
+    address hidden, as the Logs tab has them (the security audit of 1.44.0)."""
+
+    def __init__(self, inner: logging.Formatter | None) -> None:
+        super().__init__()
+        self.inner = inner or logging.Formatter()
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact(self.inner.format(record))
+
+
+def redact_console(handler: logging.Handler) -> None:
+    handler.setFormatter(_Redacted(handler.formatter))

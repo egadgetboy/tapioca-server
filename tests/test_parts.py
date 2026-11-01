@@ -640,10 +640,10 @@ def test_the_console_log_hides_tokens_and_sign_ins_too(capsys):
     # (The security audit's last round: only the Logs tab's buffer was redacted, never stdout.)
     import logging
 
-    from app import main as server
+    from app import logbuffer
 
     handler = logging.StreamHandler()
-    server.redact_console(handler)
+    logbuffer.redact_console(handler)
     record = logging.LogRecord("t", logging.INFO, __file__, 1, "Opening %s", ("http://u:pw@plex.example/x?X-Plex-Token=abc",), None)
     handler.handle(record)
     said = capsys.readouterr().err

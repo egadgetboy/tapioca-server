@@ -4292,24 +4292,6 @@ def data_dir_problem(data_dir: Path) -> str | None:
     return None
 
 
-class _Redacted(logging.Formatter):
-    """The console's log, with Plex tokens and any name and password in an
-    address hidden, as the Logs tab has them (the security audit of 1.44.0)."""
-
-    def __init__(self, inner: logging.Formatter | None) -> None:
-        super().__init__()
-        self.inner = inner or logging.Formatter()
-
-    def format(self, record: logging.LogRecord) -> str:
-        from .ffmpeg import redact
-
-        return redact(self.inner.format(record))
-
-
-def redact_console(handler: logging.Handler) -> None:
-    handler.setFormatter(_Redacted(handler.formatter))
-
-
 def main() -> None:
     import uvicorn
 
@@ -4318,7 +4300,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
     for handler in logging.getLogger().handlers:
-        redact_console(handler)
+        logbuffer.redact_console(handler)
     settings = Settings.from_env()
     problem = data_dir_problem(settings.data_dir)
     if problem:
