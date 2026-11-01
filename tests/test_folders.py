@@ -1304,6 +1304,7 @@ async def test_enforced_a_folder_scan_keeps_a_refusal_with_what_judged_it(tmp_pa
     from app import mediainput
 
     monkeypatch.setattr(mediainput, "ENFORCED", True)
+    monkeypatch.setattr(mediainput, "FFMPEG_PROBLEM", None)  # (checked at start, and passed)
     (tmp_path / "other.mp4").write_bytes(b"")
     listed = tmp_path / "movie.mkv"
     listed.write_text("ffconcat version 1.0\nfile 'other.mp4'\n")

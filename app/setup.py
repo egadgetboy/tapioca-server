@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import backups, mediaread, playback
+from . import backups, mediainput, mediaread, playback
 from .playing import ago
 from .plex import PlexError
 from .sources import find_first, learn_mapping, local_candidates
@@ -773,6 +773,12 @@ def encoding_check(encoding: dict[str, Any], tone_mapping: bool, subtitling: boo
             "tapiOca can’t draw subtitles, so programs play without them. The Logs tab says why."
         )
         verdict = WARN if verdict in (GOOD, INFO) else verdict
+    if mediainput.closed():
+        lines.append(
+            "tapiOca can’t check its ffmpeg, so it won’t play your movies and shows until it can. "
+            "The Logs tab says why."
+        )
+        verdict = BAD
     return Check("encoding", title, verdict, lines)
 
 

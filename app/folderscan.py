@@ -215,6 +215,9 @@ async def read_file(ffprobe: str, path: str, timeout: float = PROBE_S) -> dict[s
     sound and subtitle tracks, covers and tags. {"ok": False, "error": ...}
     if it can't be read. ffprobe runs at the lowest priority."""
     global _asks_dolby_vision
+    shut = mediainput.closed()
+    if shut:
+        return {"ok": False, "error": shut, "slow": True}
     while True:
         entries = _ENTRIES + (_DOLBY_VISION if _asks_dolby_vision else "")
         args = [*ff.low_priority(), ffprobe, "-v", "error", "-show_entries", entries, "-of", "json"]

@@ -390,6 +390,7 @@ def test_report_only_the_check_at_start_is_logged(caplog, monkeypatch):
 @needs_ffmpeg
 def test_enforced_a_refused_probe_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(mediainput, "ENFORCED", True)
+    _checked_ffmpeg(monkeypatch)
     listed = _concat(tmp_path, _video(tmp_path / "other.mp4"))
     probed = asyncio.run(ff.probe(SMALL, str(listed)))
     assert not probed.ok and probed.refused and probed.error == mediainput.REFUSED
@@ -408,6 +409,7 @@ def test_enforced_the_file_check_calls_a_refused_file_unsupported(tmp_path, monk
     from app.sources import ResolvedSource
 
     monkeypatch.setattr(mediainput, "ENFORCED", True)
+    _checked_ffmpeg(monkeypatch)
     listed = _concat(tmp_path, _video(tmp_path / "other.mp4"))
     item = Item(0, 0, 60_000, "201", "episode", "Fog Season", file_path=str(listed))
     ctx = SimpleNamespace(settings=SMALL)
@@ -421,6 +423,16 @@ def test_enforced_the_file_check_calls_a_refused_file_unsupported(tmp_path, monk
     assert verdict.result == "unsupported", (
         "refused through Plex too: never skipped as Plex's failure"
     )
+
+
+def _checked_ffmpeg(monkeypatch) -> None:
+    """An FFmpeg the check at start passes (this one may be 6.1, which has no max_redirects: the image's 7.1.5 has)."""
+
+    async def fine(_ffmpeg: str) -> None:
+        return None
+
+    monkeypatch.setattr(mediainput, "FFMPEG_PROBLEM", None)
+    monkeypatch.setattr(mediainput, "problem", fine)
 
 
 async def _refused(*_a, **_k):
@@ -464,6 +476,7 @@ async def test_enforced_a_station_takes_a_refused_file_off_the_air_as_unsupporte
     from ..test_e2e import record, start_server
 
     monkeypatch.setattr(mediainput, "ENFORCED", True)
+    _checked_ffmpeg(monkeypatch)
     monkeypatch.setattr(jobs, "CHECK_NEW_STATIONS", False)
     d = tmp_path / "media"
     d.mkdir()
@@ -602,3 +615,53 @@ def test_a_real_file_in_each_vetted_container_is_read(tmp_path, name, file, code
         text=True,
     )
     assert played.returncode == 0, played.stderr
+
+
+# Enforced, an FFmpeg that can't be checked fails closed: no Media read is made, and none is the file's fault (it says
+# nothing about the file, as a hung share's doesn't), so nothing goes on the Broken files list; the Admin's page says
+# why, and the next look tries again.
+def test_enforced_an_unchecked_ffmpeg_reads_no_media(tmp_path, monkeypatch):
+    from app import spawn
+
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    monkeypatch.setattr(mediainput, "FFMPEG_PROBLEM", "it has no wtv")
+
+    async def never(*_a, **_k):
+        raise AssertionError("FFmpeg was started")
+
+    monkeypatch.setattr(spawn, "start", never)
+    probed = asyncio.run(ff.probe(SMALL, "/media/Movies/A/a.mkv"))
+    assert not probed.ok and probed.timed_out and not probed.refused
+    assert "it has no wtv" in (probed.error or "")
+    said = asyncio.run(folderscan.read_file("ffprobe", "/media/Movies/A/a.mkv"))
+    assert said["ok"] is False and said["slow"] is True, (
+        "a folder's file read again at the next scan"
+    )
+    with pytest.raises(AssertionError, match="FFmpeg was started"):
+        # (An upload's read has its own options, and goes on.)
+        asyncio.run(ff.probe(SMALL, "/data/bumpers/x.mp4", options=ff.UPLOADED_VIDEO))
+
+
+def test_report_only_an_unchecked_ffmpeg_changes_nothing(monkeypatch):
+    monkeypatch.setattr(mediainput, "ENFORCED", False)
+    monkeypatch.setattr(mediainput, "FFMPEG_PROBLEM", "it has no wtv")
+    assert mediainput.read("/media/a.mkv") == ["-i", "/media/a.mkv"]
+    assert mediainput.closed() is None
+
+
+def test_the_admins_page_says_when_ffmpeg_cant_be_checked(monkeypatch):
+    from app import setup
+
+    monkeypatch.setattr(mediainput, "FFMPEG_PROBLEM", "it has no wtv")
+    monkeypatch.setattr(mediainput, "ENFORCED", False)
+    quiet = setup.encoding_check({"state": "cpu"}, True, True)
+    assert not [line for line in quiet.lines if "check its ffmpeg" in line], (
+        "report-only: the log says it"
+    )
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    said = setup.encoding_check({"state": "cpu"}, True, True)
+    assert said.state == setup.BAD
+    assert (
+        "tapiOca can’t check its ffmpeg, so it won’t play your movies and shows until it can."
+        in said.lines[-1]
+    )

@@ -162,6 +162,14 @@ async def problem(ffmpeg: str) -> str | None:
     return judge(await _printed(ffmpeg, "-demuxers"), await _printed(ffmpeg, "-h", "protocol=http"))
 
 
+def closed() -> str | None:
+    """Why no Media read may be made now, failing closed: enforced, with an FFmpeg that can't be checked. None:
+    reads go on."""
+    if ENFORCED and FFMPEG_PROBLEM:
+        return f"tapiOca can't check its ffmpeg ({FFMPEG_PROBLEM})"
+    return None
+
+
 def judged() -> str:
     """What judges a Media read now: the allow-list's version and FFmpeg's, kept with each refusal."""
     return f"{ALLOW_VERSION}|{FFMPEG_VERSION}"

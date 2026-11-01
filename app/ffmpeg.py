@@ -188,7 +188,8 @@ class ProbeResult:
     video_index: int = 0  # index among the file's video streams
     video_duration_s: float | None = None  # how long the picture says it runs
     error: str | None = None
-    timed_out: bool = False  # the share may be hung; says nothing about the file
+    # Says nothing about the file: the share may be hung, or FFmpeg can't be checked (mediainput.closed).
+    timed_out: bool = False
     # A Media read the allow-list refused (mediainput.REFUSED): unsupported, never broken.
     refused: bool = False
     # An HDR picture: how its brightness is coded ("smpte2084" for HDR10, and
@@ -273,6 +274,9 @@ async def probe(
     """Checks a file opens and has a video stream, and picks an audio track.
     `options`: for reading it (UPLOADED_VIDEO for an upload; with none, it's read as Media)."""
     global _asks_dolby_vision
+    shut = mediainput.closed() if options is None else None
+    if shut:
+        return ProbeResult(ok=False, error=shut, timed_out=True)
     while True:
         entries = _ENTRIES + (_DOLBY_VISION if _asks_dolby_vision else "")
         args = [settings.ffprobe_path, "-v", "error", "-show_entries", entries, "-of", "json"]
