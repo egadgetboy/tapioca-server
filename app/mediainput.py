@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from . import spawn
 
@@ -134,16 +135,23 @@ NO_REDIRECTS = "its http can't be kept from following a redirect (it has no max_
 _CHECK_S = 20.0
 
 
+# After its rule, each of `ffmpeg -demuxers`' rows: D, E (muxing) and, from FFmpeg 7.1, d (a device), then the name.
+_RULE = re.compile(r"^ -+$", re.MULTILINE)
+_ROW = re.compile(r" D[E ][d ]? (\S+)")
+
+
+def _demuxers(listed: str) -> set[str]:
+    """The demuxers' names `ffmpeg -demuxers` lists, as 6.1 lays them out or as 7.1 does."""
+    _header, *rows = _RULE.split(listed, maxsplit=1)
+    lines = rows[0].splitlines() if rows else []
+    return {row[1] for line in lines if (row := _ROW.match(line))}
+
+
 def judge(demuxers: str, http: str) -> str | None:
     """What's wrong with an FFmpeg for the allow-list, from `ffmpeg -demuxers` and `-h protocol=http`: a vetted
     demuxer missing, an unvetted one sharing part of a vetted one's name (FFmpeg's whitelist would let it in), or an
     http that follows redirects. None: nothing."""
-    listed = demuxers.split("\n --\n", 1)[-1] if "\n --\n" in demuxers else ""
-    names = {
-        line.split()[1]
-        for line in listed.splitlines()
-        if len(line.split()) > 1 and "D" in line.split()[0]
-    }
+    names = _demuxers(demuxers)
     if not names:
         return "its demuxers couldn't be listed"
     missing = [name for name in ALLOWED if name not in names]

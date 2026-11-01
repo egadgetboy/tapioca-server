@@ -340,6 +340,16 @@ DEMUXERS = """File formats:
  D  concat          Virtual concatenation script
 """ + "".join(f" D  {name:<15} a vetted one\n" for name in mediainput.ALLOWED)
 HTTP = "http AVOptions:\n  -max_redirects     <int>        .D.......... Maximum number of redirects"
+# FFmpeg 7.1's layout (the image's 7.1.5, its fftools/opt_common.c): a third column, d for a device, and a longer
+# rule. (The check at start read only 6.1's, and in the image found no demuxers at all: spike S2-2.)
+DEMUXERS_7_1 = """Formats:
+ D.. = Demuxing supported
+ .E. = Muxing supported
+ ..d = Is a device
+ ---
+ D d alsa            ALSA audio input
+ D   concat          Virtual concatenation script
+""" + "".join(f" D   {name:<15} a vetted one\n" for name in mediainput.ALLOWED)
 
 
 def test_an_ffmpeg_with_every_vetted_demuxer_and_no_redirects_passes():
@@ -363,6 +373,20 @@ def test_an_ffmpeg_whose_http_follows_redirects_fails():
 
 def test_an_ffmpeg_that_cant_list_its_demuxers_fails():
     assert mediainput.judge("", HTTP) is not None
+
+
+def test_in_ffmpeg_7_1s_layout_every_vetted_demuxer_passes():
+    assert mediainput.judge(DEMUXERS_7_1, HTTP) is None
+
+
+def test_in_ffmpeg_7_1s_layout_a_missing_vetted_demuxer_fails():
+    said = mediainput.judge(DEMUXERS_7_1.replace(" D   wtv ", " D   wtx "), HTTP)
+    assert said is not None and "wtv" in said
+
+
+def test_in_ffmpeg_7_1s_layout_a_device_is_known_by_its_name():
+    said = mediainput.judge(DEMUXERS_7_1 + " D d mpeg,cam        a device sharing a name\n", HTTP)
+    assert said is not None and "mpeg,cam" in said
 
 
 @needs_ffmpeg
