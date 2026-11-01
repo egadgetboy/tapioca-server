@@ -6,6 +6,7 @@ joined; and a program whose subtitles can't be drawn plays without them."""
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import subprocess
 from dataclasses import replace
@@ -121,10 +122,6 @@ async def played(
     _, err = await asyncio.wait_for(proc.communicate(), 120)
     assert proc.returncode == 0, err.decode()[-500:]
     return out
-
-
-def is_link(path: str) -> bool:
-    return Path(path).is_symlink()
 
 
 async def picked(tmp: Path, source: Path, mode: str) -> ff.Subtitles | subtitles.Extraction | None:
@@ -289,13 +286,37 @@ async def test_forced_only_draws_just_the_forced_lines(tmp_path):
 
 
 async def test_a_subtitle_file_beside_the_film(tmp_path):
+    # (MED-FFMPEG-01's filters' own files: a subtitle file beside the film is read out into tapiOca's own .ass
+    # first, as subtitles inside a file are, so the drawing only ever opens a file tapiOca wrote. Until then this
+    # drew the file itself, through a link to it: the link is gone.)
     film = black(tmp_path / "Film (1999).mkv")
     srt(tmp_path / "Film (1999).en.srt", [EARLY])
-    subs = await picked(tmp_path, film, "always")
-    assert isinstance(subs, ff.Subtitles) and subs.stream is None and is_link(subs.path)
+    choice = await picked(tmp_path, film, "always")
+    assert isinstance(choice, subtitles.Extraction) and choice.sidecar
+    assert choice.target.parent == tmp_path / subtitles.FOLDER and choice.target.suffix == ".ass"
+    subs = await ready(choice)
+    assert subs is not None
+    assert (await asyncio.to_thread(Path(subs.path).read_text)).startswith("[Script Info]")
     out = await played(film, tmp_path / "a.ts", 0.0, 6.0, subs)
     assert spans(shown(out, TEXT_AREA)) == [(2.0, 4.0)]
+    again = await picked(tmp_path, film, "always")
+    assert again == subs, "read out once, then drawn from its copy"
     assert await picked(tmp_path, film, "forced") is None
+
+
+async def test_a_subtitle_file_that_isnt_one_is_never_drawn(tmp_path, monkeypatch):
+    # (A ".srt" that's an ffconcat list naming a file beside it: enforced, it's refused as it's read out, and the
+    # program plays without subtitles.)
+    from app import mediainput
+
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    monkeypatch.setattr(mediainput, "FFMPEG_PROBLEM", None)
+    film = black(tmp_path / "Film (1999).mkv")
+    (tmp_path / "Film (1999).en.srt").write_text("ffconcat version 1.0\nfile 'Film (1999).mkv'\n")
+    choice = await picked(tmp_path, film, "always")
+    assert isinstance(choice, subtitles.Extraction) and choice.sidecar
+    assert not await subtitles.extract(SMALL, choice)
+    assert not choice.target.exists()
 
 
 async def test_dvd_subtitles_are_drawn_where_and_when_they_should_be(tmp_path):
@@ -333,14 +354,17 @@ def test_the_drawing_is_tried_at_startup(tmp_path):
     assert problem and "subtitles" in problem
 
 
-def test_links_are_made_whatever_a_file_is_called(tmp_path):
-    # (A name that isn't valid UTF-8, as Linux allows.)
-    odd = tmp_path / "Film (1999).fran\udce7ais.srt"
-    made = subtitles.link(tmp_path / "data", str(odd))
-    assert made is not None and Path(made).is_symlink()
-    assert subtitles.link(tmp_path / "data", str(odd)) == made  # (the same link again)
+async def test_a_subtitle_file_is_read_out_whatever_it_is_called(tmp_path):
+    # (A name that isn't valid UTF-8, as Linux allows. Until the subtitle files beside a film were read out
+    # first, this checked the link to one that the drawing took; the read-out copy's name is tapiOca's own.)
+    film = black(tmp_path / "Film (1999).mkv")
+    srt(tmp_path / "Film (1999).fran\udce7ais.srt", [EARLY])
+    choice = await picked(tmp_path, film, "always")
+    assert isinstance(choice, subtitles.Extraction)
+    assert re.fullmatch(r"[0-9a-f]+\.ass", choice.target.name)
+    assert (await ready(choice)) is not None
     # Nothing half made is left behind.
-    assert all(not p.name.endswith(".new") for p in (tmp_path / "data" / "subtitles").iterdir())
+    assert all(not p.name.endswith(".part") for p in (tmp_path / subtitles.FOLDER).iterdir())
 
 
 async def test_subtitles_that_cant_be_read_out_arent_tried_again_straight_away(tmp_path):
@@ -391,6 +415,45 @@ async def test_a_station_draws_subtitles_and_plays_on_if_it_cant(tmp_path, monke
     out.write_bytes(data)
     assert_clean_stream(out)
     assert any(shown(out, TEXT_AREA)), "the good film's subtitles were drawn"
+    assert app.state.ctx.broken.entries() == []
+    said = " ".join(r.getMessage() for r in caplog.records)
+    # (The bad file is caught as it's read out, before its film starts, so it plays without them from the start:
+    # until subtitle files beside a film were read out first, the drawing failed and the film was tried again
+    # with nothing drawn, which the next test keeps.)
+    assert "Couldn't extract the subtitles from" in said and "Bad.en.srt" in said
+
+
+async def test_a_station_plays_on_when_its_subtitles_cant_be_drawn(tmp_path, monkeypatch, caplog):
+    """Subtitles that can't be drawn, though read out (tapiOca's own copy
+    damaged, say): the film is tried again with nothing drawn over it, and
+    nothing counts against it."""
+    monkeypatch.setattr(jobs, "CHECK_NEW_STATIONS", False)
+    d = tmp_path / "media"
+    d.mkdir()
+    plex = FakePlex()
+    black(d / "Film.mkv", seconds=6)
+    plex.add_movie("101", "Film", str(d / "Film.mkv"), 6000, year=2000)
+    damaged = d / "damaged.ass"
+    damaged.write_bytes(b"\x00\xff\xfe not subtitles \x00" * 200)
+    monkeypatch.setattr(subtitles, "for_program", lambda *_a: ff.Subtitles(path=str(damaged)))
+    base, app, _settings, srv, task = await start_server(tmp_path, plex)
+    try:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
+            made = await client.post(
+                "/api/channels",
+                json={
+                    "number": 3, "orderMode": "rotate", "introSeconds": 0, "upNextSeconds": 0,
+                    "watermark": "off", "subtitles": "always", "sources": [{"type": "movie", "ratingKey": "101"}],
+                },
+            )  # fmt: skip
+            assert made.status_code == 201, made.text
+            data = await record(f"{base}/stream/3", 8)
+    finally:
+        srv.should_exit = True
+        await task
+    out = tmp_path / "out.ts"
+    out.write_bytes(data)
+    assert_clean_stream(out)
     assert app.state.ctx.broken.entries() == []
     said = " ".join(r.getMessage() for r in caplog.records)
     assert "trying it again with nothing drawn over it" in said
@@ -556,3 +619,19 @@ def test_a_blu_rays_subtitles_fit_a_cropped_film_whenever_the_first_one_comes(tm
     assert abs(left - ((width - 1920 * k) / 2 + 660 * k)) <= 3, left
     assert abs(top - (canvas_top + 900 * k)) <= 3, top
     assert top + h <= tall - 3
+
+
+def test_links_left_from_before_are_tidied_away(tmp_path):
+    # (Until subtitle files beside a film were read out first, the drawing took a link to one in the data folder:
+    # none is made now, so a link left from before goes at the next tidy, its file still there or not.)
+    folder = tmp_path / subtitles.FOLDER
+    folder.mkdir()
+    beside = tmp_path / "Film (1999).en.srt"
+    srt(beside, [EARLY])
+    (folder / "old.srt").symlink_to(beside)
+    (folder / "gone.srt").symlink_to(tmp_path / "nothing.srt")
+    kept = folder / "abc.ass"
+    kept.write_text("[Script Info]\n")
+    subtitles.tidy(tmp_path)
+    assert sorted(p.name for p in folder.iterdir()) == ["abc.ass"]
+    assert beside.exists(), "the file beside the film is never touched"

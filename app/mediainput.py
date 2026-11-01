@@ -98,6 +98,16 @@ def own(path: str) -> list[str]:
     return ["-format_whitelist", OWN_FORMATS, "-protocol_whitelist", "file", "-i", path]
 
 
+# A subtitle file beside a program, read out into tapiOca's own .ass before it's drawn (subtitles.SIDECAR_SUFFIXES).
+SUBTITLE_FORMATS = "srt,ass,webvtt"
+
+
+def subtitle(path: str) -> list[str]:
+    """FFmpeg's input for a subtitle file beside a program: its options once enforced, then `-i`."""
+    whitelists = ["-format_whitelist", SUBTITLE_FORMATS, "-protocol_whitelist", "file"]
+    return [*(whitelists if ENFORCED else []), "-i", path]
+
+
 def read(source: str) -> list[str]:
     """FFmpeg's input for reading `source` as Media: its options once enforced, then `-i`."""
     return [*(options(source) if ENFORCED else []), "-i", source]

@@ -206,45 +206,20 @@ def _key(text: str) -> str:
     return hashlib.sha1(os.fsencode(text)).hexdigest()[:24]
 
 
-def link(data_dir: Path, path: str) -> str | None:
-    """A link to `path` with a plain name in the data folder (ffmpeg's
-    subtitle drawing takes a file name in its filter, where most of the
-    characters names can have would need escaping). None if it can't be
-    made."""
-    suffix = os.path.splitext(path)[1].lower()
-    if not re.fullmatch(r"\.[a-z0-9]{1,5}", suffix):
-        suffix = ""
-    folder = data_dir / FOLDER
-    made = folder / (_key(path) + suffix)
-    try:
-        folder.mkdir(parents=True, exist_ok=True)
-        if made.is_symlink() and os.readlink(made) == path:
-            return str(made)
-        # Made under another name and put in place in one step, so a station
-        # starting the same program at the same moment never finds it gone.
-        new = folder / f"{made.name}.{secrets.token_hex(4)}.new"
-        new.symlink_to(path)
-        os.replace(new, made)
-    except OSError as e:
-        log.warning("Can't make a link to the subtitle file %s (%s)", path, e)
-        return None
-    return str(made)
-
-
 def tidy(data_dir: Path) -> None:
-    """Removes links whose files have gone, anything left half made, and
-    subtitles read out of files that haven't been used for a month."""
+    """Removes links left from before subtitle files beside a program were
+    read out first (none is made now), anything left half made, and
+    subtitles read out that haven't been used for a month."""
     folder = data_dir / FOLDER
     if not folder.is_dir():
         return
     now = time.time()
     for entry in folder.iterdir():
         with contextlib.suppress(OSError):
-            if entry.is_symlink():
-                if not entry.exists():
-                    entry.unlink()
-            elif entry.name.endswith((".new", ".part")) or (
-                entry.suffix == ".ass" and now - entry.stat().st_mtime > KEEP_UNUSED_S
+            if (
+                entry.is_symlink()
+                or entry.name.endswith((".new", ".part"))
+                or (entry.suffix == ".ass" and now - entry.stat().st_mtime > KEEP_UNUSED_S)
             ):
                 entry.unlink()
 
@@ -252,13 +227,14 @@ def tidy(data_dir: Path) -> None:
 @dataclass(frozen=True)
 class Extraction:
     """Text subtitles in a program's file (`stream`, among its subtitle
-    streams), to be read out into a file of their own, `target`, before
-    they're drawn."""
+    streams), or a file beside it (`sidecar`), to be read out into a file of
+    their own, `target`, before they're drawn."""
 
     source: str
     stream: int
     target: Path
     styled: bool
+    sidecar: bool = False
 
     def ready(self) -> Subtitles:
         return Subtitles(path=str(self.target), styled=self.styled)
@@ -289,7 +265,8 @@ async def _extract(settings: Settings, job: Extraction) -> bool:
             return True
         args = [
             settings.ffmpeg_path, "-hide_banner", "-nostdin", "-v", "error", "-threads", "1",
-            *mediainput.read(job.source), "-map", f"0:s:{job.stream}", "-c:s", "ass", "-f", "ass", "-y",
+            *(mediainput.subtitle if job.sidecar else mediainput.read)(job.source),
+            "-map", f"0:s:{job.stream}", "-c:s", "ass", "-f", "ass", "-y",
             str(part),
         ]  # fmt: skip
         try:
@@ -333,24 +310,25 @@ def for_program(
     if candidate.image:
         return Subtitles(stream=candidate.stream, image=True, forced_only=forced_only)
     styled = candidate.codec in STYLED_CODECS
-    if candidate.stream is not None:
-        # Read out once into a file of their own (the same file, unchanged,
-        # has the same name).
-        info = os.stat(source)
-        target = (
-            data_dir
-            / FOLDER
-            / (_key(f"{source}|{candidate.stream}|{info.st_size}|{info.st_mtime_ns}") + ".ass")
-        )
-        if target.exists():
-            with contextlib.suppress(OSError):
-                os.utime(target)  # (in use: see tidy)
-            return Subtitles(path=str(target), styled=styled)
-        if time.time() - _failed.get(target, 0) < RETRY_FAILED_S:
-            return None
-        target.parent.mkdir(parents=True, exist_ok=True)
-        return Extraction(source, candidate.stream, target, styled)
-    linked = link(data_dir, candidate.path)
-    if linked is None:
+    # Read out once into a file of their own, tapiOca's .ass, whether in the
+    # program's file or a file beside it, so the drawing only ever opens a
+    # file tapiOca wrote (MED-FFMPEG-01). The same file, unchanged, has the
+    # same name.
+    sidecar = candidate.stream is None
+    path = candidate.path if sidecar else source
+    stream = 0 if sidecar else candidate.stream
+    try:
+        info = os.stat(path)
+    except OSError:
         return None
-    return Subtitles(path=linked, styled=styled)
+    target = (
+        data_dir / FOLDER / (_key(f"{path}|{stream}|{info.st_size}|{info.st_mtime_ns}") + ".ass")
+    )
+    if target.exists():
+        with contextlib.suppress(OSError):
+            os.utime(target)  # (in use: see tidy)
+        return Subtitles(path=str(target), styled=styled)
+    if time.time() - _failed.get(target, 0) < RETRY_FAILED_S:
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return Extraction(path, stream, target, styled, sidecar)
