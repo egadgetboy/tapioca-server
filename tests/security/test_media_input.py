@@ -12,6 +12,8 @@ import asyncio
 import logging
 import shutil
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -661,3 +663,89 @@ def test_the_admins_page_says_when_ffmpeg_cant_be_checked(monkeypatch):
         "tapiOca can’t check its ffmpeg, so it won’t play your movies and shows until it can."
         in said.lines[-1]
     )
+
+
+# The image's FFmpeg (7.1.5) limits redirects; 6.1, 7.1.3 and 8.0.1 don't. Where it doesn't, these skip, and the
+# security suite, run in the image, counts a skip as a gap: so the image's FFmpeg is checked, and never only faked.
+def _limits_redirects() -> bool:
+    if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
+        return False
+    said = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-h", "protocol=http"], capture_output=True, text=True
+    )
+    return "max_redirects" in said.stdout
+
+
+needs_redirect_limit = pytest.mark.skipif(
+    not _limits_redirects(),
+    reason="this FFmpeg's http can't be kept from a redirect (the image's can)",
+)
+
+
+@needs_redirect_limit
+def test_this_ffmpeg_passes_the_check_at_start_so_enforced_media_is_read(monkeypatch):
+    monkeypatch.setattr(mediainput, "ENFORCED", True)
+    monkeypatch.setattr(mediainput, "FFMPEG_PROBLEM", mediainput.FFMPEG_PROBLEM)
+    monkeypatch.setattr(mediainput, "FFMPEG_VERSION", mediainput.FFMPEG_VERSION)
+    asyncio.run(mediainput.check_at_start("ffmpeg"))
+    assert mediainput.FFMPEG_PROBLEM is None
+    assert mediainput.closed() is None
+    assert mediainput.FFMPEG_VERSION.startswith("ffmpeg version "), mediainput.FFMPEG_VERSION
+
+
+def _listening(answer) -> tuple[ThreadingHTTPServer, list[str]]:
+    """A web server on this machine, answering each request with `answer(handler)`, and the paths it was asked."""
+    asked: list[str] = []
+
+    class Answering(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            asked.append(self.path)
+            answer(self)
+
+        def log_message(self, *_args) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Answering)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, asked
+
+
+@needs_redirect_limit
+def test_enforced_a_redirect_from_plexs_address_is_never_followed(tmp_path, monkeypatch):
+    def missing(handler) -> None:
+        handler.send_response(404)
+        handler.end_headers()
+
+    home, reached = _listening(missing)
+
+    def moved(handler) -> None:
+        handler.send_response(302)
+        handler.send_header("Location", f"http://127.0.0.1:{home.server_address[1]}/private.mkv")
+        handler.end_headers()
+
+    plex, asked = _listening(moved)
+    address = f"http://127.0.0.1:{plex.server_address[1]}/library/parts/1/file.mkv?X-Plex-Token=t"
+    try:
+        monkeypatch.setattr(mediainput, "ENFORCED", False)
+        asyncio.run(ff.probe(SMALL, address, timeout=10))
+        assert asked and reached, "report-only, as today: the redirect is followed"
+        monkeypatch.setattr(mediainput, "ENFORCED", True)
+        monkeypatch.setattr(mediainput, "FFMPEG_PROBLEM", mediainput.FFMPEG_PROBLEM)
+        monkeypatch.setattr(mediainput, "FFMPEG_VERSION", mediainput.FFMPEG_VERSION)
+        asyncio.run(mediainput.check_at_start("ffmpeg"))
+        asked.clear()
+        reached.clear()
+        probed = asyncio.run(ff.probe(SMALL, address, timeout=10))
+        assert not probed.ok
+        assert asked and not reached, (
+            "the probe asks Plex's address, and never follows its redirect"
+        )
+        asked.clear()
+        args = ff.program_command(SMALL, address, 0.0, 1.0, 0.0, 5.0, 0, "Night Owl")
+        played = subprocess.run(args, capture_output=True, timeout=30, cwd=tmp_path)
+        assert played.returncode != 0 and not played.stdout
+        assert asked and not reached, "nor does a Station's reading"
+    finally:
+        for server in (home, plex):
+            server.shutdown()
+            server.server_close()

@@ -61,6 +61,15 @@ LAYERS = {
         "Only Sign out reads the device sign-ins' record, in code and as it runs (1.44.3)",
         "High",
     ),
+    "test_media_read.py": ("A path Plex reports read as a file only where it's Media's (MED-01)", "High"),
+    "test_media_input.py": (
+        "A Media read opens only a vetted video container, failing closed (MED-FFMPEG-01)",
+        "Medium",
+    ),
+    "test_spawn.py": (
+        "Every program started through one function: no proxy, each input's whitelists (MED-FFMPEG-01)",
+        "Medium",
+    ),
 }
 
 _RESULT = re.compile(r"^(PASSED|FAILED|ERROR) tests/security/([a-z_]+\.py)::(\S+)")
