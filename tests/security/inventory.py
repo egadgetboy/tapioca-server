@@ -275,7 +275,7 @@ SPAWN = {
     "app/hls.py:_run spawn.start": "ffmpeg: a Station's HLS",
     "app/intro.py:colours spawn.start": "ffmpeg: an intro card's colors",
     "app/logos.py:_ffmpeg spawn.start": "ffmpeg: a logo",
-    "app/main.py:render_icon spawn.start": "ffmpeg: an app icon",
+    "app/logos.py:render_icon spawn.start": "ffmpeg: a Station's badge with its number",
     "app/mediainput.py:_printed spawn.start": "ffmpeg: its demuxers and http options, checked at start",
     "app/playback.py:busy_stream spawn.start": "ffmpeg: the busy notice's stream",
     "app/scanner.py:_run spawn.start": "ffprobe: the file check",

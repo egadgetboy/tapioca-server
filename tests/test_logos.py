@@ -133,3 +133,22 @@ def test_searching_logos_finds_numbers_and_letters_from_any_chip():
     assert {"Number 50", "Number 50 · retro"} <= set(fifty)
     # (Whichever chip was chosen: a search is of All.)
     assert "if ($('#logoSearch').value.trim()) logoCategory = 'All';" in script
+
+
+needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+
+
+@needs_ffmpeg
+def test_a_station_with_no_logo_gets_a_badge_with_its_number():
+    import asyncio
+
+    from app.config import Settings
+    from app.logos import render_icon
+
+    png = asyncio.run(render_icon(Settings(plex_url="", plex_token=""), "77"))
+    assert png is not None and png.startswith(b"\x89PNG")
+    size = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", "-"],
+        input=png, capture_output=True, check=True,
+    ).stdout.decode().strip()  # fmt: skip
+    assert size == "256,256"

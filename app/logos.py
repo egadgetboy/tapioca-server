@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from . import infostation, spawn
+from .config import Settings
 from .db import Database
 from .ffmpeg import UPLOADED_PICTURE
 from .text import name_from_file
@@ -284,3 +285,36 @@ async def _ffmpeg(args: list[str], data: bytes) -> tuple[int, bytes, bytes]:
         await proc.wait()
         raise LogoError("That picture took too long to read") from None
     return proc.returncode or 0, out, said
+
+
+async def render_icon(settings: Settings, text: str) -> bytes | None:
+    """A simple number badge for the guide, drawn with ffmpeg."""
+    args = [
+        settings.ffmpeg_path,
+        "-hide_banner",
+        "-nostdin",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=0x1d2a36:s=256x256",
+        "-vf",
+        f"drawtext=text='{text}':fontcolor=white:fontsize={150 if len(text) < 3 else 100}"
+        ":x=(w-text_w)/2:y=(h-text_h)/2",
+        "-frames:v",
+        "1",
+        "-f",
+        "image2",
+        "-c:v",
+        "png",
+        "pipe:1",
+    ]
+    try:
+        proc = await spawn.start(
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), 15)
+    except (TimeoutError, OSError):
+        return None
+    return out if proc.returncode == 0 and out else None

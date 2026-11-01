@@ -78,7 +78,6 @@ from . import (
     safefetch,
     setup,
     smart,
-    spawn,
     specials,
     stats,
     subtitles,
@@ -125,6 +124,7 @@ from .logos import (
     UPLOAD_PREFIX,
     LogoError,
     LogoLibrary,
+    render_icon,
     to_kept_logo_png,
     to_trimmed_logo_png,
 )
@@ -4261,39 +4261,6 @@ def _item_json(item: Item) -> dict:
         "year": item.year,
         "durationMs": item.duration_ms,
     }
-
-
-async def render_icon(settings: Settings, text: str) -> bytes | None:
-    """A simple number badge for the guide, drawn with ffmpeg."""
-    args = [
-        settings.ffmpeg_path,
-        "-hide_banner",
-        "-nostdin",
-        "-v",
-        "error",
-        "-f",
-        "lavfi",
-        "-i",
-        "color=c=0x1d2a36:s=256x256",
-        "-vf",
-        f"drawtext=text='{text}':fontcolor=white:fontsize={150 if len(text) < 3 else 100}"
-        ":x=(w-text_w)/2:y=(h-text_h)/2",
-        "-frames:v",
-        "1",
-        "-f",
-        "image2",
-        "-c:v",
-        "png",
-        "pipe:1",
-    ]
-    try:
-        proc = await spawn.start(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), 15)
-    except (TimeoutError, OSError):
-        return None
-    return out if proc.returncode == 0 and out else None
 
 
 def data_dir_problem(data_dir: Path) -> str | None:
