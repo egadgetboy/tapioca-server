@@ -1768,7 +1768,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             )
         png = ctx.icon_cache.get(number)
         if png is None:
-            png = await render_icon(settings, str(number))
+            png = await render_icon(settings, number)
             if png is None:
                 raise HTTPException(404)
             ctx.icon_cache[number] = png

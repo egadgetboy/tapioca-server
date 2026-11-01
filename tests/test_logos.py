@@ -145,10 +145,28 @@ def test_a_station_with_no_logo_gets_a_badge_with_its_number():
     from app.config import Settings
     from app.logos import render_icon
 
-    png = asyncio.run(render_icon(Settings(plex_url="", plex_token=""), "77"))
+    png = asyncio.run(render_icon(Settings(plex_url="", plex_token=""), 77))
     assert png is not None and png.startswith(b"\x89PNG")
     size = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", "-"],
         input=png, capture_output=True, check=True,
     ).stdout.decode().strip()  # fmt: skip
     assert size == "256,256"
+
+
+def test_a_badge_that_takes_too_long_is_stopped_never_left_running(tmp_path, monkeypatch):
+    import asyncio
+    import os
+
+    from app import logos
+    from app.config import Settings
+
+    stuck = tmp_path / "ffmpeg"
+    stuck.write_text(f"#!/bin/sh\necho $$ > {tmp_path / 'pid'}\nexec sleep 60\n")
+    stuck.chmod(0o755)
+    monkeypatch.setattr(logos, "BADGE_TIMEOUT_S", 0.5)
+    settings = Settings(plex_url="", plex_token="", ffmpeg_path=str(stuck))
+    assert asyncio.run(logos.render_icon(settings, 77)) is None
+    pid = int((tmp_path / "pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

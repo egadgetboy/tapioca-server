@@ -4,6 +4,7 @@ and your own: ones you upload, and shows' and movies' logos from Plex."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import random
 import re
@@ -287,8 +288,12 @@ async def _ffmpeg(args: list[str], data: bytes) -> tuple[int, bytes, bytes]:
     return proc.returncode or 0, out, said
 
 
-async def render_icon(settings: Settings, text: str) -> bytes | None:
-    """A simple number badge for the guide, drawn with ffmpeg."""
+BADGE_TIMEOUT_S = 15.0
+
+
+async def render_icon(settings: Settings, number: int) -> bytes | None:
+    """A simple number badge for the guide, drawn with ffmpeg. (Only a number: it's drawn by a filter.)"""
+    text = str(number)
     args = [
         settings.ffmpeg_path,
         "-hide_banner",
@@ -314,7 +319,15 @@ async def render_icon(settings: Settings, text: str) -> bytes | None:
         proc = await spawn.start(
             *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), 15)
-    except (TimeoutError, OSError):
+    except OSError:
         return None
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), BADGE_TIMEOUT_S)
+    except TimeoutError:
+        return None
+    finally:
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            await proc.wait()
     return out if proc.returncode == 0 and out else None
