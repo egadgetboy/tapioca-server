@@ -264,6 +264,8 @@ STALL_S = 120.0
 # What ffmpeg says as it decodes is read this often, this much at once at most.
 READ_EVERY_S = 0.02
 READ_MOST = 1024 * 1024
+# What's kept of what a quick decode says, at most: its first half and its last.
+LOG_MOST = 1 << 20
 # How often an unfinished deep scan's progress is saved.
 SAVE_EVERY_S = 30.0
 # How often the scanner looks for work, and for a viewer while deep-scanning.
@@ -434,6 +436,35 @@ def what_it_costs(line: str, rate: int = 0) -> tuple[str, float] | None:
     return "sound", block if isinstance(block, float) else block / (rate or 48_000)
 
 
+_READ_ERROR = b"input/output error"  # (as _read_error sees it)
+
+
+async def _kept(stream: asyncio.StreamReader) -> str:
+    """What a stream says, its middle left out past LOG_MOST (its first half and its last kept), with a line
+    saying so if a read error was among what was left out."""
+    half = LOG_MOST // 2
+    head, tail = bytearray(), bytearray()
+    dropped = read_error = False
+
+    def drop() -> None:
+        nonlocal dropped, read_error
+        gone, edge = len(tail) - half, len(_READ_ERROR) - 1
+        read_error = read_error or _READ_ERROR in (head[-edge:] + tail[: gone + edge]).lower()
+        del tail[:gone]
+        dropped = True
+
+    while chunk := await stream.read(1 << 16):
+        room = max(0, half - len(head))
+        head += chunk[:room]
+        tail += chunk[room:]
+        if len(tail) > LOG_MOST:
+            drop()
+    if len(tail) > half:
+        drop()
+    left_out = b"\n(left out: an Input/output error)\n" if read_error else b"\n" if dropped else b""
+    return (bytes(head) + left_out + bytes(tail)).decode(errors="replace")
+
+
 async def _run(args: list[str], timeout: float) -> tuple[int | None, str, str, Decoded | None]:
     """Runs ffmpeg to the end: (exit code, its output, its log), or a
     Decoded saying why it couldn't be done."""
@@ -446,8 +477,11 @@ async def _run(args: list[str], timeout: float) -> tuple[int | None, str, str, D
         )
     except OSError as e:
         return None, "", "", Decoded(failed=f"couldn't run ffmpeg: {e}", not_run=True)
+    assert proc.stdout is not None and proc.stderr is not None
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout)
+        out, err, _ = await asyncio.wait_for(
+            asyncio.gather(_kept(proc.stdout), _kept(proc.stderr), proc.wait()), timeout
+        )
     except TimeoutError:
         return None, "", "", Decoded(failed=f"timed out after {timeout:.0f}s", timed_out=True)
     finally:
@@ -455,7 +489,7 @@ async def _run(args: list[str], timeout: float) -> tuple[int | None, str, str, D
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
             await proc.wait()
-    return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace"), None
+    return proc.returncode, out, err, None
 
 
 async def decode(

@@ -1378,3 +1378,42 @@ def test_a_patched_picture_is_damage_only_if_it_stays_on_screen(tmp_path, frame_
             assert abs(at - GARBLED_S) < 8, reason
         scans = ctx.db.scans()
         assert scans["202"].deep == "ok" and scans["202"].glitches == []
+
+
+def test_a_quick_decode_keeps_only_the_start_and_end_of_what_ffmpeg_says(tmp_path, monkeypatch):
+    # (MED-04, the security suite's slice 2: a damaged file can make FFmpeg say gigabytes, and all of it was kept.
+    # Here the cap is 64 KB for about 20 MB; what's kept is its start and its end, the end's last line whole.)
+    import asyncio
+
+    monkeypatch.setattr(sc, "LOG_MOST", 64 * 1024)
+    chatty = tmp_path / "ffmpeg"
+    chatty.write_text(
+        "#!/bin/sh\necho 'the first thing it said' >&2\n"
+        "head -c 20000000 /dev/zero | tr '\\0' 'x' >&2\necho >&2\n"
+        "echo 'frame=12' && echo 'the last thing it said' >&2\nexit 1\n"
+    )
+    chatty.chmod(0o755)
+    code, out, err, failed = asyncio.run(sc._run([str(chatty)], 60))
+    assert failed is None and code == 1
+    assert len(err) <= 64 * 1024 + 1
+    assert err.startswith("the first thing it said\n")
+    assert err.rstrip("\n").endswith("\nthe last thing it said")
+    assert out == "frame=12\n"
+
+
+def test_a_read_error_in_what_a_quick_decode_leaves_out_is_still_seen(tmp_path, monkeypatch):
+    # (A read error means the share or disk failed, never the file: it must never be lost with the middle, or a
+    # file could be called broken, and replacing a broken one can't be undone.)
+    import asyncio
+
+    monkeypatch.setattr(sc, "LOG_MOST", 64 * 1024)
+    chatty = tmp_path / "ffmpeg"
+    chatty.write_text(
+        "#!/bin/sh\nhead -c 5000000 /dev/zero | tr '\\0' 'x' >&2\n"
+        "echo '[in#0 @ 0x1] Error during demuxing: Input/output error' >&2\n"
+        "head -c 5000000 /dev/zero | tr '\\0' 'y' >&2\necho >&2\nexit 1\n"
+    )
+    chatty.chmod(0o755)
+    _code, _out, err, _failed = asyncio.run(sc._run([str(chatty)], 60))
+    assert len(err) <= 64 * 1024 + 200
+    assert any(sc._read_error(line) for line in err.splitlines())
