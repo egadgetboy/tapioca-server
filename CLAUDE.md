@@ -179,6 +179,7 @@ follow them in every change.
 - The wording scan passes (from 1.33.0).
 
 ## Releases
+- **The manual** (the owner, November 1, DL422; the plan's The manuals): `manual/tapioca-server-manual.pdf`, linked from README.md, is the one manual, and covers only what's released: every feature, setting, choice and default, with steps, tips and a glossary, in clear, polished American English. Each release changes its chapters with the change, sets the cover's release and date, rebuilds the PDF (`python3 tools/manual/build.py manual`) and passes `python3 tools/manual/check.py` before its notes are pushed. Never an older edition kept or attached; screenshots stay placeholders until the owner asks for them.
 - **Releases are bundles:** compatible A to C work ships together when it belongs together, with one candidate and one gate; D work ships in a small candidate of its own. Tiny wording or style fixes wait for the next release. Minor version for features, patch for fixes. The version is in `app/__init__.py` and
   `pyproject.toml`. (From 1.34.0, the TrueNAS file and `docker-compose.yml`
   ask for the published image at `:latest`. The TrueNAS file is

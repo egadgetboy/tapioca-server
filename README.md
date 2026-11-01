@@ -17,6 +17,8 @@ tapiOca is a media server you run at home and truly own. It turns your own movie
 
 The server is free and open source (see [License](#license)). It runs in Docker on your own hardware, and nothing outside your home is required. It reads your folders itself, so it's complete on its own, and it works beside Plex if you have it.
 
+**The manual:** the [tapiOca Server Manual](manual/tapioca-server-manual.pdf) (PDF) covers every feature and setting of the newest release, step by step. Each release replaces it with a new edition.
+
 If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadgetboy).
 
 ## Contents

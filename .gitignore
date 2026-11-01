@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 data/
 *.ts
+# The manual's build writes an HTML copy beside the PDF (tools/manual).
+manual/*.html

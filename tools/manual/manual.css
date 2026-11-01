@@ -1,0 +1,95 @@
+/* tapiOca's manuals: print styles for WeasyPrint. Colors from shared/tokens.json, darkened for paper. */
+@font-face { font-family: "Outfit"; src: url("__FONTS__/Outfit-400.ttf"); font-weight: 400; }
+@font-face { font-family: "Outfit"; src: url("__FONTS__/Outfit-600.ttf"); font-weight: 500 650; }
+@font-face { font-family: "Outfit"; src: url("__FONTS__/Outfit-700.ttf"); font-weight: 700 900; }
+
+:root {
+  --navy: #101a2d;      /* tokens: surface */
+  --ink: #1b2436;
+  --muted: #55627a;
+  --line: #d5dbe6;
+  --blue: #2a6fc0;      /* Blue (#70b8ff), darkened for print contrast */
+  --blue-soft: #eaf3fd;
+  --orange-soft: #fff3e8;
+  --orange: #b4561a;
+}
+
+@page {
+  size: Letter;
+  margin: 0.85in 0.85in 0.9in 0.85in;
+  @top-left { content: string(chapter); font: 600 8pt "Outfit"; color: var(--muted); }
+  @top-right { content: "__RUNNING__"; font: 400 8pt "Outfit"; color: var(--muted); }
+  @bottom-center { content: counter(page); font: 500 9pt "Outfit"; color: var(--muted); }
+}
+@page cover { margin: 0; @top-left { content: none; } @top-right { content: none; } @bottom-center { content: none; } }
+@page contents { @top-left { content: "Contents"; } }
+
+html { font-family: "Outfit", sans-serif; font-size: 10.5pt; line-height: 1.5; color: var(--ink); }
+table, .rel b, ol.toc { font-variant-numeric: tabular-nums; }
+body { margin: 0; }
+
+/* the cover */
+.cover { page: cover; height: 11in; box-sizing: border-box; padding: 1.6in 1in 1in; color: #f6f7ff;
+  background: linear-gradient(135deg, #13213b 0%, #0d1425 74%); position: relative; page-break-after: always; }
+.cover .logo svg { width: 3.4in; height: auto; }
+.cover-title { border: 0; padding: 0; font-size: 34pt; font-weight: 700; line-height: 1.08; letter-spacing: -0.02em; margin: 0.9in 0 0.12in; color: #f6f7ff; string-set: none; }
+.cover-sub { font-size: 14pt; font-weight: 400; color: #b0bdd0; margin: 0 0 0.6in; }
+.rels { display: flex; flex-wrap: wrap; gap: 0.18in; margin-bottom: 0.25in; }
+.rel { border: 1px solid #34445e; border-radius: 10pt; padding: 8pt 14pt; background: #101a2d; }
+.rel span { display: block; font-size: 8pt; letter-spacing: 0.14em; text-transform: uppercase; color: #8291a8; font-weight: 700; }
+.rel b { font-size: 16pt; font-weight: 700; color: #70b8ff; }
+.cover-date { font-size: 12pt; color: #f6f7ff; margin: 0.15in 0 0; }
+.cover-label { position: absolute; bottom: 0.8in; left: 1in; right: 1in; font-size: 9pt; color: #8291a8; border-top: 1px solid #34445e; padding-top: 10pt; }
+
+/* the contents */
+.contents { page: contents; page-break-after: always; }
+.contents-title { border: 0; padding: 0; string-set: none; font-size: 24pt; margin: 0 0 14pt; color: var(--navy); }
+ol.toc { list-style: none; padding: 0; margin: 0; }
+ol.toc li a { color: var(--ink); text-decoration: none; display: block; }
+ol.toc li a::after { content: leader(dotted) target-counter(attr(href url), page); color: var(--muted); }
+li.toc1 { font-weight: 700; font-size: 11pt; margin-top: 9pt; color: var(--navy); }
+li.toc2 { font-weight: 400; font-size: 9.5pt; margin-left: 14pt; margin-top: 2pt; }
+.edition { margin-top: 22pt; font-size: 9pt; color: var(--muted); }
+
+/* chapters */
+.chapter { page-break-before: always; }
+h1 { string-set: chapter content(text); font-size: 24pt; font-weight: 700; color: var(--navy); letter-spacing: -0.015em; line-height: 1.12;
+  margin: 0 0 16pt; padding-bottom: 10pt; border-bottom: 3px solid var(--blue); }
+h2 { font-size: 15pt; font-weight: 700; color: var(--navy); margin: 22pt 0 6pt; page-break-after: avoid; }
+h3 { font-size: 11.5pt; font-weight: 700; color: var(--blue); margin: 16pt 0 4pt; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: 700; color: var(--ink); margin: 12pt 0 2pt; page-break-after: avoid; }
+p { margin: 0 0 7pt; orphans: 3; widows: 3; }
+ul, ol { margin: 0 0 8pt; padding-left: 16pt; }
+li { margin: 0 0 3pt; }
+strong { font-weight: 600; color: var(--navy); }
+a { color: var(--blue); text-decoration: none; }
+code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.8pt; background: #f2f4f8; border: 1px solid #e3e7ee; border-radius: 3pt; padding: 0 3pt; }
+pre { background: #f2f4f8; border: 1px solid #e3e7ee; border-radius: 6pt; padding: 8pt 10pt; font-size: 8.6pt; white-space: pre-wrap; page-break-inside: avoid; }
+pre code { border: 0; background: none; padding: 0; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 14pt 0; }
+
+/* tables: settings, options and defaults */
+table { width: 100%; border-collapse: collapse; margin: 6pt 0 12pt; font-size: 9.2pt; page-break-inside: auto; }
+thead { display: table-header-group; }
+th { text-align: left; font-weight: 700; color: #fff; background: var(--navy); padding: 5pt 7pt; }
+td { padding: 5pt 7pt; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr { page-break-inside: avoid; }
+tbody tr:nth-child(even) td { background: #f7f9fc; }
+
+/* callouts */
+.callout { margin: 8pt 0 12pt; padding: 8pt 12pt; border-radius: 6pt; border-left: 4px solid var(--blue); background: var(--blue-soft); page-break-inside: avoid; }
+.callout p:last-child { margin-bottom: 0; }
+.callout.important, .callout.warning { border-left-color: var(--orange); background: var(--orange-soft); }
+.callout.important strong:first-child, .callout.warning strong:first-child { color: var(--orange); }
+
+/* the glossary */
+dl { margin: 0 0 8pt; }
+dt { font-weight: 700; color: var(--navy); margin-top: 8pt; page-break-after: avoid; }
+dd { margin: 1pt 0 0 14pt; }
+
+/* screenshot placeholders */
+figure.shot { margin: 8pt 0 14pt; page-break-inside: avoid; }
+.shot-box { height: 2.3in; border: 1.5px dashed #9aa7bb; border-radius: 10pt; background: #f7f9fc;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 0.5in; }
+.shot-label { font-size: 8pt; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #8291a8; }
+.shot-what { font-size: 9.5pt; color: var(--muted); margin-top: 4pt; }
