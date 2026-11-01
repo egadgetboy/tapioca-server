@@ -52,6 +52,7 @@ from . import (
     cliprules,
     devices,
     doors,
+    ffmpegstart,
     folders,
     hdhr,
     health,
@@ -111,8 +112,6 @@ from .ffmpeg import (
     low_priority,
     run_to_end,
     sized,
-    subtitles_problem,
-    tone_mapping_problem,
     usable_picture,
 )
 from .gpu import GpuManager
@@ -541,8 +540,7 @@ class AppContext:
     # Where the picture sits in files with black bars baked in, by file.
     pictures: dict[str, tuple[int, int, int, int] | None] = field(default_factory=dict)
     # Whether ffmpeg can turn HDR pictures into ordinary ones, and draw
-    # subtitles (tested at startup: see ff.tone_mapping_problem and
-    # ff.subtitles_problem). Without them, HDR plays as it is, and programs
+    # subtitles (tested at startup: see ffmpegstart.check). Without them, HDR plays as it is, and programs
     # without subtitles.
     tone_mapping: bool = False
     subtitling: bool = False
@@ -868,21 +866,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             ctx.db, setup.state(ctx.db, infostation.others(ctx.db.list_channels()))["fresh"]
         )
         await asyncio.to_thread(prepare_schedules)
-        problem = await tone_mapping_problem(settings)
-        ctx.tone_mapping = problem is None
-        if problem:
-            log.warning(
-                "This ffmpeg can't tone-map HDR to SDR, so HDR programs will look washed out (%s)",
-                problem,
-            )
-        await asyncio.to_thread(subtitles.tidy, settings.data_dir)
-        problem = await subtitles_problem(settings, settings.data_dir / subtitles.FOLDER)
-        ctx.subtitling = problem is None
-        if problem:
-            log.warning(
-                "tapiOca can't draw subtitles, so programs will play without them (%s)",
-                problem,
-            )
+        await ffmpegstart.check(ctx, settings)
         ctx.gpu.start()
         background = [
             asyncio.create_task(jobs.look_again_forever(ctx)),

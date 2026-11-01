@@ -17,6 +17,7 @@ logged, once for each file, and read all the same.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 log = logging.getLogger(__name__)
@@ -96,6 +97,72 @@ def _protocols(source: str) -> str:
 def refused(stderr: str) -> bool:
     """Whether FFmpeg's error says it refused the read for its container or protocol."""
     return "not on whitelist" in stderr
+
+
+# What's wrong with the FFmpeg tapiOca runs, for a Media read's allow-list (check_at_start); until it's checked, that.
+FFMPEG_PROBLEM: str | None = "FFmpeg hasn't been checked yet"
+NO_REDIRECTS = "its http can't be kept from following a redirect (it has no max_redirects)"
+_CHECK_S = 20.0
+
+
+def judge(demuxers: str, http: str) -> str | None:
+    """What's wrong with an FFmpeg for the allow-list, from `ffmpeg -demuxers` and `-h protocol=http`: a vetted
+    demuxer missing, an unvetted one sharing part of a vetted one's name (FFmpeg's whitelist would let it in), or an
+    http that follows redirects. None: nothing."""
+    listed = demuxers.split("\n --\n", 1)[-1] if "\n --\n" in demuxers else ""
+    names = {
+        line.split()[1]
+        for line in listed.splitlines()
+        if len(line.split()) > 1 and "D" in line.split()[0]
+    }
+    if not names:
+        return "its demuxers couldn't be listed"
+    missing = [name for name in ALLOWED if name not in names]
+    if missing:
+        return f"it has no {', '.join(missing)}"
+    parts = {part for name in ALLOWED for part in name.split(",")}
+    alike = sorted(name for name in names - set(ALLOWED) if parts & set(name.split(",")))
+    if alike:
+        return f"its {', '.join(alike)} share a name with a vetted container"
+    return None if "max_redirects" in http else NO_REDIRECTS
+
+
+async def _printed(ffmpeg: str, *args: str) -> str:
+    """What `ffmpeg args` prints, or "" if it can't be run in time."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg, "-hide_banner", *args,
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )  # fmt: skip
+    except OSError:
+        return ""
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), _CHECK_S)
+    except TimeoutError:
+        return ""
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+    return out.decode(errors="replace")
+
+
+async def problem(ffmpeg: str) -> str | None:
+    """What's wrong with the FFmpeg at `ffmpeg` for the allow-list (judge's), None for nothing."""
+    return judge(await _printed(ffmpeg, "-demuxers"), await _printed(ffmpeg, "-h", "protocol=http"))
+
+
+async def check_at_start(ffmpeg: str) -> None:
+    """Checks the FFmpeg tapiOca runs, once as it starts, and says so. Report-only: nothing is refused."""
+    global FFMPEG_PROBLEM
+    FFMPEG_PROBLEM = await problem(ffmpeg)
+    if FFMPEG_PROBLEM:
+        log.warning(
+            "Once enforced, every Media read would be refused: this FFmpeg can't be checked (%s)",
+            FFMPEG_PROBLEM,
+        )
+    else:
+        log.info("FFmpeg checked: a Media read opens only a vetted video container")
 
 
 _said: set[str] = set()

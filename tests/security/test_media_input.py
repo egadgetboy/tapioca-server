@@ -318,3 +318,54 @@ def test_enforced_a_station_plays_a_real_video_under_the_options(tmp_path, monke
     played = subprocess.run(args, capture_output=True, timeout=60)
     assert played.returncode == 0, played.stderr.decode(errors="replace")[-600:]
     assert len(played.stdout) > 1000, "a stream came out"
+
+
+# The check at start (failing closed once enforced): this FFmpeg has every vetted demuxer, none that shares a name
+# with one (FFmpeg's whitelist lets in a demuxer sharing any part of a name), and an http that refuses a redirect.
+DEMUXERS = """File formats:
+ D. = Demuxing supported
+ .E = Muxing supported
+ --
+ D  concat          Virtual concatenation script
+""" + "".join(f" D  {name:<15} a vetted one\n" for name in mediainput.ALLOWED)
+HTTP = "http AVOptions:\n  -max_redirects     <int>        .D.......... Maximum number of redirects"
+
+
+def test_an_ffmpeg_with_every_vetted_demuxer_and_no_redirects_passes():
+    assert mediainput.judge(DEMUXERS, HTTP) is None
+
+
+def test_an_ffmpeg_missing_a_vetted_demuxer_fails():
+    said = mediainput.judge(DEMUXERS.replace(" D  wtv ", " D  wtx "), HTTP)
+    assert said is not None and "wtv" in said
+
+
+def test_an_ffmpeg_with_a_lookalike_demuxer_fails():
+    said = mediainput.judge(DEMUXERS + " D  mp4,playlist     a new one\n", HTTP)
+    assert said is not None and "mp4,playlist" in said
+
+
+def test_an_ffmpeg_whose_http_follows_redirects_fails():
+    said = mediainput.judge(DEMUXERS, "http AVOptions:\n  -seekable  <boolean>")
+    assert said is not None and "redirect" in said
+
+
+def test_an_ffmpeg_that_cant_list_its_demuxers_fails():
+    assert mediainput.judge("", HTTP) is not None
+
+
+@needs_ffmpeg
+def test_this_ffmpeg_has_every_vetted_demuxer_and_no_lookalike():
+    said = asyncio.run(mediainput.problem("ffmpeg"))
+    # (FFmpeg 6.1, here, has no max_redirects; the image's 7.1.5 has: its own run says None.)
+    assert said is None or said == mediainput.NO_REDIRECTS, said
+
+
+@needs_ffmpeg
+def test_report_only_the_check_at_start_is_logged(caplog, monkeypatch):
+    monkeypatch.setattr(mediainput, "ENFORCED", False)
+    with caplog.at_level(logging.INFO, logger="app.mediainput"):
+        asyncio.run(mediainput.check_at_start("/nonexistent/ffmpeg"))
+    said = [r for r in caplog.records if r.name == "app.mediainput"]
+    assert said and said[-1].levelno == logging.WARNING and "Media" in said[-1].getMessage()
+    assert mediainput.FFMPEG_PROBLEM is not None

@@ -274,6 +274,7 @@ SPAWN = {
     "app/intro.py:colours asyncio.create_subprocess_exec": "ffmpeg: an intro card's colors",
     "app/logos.py:_ffmpeg asyncio.create_subprocess_exec": "ffmpeg: a logo",
     "app/main.py:render_icon asyncio.create_subprocess_exec": "ffmpeg: an app icon",
+    "app/mediainput.py:_printed asyncio.create_subprocess_exec": "ffmpeg: its demuxers and http options, checked at start",
     "app/playback.py:busy_stream asyncio.create_subprocess_exec": "ffmpeg: the busy notice's stream",
     "app/scanner.py:_run asyncio.create_subprocess_exec": "ffprobe: the file check",
     "app/scanner.py:decode_through asyncio.create_subprocess_exec": "ffmpeg: the deep file check",
