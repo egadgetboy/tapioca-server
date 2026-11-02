@@ -151,9 +151,7 @@ follow them in every change.
 ## Tests
 - **Every bug gets a failing test first,** then a root-cause fix. The test
   stays.
-- **Never weaken a test:** don't loosen a tolerance, change an expected
-  result to make it pass, skip it or delete it. If a test looks wrong, stop
-  and explain why.
+- **Never weaken a test:** Don’t loosen a tolerance, change an expected result to make it pass, skip it or delete it. If a test looks wrong, stop and explain why — to the lead developer, who decides it and records it as a decision/FYI; it reaches the owner only on a Stop-for-the-owner item (a genuine product, legal, security-contract or scope question), never to choose between engineering approaches, and the release’s cold audit clears any expected result changed rather than re-pointed.
 - While working, run the changed area's tests (and D's negative, race and restart cases), in a local environment matched to the image's pins where possible. The full suite (35 to 45 minutes) is proved by image.yml's Test step, in the exact image, on amd64 and arm64, once per release candidate; run it locally only to chase a failure.
 - Don't edit `tests/fakeplex.py`.
 - **No release may make browsing slower** (the restore-fast-pictures
