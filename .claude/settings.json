@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.key)",
+      "Read(**/*.pem)",
+      "Read(**/*.jks)",
+      "Read(**/*.keystore)",
+      "Read(**/*.p12)",
+      "Read(**/credentials*.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import json,re,sys;d=json.load(sys.stdin);c=str((d.get('tool_input') or {}).get('command',''));b=bool(d.get('agent_id')) and bool(re.search(r'(?<![\\w.-])gh(?![\\w.-])',c) or (re.search(r'(?<![\\w.-])git(?![\\w.-])',c) and re.search(r'(?<![\\w-])(?:commit|push)(?![\\w-])',c)));b and sys.stderr.write('Refused for a helper: git commit, git push and gh are the main session alone (DS-2, DL430). Leave it for the main session.\\n');sys.exit(2 if b else 0)\" || exit 2"
+          }
+        ]
+      }
+    ]
+  }
+}
