@@ -1,11 +1,11 @@
 {
- "pdf_sha256": "eb7865bb24ae87b4bea4124c8785fa73f1cfea2e7260867ac7997b0d2664913e",
- "src": "9d6b138b2b491964",
+ "pdf_sha256": "12d909d97909064139ac93c680cfde2e806cd94098e1685c0ca3dbab0c3ca0f5",
+ "src": "a6258994ced3d71b",
  "releases": [
   [
    "Server",
-   "1.44.3"
+   "1.44.4"
   ]
  ],
- "date": "November 1, 2026"
+ "date": "November 2, 2026"
 }

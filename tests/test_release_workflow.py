@@ -1001,6 +1001,43 @@ def test_the_gates_lint_reads_the_plan_for_a_class_d_release():
     assert "PLAN_READ_TOKEN: ${{ secrets.PLAN_READ_TOKEN }}" in linting[0]
 
 
+def test_the_gates_fail_when_the_update_check_asks_for_another_repository(tmp_path):
+    """(1.44.4) The update check asked GitHub by the number of the repository
+    before 1.44.2's fresh start, and every server's check got 404. The gates
+    compare app/releases.py's REPOSITORY_ID with the repository's own, on
+    every push."""
+    text = (ROOT / ".github" / "workflows" / "gates.yml").read_text()
+    steps = re.split(r"\n      - (?=name:|uses:)", text)
+    [step] = [s for s in steps if s.startswith("name: The update check asks for this repository\n")]
+    assert "REPOSITORY_ID: ${{ github.repository_id }}" in step
+    # (A fork's gates never fail on it.)
+    assert "if: github.repository_owner == 'egadgetboy'" in step
+    lines = step.split("run: |\n", 1)[1].splitlines()
+    script = "\n".join(line[10:] for line in lines)
+    code = (ROOT / "app" / "releases.py").read_text(encoding="utf-8")
+    (tmp_path / "app").mkdir()
+
+    def gate(releases_py: str) -> subprocess.CompletedProcess[str]:
+        (tmp_path / "app" / "releases.py").write_text(releases_py)
+        env = {**os.environ, "REPOSITORY_ID": "1437500119"}
+        return subprocess.run(
+            ["bash", "-e", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True
+        )
+
+    def with_id(number: str) -> str:
+        return re.sub(r"^REPOSITORY_ID = \d+$", f"REPOSITORY_ID = {number}", code, flags=re.M)
+
+    assert gate(with_id("1437500119")).returncode == 0
+    stale = gate(with_id("1414995565"))
+    assert stale.returncode != 0
+    assert stale.stdout.splitlines() == [
+        "::error::REPOSITORY_ID in app/releases.py is 1414995565, but this repository's is 1437500119."
+        " The update check would ask GitHub for the wrong one."
+    ]
+    gone = gate("REPOSITORY = 1\n")
+    assert gone.returncode != 0 and "is not found, but" in gone.stdout
+
+
 def test_the_image_jobs_time_limit_holds_every_step_it_runs():
     """A job's time limit covers the sum of its steps' own: 1.44.3's candidate,
     with many tests changed, ran its new and changed tests 20 times past the

@@ -18,6 +18,25 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: The update check asks for this repository
+        # (A fork's own number differs, and its update check still asks
+        # tapiOca's: so this step is tapiOca's own.)
+        if: github.repository_owner == 'egadgetboy'
+        env:
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          # (1.44.4: the update check asked by the number of the repository
+          # before 1.44.2's fresh start, and GitHub answered 404.)
+          python3 - <<'EOF'
+          import os, re, sys
+          code = open("app/releases.py", encoding="utf-8").read()
+          found = re.findall(r"^REPOSITORY_ID = (\d+)$", code, re.M)
+          want = os.environ["REPOSITORY_ID"]
+          if found != [want]:
+              said = ", ".join(found) or "not found"
+              print(f"::error::REPOSITORY_ID in app/releases.py is {said}, but this repository's is {want}. The update check would ask GitHub for the wrong one.")
+              sys.exit(1)
+          EOF
       - name: The checks' own tests
         run: |
           # (They print what the checks print, ::error:: lines among them:

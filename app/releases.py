@@ -48,7 +48,7 @@ SEEN_META = "update_seen"  # what the last look found, as JSON (see Seen)
 VERSION_META = "version_started"  # the version that last started (from 1.34.0)
 # tapiOca's repository on GitHub, by its number, which a rename or move
 # doesn't change (gh api repos/egadgetboy/tapioca-server --jq .id).
-REPOSITORY_ID = 1414995565
+REPOSITORY_ID = 1437500119
 LATEST = f"https://api.github.com/repositories/{REPOSITORY_ID}/releases/latest"
 RELEASES = "https://github.com/egadgetboy/tapioca-server/releases"
 README = "https://github.com/egadgetboy/tapioca-server#updating"

@@ -1,6 +1,6 @@
 # Settings reference
 
-Every setting in tapiOca 1.44.3, grouped as the screen groups them.
+Every setting in tapiOca 1.44.4, grouped as the screen groups them.
 
 ### The YAML or compose file
 

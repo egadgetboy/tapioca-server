@@ -19,7 +19,7 @@ On the **Setup** tab, under **Backups**:
 
 ### Knowing when a new version is out
 
-tapiOca never updates itself. With **Tell me when a new tapiOca is out** ticked, under **New versions** on the **Setup** tab, it asks GitHub every 4 hours whether a newer version is out, sending only its version (GitHub sees your internet address, as any website does). It's off until an Admin answers, in the setup's last step or here. **Check now** looks right away.
+tapiOca never updates itself. With **Tell me when a new tapiOca is out** ticked, under **New versions** on the **Setup** tab, it asks GitHub every 4 hours whether a newer version is out, sending only its version (GitHub sees your internet address, as any website does). It's off until an Admin answers, in the setup's last step or here. **Check now** looks right away. tapiOca 1.44.2 and 1.44.3 can't find newer versions (they ask GitHub by the number of a repository that's gone): update them by hand, as below.
 
 While a newer version is out, Admins see a banner: "tapiOca 1.45.0 is available," with the steps for your install, **What's new**, **Back up now**, **All the steps** and **Not now** (which hides it for that version, in that browser). A "tapiOca 1.45.0 is out" pill stays in the header.
 
@@ -37,9 +37,9 @@ Back up first (**Back up now**, or **Download a backup**), then:
 
 Your data folder, and so your Stations, settings, logos, videos and lists, carries over. Existing Stations keep their settings. The page reloads with the new version, and the setup may open once with new questions.
 
-**A database copy first.** Before an update changes the database, tapiOca copies it to `data/backups/before-<version>-<date>.db`, and keeps the newest 3. If it can't (a full disk, say), it changes nothing and stops: make room, then start it again. 1.44.3 adds one table, so updating to it makes this copy.
+**A database copy first.** Before an update changes the database, tapiOca copies it to `data/backups/before-<version>-<date>.db`, and keeps the newest 3. If it can't (a full disk, say), it changes nothing and stops: make room, then start it again. 1.44.3 added one table, so updating to it or later from an earlier version makes this copy. 1.44.4 changes nothing in the database.
 
-**Staying on one version.** Change the end of `image:` from `:latest` to `:1.44` (fixes for 1.44 only) or `:1.44.3` (exactly that). Change it back to `:latest` to follow every release. Images exist from 1.34.0 on.
+**Staying on one version.** Change the end of `image:` from `:latest` to `:1.44` (fixes for 1.44 only) or `:1.44.4` (exactly that). Change it back to `:latest` to follow every release. Images exist from 1.34.0 on.
 
 **From before 1.34.0,** when tapiOca built itself, switch once: back up, delete the `build:` block from your file, set `image:` to `ghcr.io/egadgetboy/tapioca-server:latest`, add `TAPIOCA_INSTALL` for your install, and start it again. Your data carries over.
 
@@ -56,6 +56,6 @@ Your data folder, and so your Stations, settings, logos, videos and lists, carri
    (With your copy's name. In PowerShell, use `Copy-Item` and `Remove-Item`.)
 3. **Ask for the previous image,** such as `ghcr.io/egadgetboy/tapioca-server:1.44.2`, in `image:` (or Unraid's **Repository**), and start it.
 
-> **Important:** The copy made before an update holds everything, sign-ins included. Putting it back brings back sign-ins ended since the update (Sign outs included), old passwords and PINs, and people removed since. Check the **Access** tab afterward. Going back to 1.44.2 also brings back the Sign out problem 1.44.3 fixed (see People, sign-in and Viewing Levels).
+> **Important:** The copy made before an update holds everything, sign-ins included. Putting it back brings back sign-ins ended since the update (Sign outs included), old passwords and PINs, and people removed since. Check the **Access** tab afterward. Going back to 1.44.2 also brings back the Sign out problem 1.44.3 fixed (see People, sign-in and Viewing Levels), and going back to 1.44.2 or 1.44.3 brings back an update check that can't find newer versions.
 
-Everyone stays signed in, and anything changed since the update is lost. **From 1.44.3 to 1.44.2,** skip step 2: 1.44.2 runs on this database as it is, and nothing is lost. Each release is signed, with `SHA256SUMS` beside it (the README's "Checking a release's signature" has the commands).
+Everyone stays signed in, and anything changed since the update is lost. **From 1.44.4 to 1.44.3, or from 1.44.3 to 1.44.2,** skip step 2: the older one runs on this database as it is, and nothing is lost. Each release is signed, with `SHA256SUMS` beside it (the README's "Checking a release's signature" has the commands).

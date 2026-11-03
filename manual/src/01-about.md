@@ -1,10 +1,10 @@
 # About this manual
 
-This manual covers **tapiOca server 1.44.3**, released November 1, 2026. It replaces every earlier edition: only the newest one applies.
+This manual covers **tapiOca server 1.44.4**, released November 2, 2026. It replaces every earlier edition: only the newest one applies.
 
 **Who it's for:** the server owner, who installs tapiOca and keeps it running, and **Admins**, who run it from its page. People who only watch need the *tapiOca Apps Manual*.
 
-**What it covers:** everything a server owner and an Admin can see and do in 1.44.3, from installing to troubleshooting. It describes only what's released. tapiOca is in beta, for testing only, so keep it up to date and use the newest edition of this manual.
+**What it covers:** everything a server owner and an Admin can see and do in 1.44.4, from installing to troubleshooting. It describes only what's released. tapiOca is in beta, for testing only, so keep it up to date and use the newest edition of this manual.
 
 ### Conventions
 

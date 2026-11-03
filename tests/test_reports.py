@@ -6,7 +6,10 @@ off the air by itself."""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import shutil
+import subprocess
 import time
 
 import pytest
@@ -15,7 +18,7 @@ from fastapi.testclient import TestClient
 from app import jobs, reports
 from app import scanner as sc
 from app.config import Settings
-from app.main import create_app
+from app.main import WEB_DIR, create_app
 from app.plex import PlexClient
 
 from .fakeplex_library import LibraryPlex
@@ -427,3 +430,110 @@ def test_a_report_on_your_own_folders_title_never_says_plex(app):
         }
     assert reports.no_file_to_check("f12") == "Its Media folder has no file for it to check."
     assert reports.no_file_to_check("203") == "Plex has no file for it to check."
+
+
+# The Needs you list's filters, run by node on renderBroken as broken.js has
+# it, with the page's helpers stood in for: a row says what it lists.
+NEEDS_YOU_STAGE = """
+const els = {};
+const $ = sel => (els[sel] ||= { hidden: false, textContent: '', kids: [], replaceChildren(...k) { this.kids = k; } });
+const h = (tag, attrs = {}, ...kids) => ({ tag, attrs: attrs || {}, kids: kids.flat() });
+const filesTable = rows => ({ tag: 'table', attrs: {}, kids: [], rows });
+const reportRow = r => `report ${r.key}`;
+const entryRow = r => `file ${r.key}`;
+const walk = (node, out = []) => { if (node && typeof node === 'object') { out.push(node); (node.kids || []).forEach(k => walk(k, out)); } return out; };
+const seen = () => {
+  const all = els['#needsList'].kids.flatMap(k => walk(k));
+  const buttons = all.filter(n => n.tag === 'button');
+  return {
+    badge: String(els['#needsCount'].textContent),
+    buttons: buttons.map(b => b.kids.join('')),
+    pressed: buttons.filter(b => b.attrs['aria-pressed'] === 'true').map(b => b.kids.join('')),
+    rows: all.filter(n => n.tag === 'table').flatMap(t => t.rows),
+  };
+};
+const click = label => walk({ kids: els['#needsList'].kids }).find(n => n.tag === 'button' && n.kids.join('').startsWith(label)).attrs.onclick();
+let brokenShow = 'all';
+let brokenRows = [];
+let reportRows = [];
+"""
+
+
+def _needs_you(scenes: str) -> list:
+    js = (WEB_DIR / "js" / "broken.js").read_text(encoding="utf-8")
+    start = js.index("function renderBroken() {")
+    render = js[start : js.index("\n}\n", start) + 3]
+    code = (
+        NEEDS_YOU_STAGE
+        + render
+        + "const out = [];\n"
+        + scenes
+        + "console.log(JSON.stringify(out));\n"
+    )
+    done = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def test_a_report_shows_only_under_all_and_all_counts_it():
+    """(1.44.4) The owner, November 2: the movie he reported still showed
+    under Missing (17), and Needs you's count (109) didn't match All files
+    (108). A report shows only under All, and All counts the reports that
+    need you, as Needs you's count does; Broken or damaged and Missing list
+    files only, as their counts say."""
+    if shutil.which("node") is None:
+        pytest.skip("needs node")
+    whole, broken, missing, everything = _needs_you("""
+const file = (key, missing) => ({ key, section: 'needs you', missing });
+brokenRows = [file('b1', false), file('b2', false), file('m1', true), file('m2', true), file('m3', true),
+  { key: 'r1', section: 'being replaced', missing: false }];
+reportRows = [{ key: 'p1', needs: true }, { key: 'p2', needs: false }];
+renderBroken(); out.push(seen());
+click('Broken or damaged'); out.push(seen());
+click('Missing'); out.push(seen());
+click('All'); out.push(seen());
+""")
+    assert whole["buttons"] == ["All (6)", "Broken or damaged (2)", "Missing (3)"]
+    assert whole["buttons"][0] == f"All ({whole['badge']})"
+    assert whole["pressed"] == ["All (6)"]
+    assert whole["rows"] == [
+        "report p1",
+        "report p2",
+        "file b1",
+        "file b2",
+        "file m1",
+        "file m2",
+        "file m3",
+    ]
+    assert broken["rows"] == ["file b1", "file b2"]
+    assert broken["pressed"] == ["Broken or damaged (2)"]
+    assert missing["rows"] == ["file m1", "file m2", "file m3"]
+    assert missing["pressed"] == ["Missing (3)"]
+    assert everything == whole
+
+
+def test_reports_stay_in_sight_without_the_filters():
+    """(1.44.4) The filters show only with files of both kinds, as before.
+    Without them, the list is always All, so a report is never hidden: not
+    when a filter chosen earlier no longer shows, and not with reports
+    alone."""
+    if shutil.which("node") is None:
+        pytest.skip("needs node")
+    left_on_missing, reports_alone = _needs_you("""
+const file = (key, missing) => ({ key, section: 'needs you', missing });
+brokenRows = [file('b1', false), file('m1', true)];
+reportRows = [{ key: 'p1', needs: true }];
+renderBroken(); click('Missing');
+brokenRows = [file('m1', true)];
+renderBroken(); out.push(seen());
+brokenRows = [];
+brokenShow = 'broken';
+renderBroken(); out.push(seen());
+""")
+    assert left_on_missing == {
+        "badge": "2",
+        "buttons": [],
+        "pressed": [],
+        "rows": ["report p1", "file m1"],
+    }
+    assert reports_alone == {"badge": "1", "buttons": [], "pressed": [], "rows": ["report p1"]}

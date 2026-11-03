@@ -130,20 +130,23 @@ function renderBroken() {
   const count = needs.length + reports.filter(x => x.needs).length;
   $('#needsCount').hidden = !count;
   $('#needsCount').textContent = count;
-  // (Files that need you, all of them or the missing ones or the rest.)
+  // (All: the reports and the files that need you. Or files alone: the
+  // missing ones, or the rest. The choice shows only with both kinds.)
   const missing = needs.filter(r => r.missing).length;
-  if (brokenShow !== 'all' && !needs.some(r => (brokenShow === 'missing') === Boolean(r.missing))) brokenShow = 'all';
-  const shown = needs.filter(r => brokenShow === 'all' || (brokenShow === 'missing') === Boolean(r.missing));
+  const choosing = missing && missing < needs.length;
+  if (!choosing) brokenShow = 'all';
+  const all = brokenShow === 'all';
+  const shown = needs.filter(r => all || (brokenShow === 'missing') === Boolean(r.missing));
   const pick = (value, label) => h('button', { type: 'button', 'aria-pressed': String(brokenShow === value), onclick: () => { brokenShow = value; renderBroken(); } }, label);
   $('#needsList').replaceChildren(...(!needs.length && !reports.length
     ? [h('p', { class: 'muted small none' }, 'Nothing needs you now.')]
     : [
-        missing && missing < needs.length ? h('div', { class: 'broken-show' },
-          h('div', { class: 'seg', role: 'group', 'aria-label': 'Show files' },
-            pick('all', `All files (${needs.length})`),
+        choosing ? h('div', { class: 'broken-show' },
+          h('div', { class: 'seg', role: 'group', 'aria-label': 'Show' },
+            pick('all', `All (${count})`),
             pick('broken', `Broken or damaged (${needs.length - missing})`),
             pick('missing', `Missing (${missing})`))) : '',
-        filesTable([...reports.map(reportRow), ...shown.map(entryRow)]),
+        filesTable([...(all ? reports.map(reportRow) : []), ...shown.map(entryRow)]),
       ]));
   $('#replacingPanel').hidden = !going.length;
   $('#replacingCount').textContent = going.length;

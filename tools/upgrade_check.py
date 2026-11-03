@@ -944,6 +944,11 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                  # (With no copy to put back, the station of a Media folder of
                  # tapiOca's own made since is there too.)
                  "own": version_of(__version__) >= (1, 35, 0)}  # fmt: skip
+        if lee:
+            # (And Lee and the Hall Roku, from Sign out's check: 1.44.4, the
+            # first release after it with no copy to put back.)
+            since["users"] = sorted([*since["users"], LEE["name"]])
+            since["devices"] = sorted([*since["devices"], f"{HALL['app']} on {HALL['deviceName']}"])
         if version_of(__version__) >= (1, 34, 0):
             # Alerts to a first address in Slack's format (from 1.34.0), and another.
             slack = {"on": True, "url": f"{plex.url}/slack", "format": "slack",

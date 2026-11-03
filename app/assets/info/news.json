@@ -1,6 +1,6 @@
 {
-  "version": "1.44.3",
+  "version": "1.44.4",
   "new": [
-    "Sign out always takes you off a device's list"
+    "Fixes for Admins on tapiOca's page"
   ]
 }

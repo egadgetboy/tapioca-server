@@ -588,6 +588,7 @@ def fill(sp: Running, data: Path) -> None:
             ("Lost Coast", "broken", "ffmpeg couldn't open the file: Invalid data found"),
             ("Kitchen Rescue", "damaged", "the picture breaks up 18 min in (decoding errors)"),
             ("Northbound", "unsupported", "Dolby Vision profile 5, which can't be shown right"),
+            ("Harbor Lights", "broken", "file not found"),  # (missing: so Needs you shows its filters)
         )):  # fmt: skip
             key = str(2000 + n)
             item = Item(

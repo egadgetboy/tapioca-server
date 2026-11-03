@@ -220,8 +220,8 @@ def test_each_kind_of_install_has_its_steps():
 def test_github_is_asked_by_the_repository_s_number(made):
     """(A rename or move of the repository answers 301 at its old name,
     which isn't followed: its number stays.)"""
-    assert releases.REPOSITORY_ID == 1414995565  # (gh api repos/egadgetboy/tapioca-server --jq .id)
-    assert releases.LATEST == "https://api.github.com/repositories/1414995565/releases/latest"
+    assert releases.REPOSITORY_ID == 1437500119  # (gh api repos/egadgetboy/tapioca-server --jq .id)
+    assert releases.LATEST == "https://api.github.com/repositories/1437500119/releases/latest"
     github = GitHub(body={"tag_name": f"v{bump()}", "html_url": releases.RELEASES})
     asyncio.run(made(github).check())
     [asked] = github.asked

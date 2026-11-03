@@ -31,7 +31,7 @@ Files that can't play properly go on one list for Stations and Media alike, stor
 | **Damaged** | Plays, but the picture or sound breaks up. |
 | **Unsupported** | Plays, but can't be shown correctly on Stations (Dolby Vision profile 5). |
 
-The tab has three parts. **Needs you** holds people's reports, and files tapiOca found that wait for your choice; the tab's count is these. **Being replaced** is what Sonarr or Radarr is fetching now. **Found by tapiOca** is the rest: files you're handling, files nothing plays now, and Unsupported files. At the top, **Check the list again** goes through the list now, and **Download list** saves it as a file.
+The tab has three parts. **Needs you** holds people's reports, and files tapiOca found that wait for your choice; the tab's count is these. With files of both kinds, choose what it shows: **All**, whose count is the tab's, with the reports; or **Broken or damaged** or **Missing**, which list files only. **Being replaced** is what Sonarr or Radarr is fetching now. **Found by tapiOca** is the rest: files you're handling, files nothing plays now, and Unsupported files. At the top, **Check the list again** goes through the list now, and **Download list** saves it as a file.
 
 [[screenshot: The Broken files tab, with the file checks panel, Needs you and an entry's buttons]]
 
