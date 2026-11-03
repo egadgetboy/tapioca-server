@@ -42,6 +42,9 @@ DENY = [
     "Read(**/*.p12)",
     "Read(**/credentials*.json)",
 ]
+# (Each again from the filesystem's root: `**/` is read from where the session starts, so a file outside it, a
+# download in the scratchpad say, needs its own. Observed November 3: a `.key` there was read until these.)
+DENY += [rule.replace("Read(**/", "Read(//**/") for rule in DENY]
 SECRET_SHAPED = re.compile(r"(?:^|/)\.env(?:\.[^/]*)?$|\.(?:key|pem|jks|keystore|p12)$|(?:^|/)credentials[^/]*\.json$")
 # The secret-shaped files tracked on purpose, each with why.
 TRACKED = {

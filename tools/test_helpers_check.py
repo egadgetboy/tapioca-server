@@ -82,6 +82,15 @@ class Check(unittest.TestCase):
         tracked = [".env", "app/.env.local", "certs/server.pem", "x/credentials-prod.json", "a.p12", "android/keys/testing.keystore", "README.md"]
         self.assertEqual(len(hc.problems(self.root, tracked)), 5)
 
+    def test_each_secret_shaped_rule_reaches_past_where_the_session_starts(self):
+        # (`**/` is read from the session's folder: a `.key` in the scratchpad was read, November 3, until each rule
+        # was given again from the filesystem's root.)
+        relative = [r for r in hc.DENY if r.startswith("Read(**/")]
+        self.assertEqual(len(relative), 8)
+        for rule in relative:
+            with self.subTest(rule):
+                self.assertIn(rule.replace("Read(**/", "Read(//**/"), hc.DENY)
+
     def test_the_repository_holds_them(self):
         tracked = subprocess.run(["git", "ls-files"], cwd=hc.ROOT, capture_output=True, text=True, check=True).stdout.split("\n")
         self.assertEqual(hc.problems(hc.ROOT, tracked), [])

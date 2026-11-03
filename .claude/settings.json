@@ -8,7 +8,15 @@
       "Read(**/*.jks)",
       "Read(**/*.keystore)",
       "Read(**/*.p12)",
-      "Read(**/credentials*.json)"
+      "Read(**/credentials*.json)",
+      "Read(//**/.env)",
+      "Read(//**/.env.*)",
+      "Read(//**/*.key)",
+      "Read(//**/*.pem)",
+      "Read(//**/*.jks)",
+      "Read(//**/*.keystore)",
+      "Read(//**/*.p12)",
+      "Read(//**/credentials*.json)"
     ]
   },
   "hooks": {
