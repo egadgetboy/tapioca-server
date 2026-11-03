@@ -1,0 +1,17 @@
+release = "The update check finds releases again"
+row = 191
+class = "B"
+features = []
+
+[[review]]
+kind = "self-review"
+report = "docs/reviews/1.44.4-self-review.md"
+commit = "279d558e111bf5e90a7a71991f9ebc0373c6ee59"
+
+[modularity]
+component = "app/releases.py (the repository's number), app/web/js/broken.js (renderBroken's filters), .github/workflows/gates.yml (the number checked)"
+contract = "docs/releases/v1.44.4.md"
+off = "not optional: a fix"
+deleted = [
+  "renderBroken's fallback to All only when the chosen filter matched no file, replaced by All whenever the choice isn't shown",
+]
