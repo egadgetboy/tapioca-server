@@ -15,3 +15,8 @@ off = "not optional: a fix"
 deleted = [
   "renderBroken's fallback to All only when the chosen filter matched no file, replaced by All whenever the choice isn't shown",
 ]
+
+[limits]
+run = "quality 41567978924: Soak: headless clients, 30 minutes, on c7f6fcd"
+memory_mb = 153
+cpu_s_per_min = 64.6
