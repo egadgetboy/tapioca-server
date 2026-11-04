@@ -111,15 +111,23 @@ follow them in every change.
 
 ## Resuming work
 - **Before anything, the session's safeguards** (the owner, November 4):
-  confirm the session loaded both repositories at its start, with
-  `cold-auditor` and `routine-builder` among its agent types and the
-  apps repository's settings in force (its `.claude/settings.json`: the
-  secret-file denies and the hook refusing a helper's commit, push and
-  `gh`; this repository's own copy reaches `main` with DS-2 and DS-3). A
-  repository attached after the start loads none of them. If any is
-  missing, stop before any work and tell the owner; never stand a general
-  helper in for `cold-auditor` or any other required audit or check, and
-  never count a substitute's result as passing a gate.
+  check that both repositories and their standing instructions are here,
+  the plan index is current (`tools/plan_index.py`), and `cold-auditor`
+  and `routine-builder` are among the agent types. Load no more of the
+  plan than the task's packet asks for, expanding only where a dependency
+  needs it. If any is missing, stop and tell the owner. Never stand
+  another helper in for `cold-auditor` or any required audit, or count a
+  substitute's result as passing a gate.
+- **Enforcement, not intentions** (the owner, November 4): a safeguard is
+  active only when tested, never because its file exists. Test the
+  secret-file denies with a harmless synthetic file, and each helper's
+  tool limits and hook on their own. One the environment can't enforce
+  (on November 4, a cloud session with both repositories didn't apply
+  `.claude/settings.json`) is written in `next.md` as a limit. Routine
+  work goes on only where no real secret is exposed and nothing protected
+  needs it; credentials, signing, production and other security-sensitive
+  steps stop until an equivalent is tested. Never weaken a security
+  requirement quietly, or count a document as a control.
 - **Every time work resumes, and as each release starts,** tell the owner
   in one short paragraph (the owner, October 18): what was finished last;
   what's being built now, and about how long it should take (work apart
