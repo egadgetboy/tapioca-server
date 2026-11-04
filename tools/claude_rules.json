@@ -1,8 +1,8 @@
 {
  "note": "Every standing rule (a hash of its words) and the one file it lives in. Changed only with an owner-approved edit, by `python3 tools/claude_rules.py --record`.",
  "budget": {
-  "lines": 198,
-  "bytes": 18961
+  "lines": 215,
+  "bytes": 21400
  },
  "files": {
   ".claude/rules/releases.md": {
@@ -186,6 +186,58 @@
    "file": "CLAUDE.md",
    "starts": "**Never build on what's going away** (the owner, November 1, DL425): n"
   },
+  "1c4b4ea45c619805": {
+   "file": "CLAUDE.md",
+   "starts": "**Quality gates** (the owner, October 27; the release gate's table has"
+  },
+  "3e6fba07a6500819": {
+   "file": "CLAUDE.md",
+   "starts": "**Flaky tests are defects:** never rerun to green or loosened; a new o"
+  },
+  "5f91704ae40656f8": {
+   "file": "CLAUDE.md",
+   "starts": "**Changed core lines are covered,** and the key modules get mutation t"
+  },
+  "e1c7aad81bd30ecb": {
+   "file": "CLAUDE.md",
+   "starts": "**Warnings fail the build;** strict type checking (mypy, strict) on ne"
+  },
+  "7763a9d336d44f81": {
+   "file": "CLAUDE.md",
+   "starts": "**Changed screens are compared** with what the owner approved; a diffe"
+  },
+  "17a425082a7b7d24": {
+   "file": "CLAUDE.md",
+   "starts": "**CPU, memory and startup never get worse** without the owner's OK."
+  },
+  "9939a5c32a809181": {
+   "file": "CLAUDE.md",
+   "starts": "**Accessibility audits** run on changed screens."
+  },
+  "1ccef19420cedda5": {
+   "file": "CLAUDE.md",
+   "starts": "**Beside Jellyfin** (the owner, October 28, DL375): monthly and at eac"
+  },
+  "2ad873a1ed35fb50": {
+   "file": "CLAUDE.md",
+   "starts": "**Halt and report** (the owner, October 28: \"halt and report if testin"
+  },
+  "db7b40ad4eb99931": {
+   "file": "CLAUDE.md",
+   "starts": "**Dependencies are pinned and scanned,** with a license check and a bi"
+  },
+  "e538be59b3a0986d": {
+   "file": "CLAUDE.md",
+   "starts": "**A soak before a Class D release publishes,** on a CI server with rea"
+  },
+  "adc9794c3e7c14c3": {
+   "file": "CLAUDE.md",
+   "starts": "**Heavy checks at the release candidate,** not on every push."
+  },
+  "7b6acc27c52e8724": {
+   "file": "CLAUDE.md",
+   "starts": "**Playback observability grows with every release** (DL289): a release"
+  },
   "a5ae5a6cd191c112": {
    "file": "CLAUDE.md",
    "starts": "**After 1.0, only:** Samsung and LG TVs and Fire TV (both for review o"
@@ -298,54 +350,6 @@
    "file": ".claude/rules/browsing-speed.md",
    "starts": "**One exception, by the owner (October 21, DL283):** the picture rever"
   },
-  "1c4b4ea45c619805": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Quality gates** (the owner, October 27; the release gate's table has"
-  },
-  "3e6fba07a6500819": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Flaky tests are defects:** never rerun to green or loosened; a new o"
-  },
-  "5f91704ae40656f8": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Changed core lines are covered,** and the key modules get mutation t"
-  },
-  "e1c7aad81bd30ecb": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Warnings fail the build;** strict type checking (mypy, strict) on ne"
-  },
-  "7763a9d336d44f81": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Changed screens are compared** with what the owner approved; a diffe"
-  },
-  "17a425082a7b7d24": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**CPU, memory and startup never get worse** without the owner's OK."
-  },
-  "9939a5c32a809181": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Accessibility audits** run on changed screens."
-  },
-  "1ccef19420cedda5": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Beside Jellyfin** (the owner, October 28, DL375): monthly and at eac"
-  },
-  "2ad873a1ed35fb50": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Halt and report** (the owner, October 28: \"halt and report if testin"
-  },
-  "db7b40ad4eb99931": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Dependencies are pinned and scanned,** with a license check and a bi"
-  },
-  "e538be59b3a0986d": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**A soak before a Class D release publishes,** on a CI server with rea"
-  },
-  "adc9794c3e7c14c3": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Heavy checks at the release candidate,** not on every push."
-  },
   "a9e37ffe7e500a5a": {
    "file": ".claude/rules/releases.md",
    "starts": "**The manual** (the owner, November 1, DL422; the plan's The manuals):"
@@ -365,10 +369,6 @@
   "c6711c92f4de4148": {
    "file": ".claude/rules/releases.md",
    "starts": "**The security suite, at every release candidate** (the owner, October"
-  },
-  "7b6acc27c52e8724": {
-   "file": ".claude/rules/releases.md",
-   "starts": "**Playback observability grows with every release** (DL289): a release"
   },
   "b73cf3eb1235e5e5": {
    "file": ".claude/rules/releases.md",

@@ -40,13 +40,21 @@ RULES = (
     "Quality gates",
     "After 1.0, only",
 )
+# (Rules every task needs, whatever file it touches, so they're in CLAUDE.md itself, never a file that loads
+# with the work: the quality gates and what each class must prove. The owner, November 4.)
+UNIVERSAL = (
+    "Flaky tests are defects",
+    "Changed core lines are covered",
+    "Warnings fail the build",
+    "Dependencies are pinned and scanned",
+    "Playback observability grows with every release",
+) + (() if SERVER else ("Proof by class",))
 
 
 def problems(text: str) -> list[str]:
-    return [
-        f"CLAUDE.md doesn't carry the standing rule {r!r}"
-        for r in RULES
-        if not re.search(rf"^- \*\*{re.escape(r)}:?\*\*", text, re.M)
+    """What CLAUDE.md's own text (never a file that loads with the work) is missing."""
+    return [f"CLAUDE.md doesn't carry the standing rule {r!r}" for r in RULES if not re.search(rf"^- \*\*{re.escape(r)}:?\*\*", text, re.M)] + [
+        f"CLAUDE.md doesn't carry {r!r}, which every task needs" for r in UNIVERSAL if not re.search(rf"^\s*- \*\*{re.escape(r)}[:,;]?\*\*", text, re.M)
     ]
 
 
@@ -114,13 +122,17 @@ def where(found: dict[str, str]) -> dict[str, list[str]]:
     return seen
 
 
-def structure(root: Path, listed: dict, tracked: list[str]) -> list[str]:
-    found = files(root)
-    out = problems("\n".join(frontmatter(t)[1] for t in found.values()))
+def written_once(found: dict[str, str]) -> list[str]:
+    out = []
     for r in RULES:
         n = sum(len(re.findall(rf"^- \*\*{re.escape(r)}:?\*\*", t, re.M)) for t in found.values())
         if n > 1:
             out.append(f"the standing rule {r!r} is written {n} times")
+    return out
+
+
+def kept_in_place(found: dict[str, str], listed: dict) -> list[str]:
+    out = []
     seen = where(found)
     for h, rule in listed["rules"].items():
         places = seen.get(h, [])
@@ -133,33 +145,40 @@ def structure(root: Path, listed: dict, tracked: list[str]) -> list[str]:
     for h, places in seen.items():
         if h not in listed["rules"]:
             out.append(f"a rule in {places[0]} isn't in tools/claude_rules.json (an owner-approved edit is recorded with --record)")
-    claude = found["CLAUDE.md"]
+    return out
+
+
+def within_budget(claude: str, listed: dict) -> list[str]:
     lines, size = claude.count("\n"), len(claude.encode())
     if lines > listed["budget"]["lines"] or size > listed["budget"]["bytes"]:
-        out.append(f"CLAUDE.md is {lines} lines and {size} bytes, past its budget of {listed['budget']['lines']} and {listed['budget']['bytes']}")
+        return [f"CLAUDE.md is {lines} lines and {size} bytes, past its budget of {listed['budget']['lines']} and {listed['budget']['bytes']}"]
+    return []
+
+
+def loads_with_its_work(name: str, text: str, listed: dict, index: str, tracked: list[str]) -> list[str]:
+    paths, _ = frontmatter(text)
+    meta = listed["files"].get(name)
+    out = [f"{name} has no paths: it would load in every session"] if not paths else []
+    if meta is None:
+        return [*out, f"{name} isn't in tools/claude_rules.json"]
+    if paths != meta["paths"]:
+        out.append(f"{name}'s paths differ from tools/claude_rules.json")
+    if f"`{name}`" not in index:
+        out.append(f"{name} isn't named in CLAUDE.md's {INDEX!r}")
+    if not meta.get("future"):
+        out += [f"{name}: {p!r} matches no file, so it never loads" for p in paths or [] if not any(glob_re(p).match(t) for t in tracked)]
+    return out
+
+
+def structure(root: Path, listed: dict, tracked: list[str]) -> list[str]:
+    found = files(root)
+    claude = found["CLAUDE.md"]
+    out = problems(frontmatter(claude)[1]) + written_once(found) + kept_in_place(found, listed) + within_budget(claude, listed)
     index = claude.split(INDEX, 1)[1].split("\n## ", 1)[0] if INDEX in claude else ""
     for name, text in found.items():
-        if name == "CLAUDE.md":
-            continue
-        paths, _ = frontmatter(text)
-        meta = listed["files"].get(name)
-        if not paths:
-            out.append(f"{name} has no paths: it would load in every session")
-        if meta is None:
-            out.append(f"{name} isn't in tools/claude_rules.json")
-            continue
-        if paths != meta["paths"]:
-            out.append(f"{name}'s paths differ from tools/claude_rules.json")
-        if f"`{name}`" not in index:
-            out.append(f"{name} isn't named in CLAUDE.md's {INDEX!r}")
-        if not meta.get("future"):
-            for p in paths or []:
-                if not any(glob_re(p).match(t) for t in tracked):
-                    out.append(f"{name}: {p!r} matches no file, so it never loads")
-    for name in listed["files"]:
-        if name not in found:
-            out.append(f"{name} is listed but missing")
-    return out
+        if name != "CLAUDE.md":
+            out += loads_with_its_work(name, text, listed, index, tracked)
+    return out + [f"{name} is listed but missing" for name in listed["files"] if name not in found]
 
 
 def record(root: Path, listed: dict) -> dict:

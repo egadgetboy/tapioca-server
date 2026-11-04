@@ -20,20 +20,6 @@ paths:
 ---
 # Releases and quality gates (standing rules, loaded with the work)
 
-## How work runs (the owner, October 18, 12:42 PM; the plan's "How work runs until the beta" has it all)
-- **Quality gates** (the owner, October 27; the release gate's table has each; built into CI by the two Gates releases, followed by hand until then):
-  - **Flaky tests are defects:** never rerun to green or loosened; a new or changed test runs about 20 times in CI before it merges; a quarantined test has an open defect with a deadline in `next.md`.
-  - **Changed core lines are covered,** and the key modules get mutation tests on a schedule.
-  - **Warnings fail the build;** strict type checking (mypy, strict) on new code, with a baseline for the rest.
-  - **Changed screens are compared** with what the owner approved; a difference past the threshold fails until a person fixes it or the owner approves the new look.
-  - **CPU, memory and startup never get worse** without the owner's OK.
-  - **Accessibility audits** run on changed screens.
-  - **Beside Jellyfin** (the owner, October 28, DL375): monthly and at each feature release candidate, tapiOca is measured the same way as Jellyfin's newest open-source apps and server (the comparison runs in the apps repository); the manifest names the run, and where tapiOca is heavier is captured in `next.md` and triaged.
-  - **Halt and report** (the owner, October 28: "halt and report if testing shows results that are not acceptable tolerance"): when a measurement is past its tolerance (a hard limit worse than its baseline by more than its `worse_by`, or a measure more than 20% heavier than Jellyfin's), stop that release's work and tell the owner at once: what, by how much, the run, and at most three options with a recommendation. Never loosen a tolerance, rerun to green or carry on without his OK; other work on the release waits.
-  - **Dependencies are pinned and scanned,** with a license check and a bill of materials; a known Critical or High fails the build.
-  - **A soak before a Class D release publishes,** on a CI server with real FFmpeg and headless clients. Never pause for a real device before 1.0: a step only a real device can show is "NOT RUN, real device, at 1.0", never passed.
-  - **Heavy checks at the release candidate,** not on every push.
-
 ## Releases
 - **The manual** (the owner, November 1, DL422; the plan's The manuals): `manual/tapioca-server-manual.pdf`, linked from README.md, is the one manual, and covers only what's released: every feature, setting, choice and default, with steps, tips and a glossary, in clear, polished American English. Each release changes its chapters with the change, sets the cover's release and date, rebuilds the PDF (`python3 tools/manual/build.py manual`) and passes `python3 tools/manual/check.py` before its notes are pushed. Never an older edition kept or attached; screenshots stay placeholders until the owner asks for them.
 - **Remaining Development** (the owner, November 1, DL426): the two PDF handoffs of what's planned and not yet built live in the apps repo (`remaining/server/`, `remaining/apps/`), private with the plan. Each server release, in the same session, takes what it shipped out of both, writes in the decisions made since, sets both covers' Server version and date, rebuilds both PDFs there and passes the apps repo's `python3 tools/manual/check.py` before its notes are pushed.
@@ -60,11 +46,6 @@ paths:
   suite's census. Every outbound request goes through `app/safefetch.py`:
   a typed address may be at home; any other must be public (DL287's
   provenance).
-- **Playback observability grows with every release** (DL289): a release
-  that touches playback, conversion, HDR or sound handling, or a new way
-  of playing asks whether the diagnostic view and the log capture the new
-  behavior, its reason and its health signal. New playback behavior ships
-  with its telemetry.
 - **Notes** (`docs/releases/v<version>.md`, line 2 `commit: <full ID>` of
   the tested commit on `main`): one screen. A summary sentence, short New
   and Fixed bullets, Updating, Rolling back. Published by
