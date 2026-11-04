@@ -101,6 +101,8 @@ _ANYWHERE = [
     re.compile(r"(?<!\w)iptv(?!\w)", re.IGNORECASE),
     re.compile(r"(?<!\w)free\s+tv(?!\w)", re.IGNORECASE),
     re.compile(r"(?<!\w)cords?(?!\w)", re.IGNORECASE),
+    # A possessive on a pronoun, as "Needs you's filters" (1.44.4's notes): never English; say "the Needs you list's".
+    re.compile(r"(?<!\w)(?:you|me|him|us|them)['’]s(?!\w)", re.IGNORECASE),
     # Real TV networks: the short ones only in capitals ("Fox" too, as a
     # name), so "abc" in an example code or "fox" the animal aren't caught.
     re.compile(r"(?<!\w)(?:" + _words(*_NETWORKS_IN_CAPITALS) + r")(?!\w)"),
@@ -594,6 +596,9 @@ def _said(text: str, page_or_code: bool = False, allowed: tuple[str, ...] = ()) 
         ("Enter your passcode", ["passcode"]),
         ("Passcodes are 4 digits", ["Passcodes"]),
         ("Use it as IPTV, iptv or ipTV", ["IPTV", "iptv", "ipTV"]),
+        # A possessive on a pronoun a name ends with (1.44.4's notes, "Needs you's filters": the owner, November 4)
+        ("Needs you's filters and Needs you’s count", ["you's", "you’s"]),
+        ("the Needs you list's filters, your list, you're here", []),
         ("Watch free TV here, or free\n  tv there", ["free TV", "free\n  tv"]),
         ("Free TV-G titles", ["Free TV"]),
         ("Like ABC, NBC and FOX", ["ABC", "NBC", "FOX"]),
