@@ -5,3 +5,13 @@ data/
 *.ts
 # The manual's build writes an HTML copy beside the PDF (tools/manual).
 manual/*.html
+
+# Secret-shaped files, never tracked (DS-3; tools/helpers_check.py write).
+.env
+.env.*
+*.key
+*.pem
+*.jks
+*.keystore
+*.p12
+credentials*.json

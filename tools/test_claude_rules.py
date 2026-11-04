@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import claude_rules as c
 
-ALL = "\n".join(f"- **{m}** the rule." for m in c.RULES)
+ALL = "\n".join([f"- **{m}** the rule." for m in c.RULES] + [f"  - **{m}:** the rule." for m in c.UNIVERSAL])
 
 
 class TheStandingRules(unittest.TestCase):
@@ -39,10 +39,12 @@ def tree(tmp: Path, claude: str, rules: dict[str, str]) -> Path:
 
 GOOD_CLAUDE = (
     "# Rules\n\n## Rules that load with the work\n- `.claude/rules/release.md`: when releasing.\n\n## How work runs\n"
-    + "\n".join(f"- **{m}** the rule." for m in c.RULES if m != "Quality gates")
+    + "\n".join(f"- **{m}** the rule." for m in c.RULES)
+    + "\n"
+    + "\n".join(f"  - **{m}:** the rule." for m in c.UNIVERSAL)
     + "\n- **Never weaken a test:** ever.\n"
 )
-GOOD_RULE = '---\npaths:\n  - "docs/releases/**"\n---\n# Release rules\n\n- **Quality gates** the rule.\n  - **Halt and report:** at once.\n'
+GOOD_RULE = '---\npaths:\n  - "docs/releases/**"\n---\n# Release rules\n\n- **Labels** the rule.\n  - **Halt and report:** at once.\n'
 TRACKED = ["docs/releases/v1.md", "CLAUDE.md"]
 
 
@@ -64,6 +66,18 @@ class TheRulesKeptOnce(unittest.TestCase):
 
     def test_all_kept_once(self):
         self.assertEqual(self.check(), [])
+
+    def test_a_rule_every_task_needs_moved_to_a_file_that_loads_with_the_work(self):
+        claude = GOOD_CLAUDE.replace(f"  - **{c.UNIVERSAL[0]}:** the rule.\n", "")
+        rule = GOOD_RULE + f"  - **{c.UNIVERSAL[0]}:** the rule.\n"
+        found = self.check(claude=claude, rules={"release.md": rule}, listed_from=(claude, {"release.md": rule}))
+        self.assertIn(f"CLAUDE.md doesn't carry {c.UNIVERSAL[0]!r}, which every task needs", found)
+
+    def test_a_standing_rule_only_in_a_file_that_loads_with_the_work(self):
+        claude = GOOD_CLAUDE.replace("- **Quality gates** the rule.\n", "")
+        rule = GOOD_RULE + "- **Quality gates** the rule.\n"
+        found = self.check(claude=claude, rules={"release.md": rule}, listed_from=(claude, {"release.md": rule}))
+        self.assertIn("CLAUDE.md doesn't carry the standing rule 'Quality gates'", found)
 
     def test_a_rule_left_out(self):
         found = self.check(rules={"release.md": GOOD_RULE.replace("  - **Halt and report:** at once.\n", "")})
