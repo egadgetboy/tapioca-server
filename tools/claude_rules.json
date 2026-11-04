@@ -1,8 +1,8 @@
 {
  "note": "Every standing rule (a hash of its words) and the one file it lives in. Changed only with an owner-approved edit, by `python3 tools/claude_rules.py --record`.",
  "budget": {
-  "lines": 180,
-  "bytes": 17719
+  "lines": 190,
+  "bytes": 18413
  },
  "files": {
   ".claude/rules/releases.md": {
@@ -125,6 +125,10 @@
   "b16b784e8f5748f4": {
    "file": "CLAUDE.md",
    "starts": "**No licensing in the server** (the owner's final plan, October 10): i"
+  },
+  "9b1af94650bef655": {
+   "file": "CLAUDE.md",
+   "starts": "**Before anything, the session's safeguards** (the owner, November 4):"
   },
   "12e3dbfa648ed133": {
    "file": "CLAUDE.md",

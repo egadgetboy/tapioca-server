@@ -110,6 +110,16 @@ follow them in every change.
   Plex, Jellyfin or other clients.
 
 ## Resuming work
+- **Before anything, the session's safeguards** (the owner, November 4):
+  confirm the session loaded both repositories at its start, with
+  `cold-auditor` and `routine-builder` among its agent types and the
+  apps repository's settings in force (its `.claude/settings.json`: the
+  secret-file denies and the hook refusing a helper's commit, push and
+  `gh`; this repository's own copy reaches `main` with DS-2 and DS-3). A
+  repository attached after the start loads none of them. If any is
+  missing, stop before any work and tell the owner; never stand a general
+  helper in for `cold-auditor` or any other required audit or check, and
+  never count a substitute's result as passing a gate.
 - **Every time work resumes, and as each release starts,** tell the owner
   in one short paragraph (the owner, October 18): what was finished last;
   what's being built now, and about how long it should take (work apart
