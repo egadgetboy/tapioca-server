@@ -1,0 +1,382 @@
+{
+ "note": "Every standing rule (a hash of its words) and the one file it lives in. Changed only with an owner-approved edit, by `python3 tools/claude_rules.py --record`.",
+ "budget": {
+  "lines": 180,
+  "bytes": 17719
+ },
+ "files": {
+  ".claude/rules/releases.md": {
+   "paths": [
+    "docs/releases/**",
+    "docs/security/**",
+    "manual/**",
+    "tools/manual/**",
+    "tools/release_gate.py",
+    "tools/security_suite.py",
+    "tools/attack_check.py",
+    "tools/upgrade_check.py",
+    "tools/image_check.py",
+    "tests/test_info_station.py",
+    "tests/test_release_workflow.py",
+    ".github/workflows/**",
+    "app/__init__.py",
+    "pyproject.toml",
+    "docker-compose.yml",
+    "tapioca-server.yaml",
+    "Dockerfile"
+   ]
+  },
+  ".claude/rules/browsing-speed.md": {
+   "paths": [
+    "app/folderart.py",
+    "app/applibrary.py",
+    "app/library.py",
+    "app/folders.py",
+    "app/folderscan.py",
+    "app/ondemand.py",
+    "app/web/**",
+    "tests/test_picture_*.py",
+    "tests/test_whose_pictures.py",
+    "tools/picture_load.py"
+   ]
+  }
+ },
+ "rules": {
+  "5142140fffa89927": {
+   "file": "CLAUDE.md",
+   "starts": "tapiOca (called StationPlay until 1.34.0) is a self-hosted TV and medi"
+  },
+  "21f75b08b41c0101": {
+   "file": "CLAUDE.md",
+   "starts": "**\"Station,\" never \"channel,\"** in anything people read (Plex's own fe"
+  },
+  "93707c0ddba69b1d": {
+   "file": "CLAUDE.md",
+   "starts": "**\"Media,\" never \"Library,\"** for the on-demand titles, in anything pe"
+  },
+  "29a4f7a64fda4adc": {
+   "file": "CLAUDE.md",
+   "starts": "**Legal care** (the owner, October 11; the plan's \"Legal care\" has it "
+  },
+  "7a13ba22fcdaa957": {
+   "file": "CLAUDE.md",
+   "starts": "**Clear American English.** Friendly, short and plain on the page; con"
+  },
+  "13b8850feb4d3d5f": {
+   "file": "CLAUDE.md",
+   "starts": "**No outside services** beyond those the plan names (the plan's Princi"
+  },
+  "34aba4c53cb8b7ed": {
+   "file": "CLAUDE.md",
+   "starts": "**A look unlike Plex or Emby.** Original work only."
+  },
+  "72e446070d822165": {
+   "file": "CLAUDE.md",
+   "starts": "**Opt-in features, a lean server:** no new dependencies; what an app c"
+  },
+  "17d2daa6727f4f91": {
+   "file": "CLAUDE.md",
+   "starts": "**No real file names or paths** in anything the apps receive."
+  },
+  "8a2af8724bcd002a": {
+   "file": "CLAUDE.md",
+   "starts": "tapiOca is labeled **beta** (the owner, October 12; alpha before) unti"
+  },
+  "2a352f05834b431f": {
+   "file": "CLAUDE.md",
+   "starts": "**The page is a full web client for Admins only** (the owner, October "
+  },
+  "9f3d022bbb736b62": {
+   "file": "CLAUDE.md",
+   "starts": "**Admins see viewing by default** (the owner, October 17, D09, replaci"
+  },
+  "2bb719b2e88375ab": {
+   "file": "CLAUDE.md",
+   "starts": "**1.0 is feature-complete** (the owner, October 18, 2:46 PM; the plan'"
+  },
+  "1fab24cefa415f9e": {
+   "file": "CLAUDE.md",
+   "starts": "**Features lead, APIs follow** (the same day): the tuner (HDHomeRun, M"
+  },
+  "6bf0c4eeeb6ffed5": {
+   "file": "CLAUDE.md",
+   "starts": "**Every tapiOca app needs a signed-in person** (the owner, October 18)"
+  },
+  "1919f1425696ecff": {
+   "file": "CLAUDE.md",
+   "starts": "**The plan is the one specification** (the owner, October 18): the app"
+  },
+  "95fe1a3ae750fbba": {
+   "file": "CLAUDE.md",
+   "starts": "**Only the server owner acknowledges** (the owner, October 18; the pla"
+  },
+  "50e130a3913a7d84": {
+   "file": "CLAUDE.md",
+   "starts": "**Personal use, on hardware you own** (the owner, October 12): the REA"
+  },
+  "d65020c854a8d524": {
+   "file": "CLAUDE.md",
+   "starts": "**Parental claims** say \"in tapiOca's apps,\" and the docs say what lim"
+  },
+  "75523e9e9236744a": {
+   "file": "CLAUDE.md",
+   "starts": "**Together, server and apps** (the owner, October 13: \"I'm OK with cer"
+  },
+  "b16b784e8f5748f4": {
+   "file": "CLAUDE.md",
+   "starts": "**No licensing in the server** (the owner's final plan, October 10): i"
+  },
+  "12e3dbfa648ed133": {
+   "file": "CLAUDE.md",
+   "starts": "**Every time work resumes, and as each release starts,** tell the owne"
+  },
+  "a0b4d6db4f60f48f": {
+   "file": "CLAUDE.md",
+   "starts": "**The lead developer decides every engineering question**: risk classe"
+  },
+  "0ce1e375b432f9cd": {
+   "file": "CLAUDE.md",
+   "starts": "**The order is frozen at the top** (the owner, October 27): the next f"
+  },
+  "7cef40f629b40262": {
+   "file": "CLAUDE.md",
+   "starts": "**The look alongside S4** (the owner, October 31, DL407): the server r"
+  },
+  "1ab360254a12f319": {
+   "file": "CLAUDE.md",
+   "starts": "**The apps' look first:** server halves and behavior that changes no a"
+  },
+  "634f215f12870e48": {
+   "file": "CLAUDE.md",
+   "starts": "**Every feature through intake:** a new feature gets its place in the "
+  },
+  "e3a1ca1cf79d6924": {
+   "file": "CLAUDE.md",
+   "starts": "**Gates come from the class, checked by CI:** from the release that bu"
+  },
+  "c5f00c907040d134": {
+   "file": "CLAUDE.md",
+   "starts": "**Modular, checkably:** new feature code goes in its own module, never"
+  },
+  "006c179288a431f3": {
+   "file": "CLAUDE.md",
+   "starts": "**One status source:** the plan's release order is the status; the res"
+  },
+  "9a6f2d5e7dca4201": {
+   "file": "CLAUDE.md",
+   "starts": "**Decisions batched:** new ideas arrive as proposals and are folded in"
+  },
+  "8ae42249d405be6f": {
+   "file": "CLAUDE.md",
+   "starts": "**Until the launch (apps 1.0, server 2.0.0)** (the owner, October 27):"
+  },
+  "92c250e094e4314f": {
+   "file": "CLAUDE.md",
+   "starts": "**No slop** (the owner, October 27): every release leaves the modules "
+  },
+  "41b3a7d2f8aa2e5c": {
+   "file": "CLAUDE.md",
+   "starts": "**Never build on what's going away** (the owner, November 1, DL425): n"
+  },
+  "a5ae5a6cd191c112": {
+   "file": "CLAUDE.md",
+   "starts": "**After 1.0, only:** Samsung and LG TVs and Fire TV (both for review o"
+  },
+  "5ec6a89867f7adb2": {
+   "file": "CLAUDE.md",
+   "starts": "**Stop only the affected work, and ask the owner,** when two controlli"
+  },
+  "2ecdd558dedc3a6c": {
+   "file": "CLAUDE.md",
+   "starts": "**Four states:** Exploratory; Implemented, pending release; Integrated"
+  },
+  "abe3dd324c4cd93a": {
+   "file": "CLAUDE.md",
+   "starts": "**Classes,** by what a change can reach: A (words and looks), B (routi"
+  },
+  "aab21530df7b06c8": {
+   "file": "CLAUDE.md",
+   "starts": "**Modular code:** one authoritative decision for each rule, called fro"
+  },
+  "a7ee6e4a6b08e908": {
+   "file": "CLAUDE.md",
+   "starts": "**The stack is locked** (the owner, November 2, DL430; DL408): Python "
+  },
+  "e5ee39c7f7bafe5d": {
+   "file": "CLAUDE.md",
+   "starts": "**Every bug gets a failing test first,** then a root-cause fix. The te"
+  },
+  "d145ab36e4478bba": {
+   "file": "CLAUDE.md",
+   "starts": "**Never weaken a test:** Don’t loosen a tolerance, change an expected "
+  },
+  "89511130a1d728bb": {
+   "file": "CLAUDE.md",
+   "starts": "While working, run the changed area's tests (and D's negative, race an"
+  },
+  "c05b7a0cd81fcfb0": {
+   "file": "CLAUDE.md",
+   "starts": "Don't edit `tests/fakeplex.py`."
+  },
+  "2d1fdc03dd5d9586": {
+   "file": "CLAUDE.md",
+   "starts": "The wording scan passes (from 1.33.0)."
+  },
+  "4e4306daf6954d58": {
+   "file": "CLAUDE.md",
+   "starts": "Always built by the main session, never handed to `routine-builder`: t"
+  },
+  "ec1dd915d4c1af13": {
+   "file": "CLAUDE.md",
+   "starts": "Any database change on upgrade is preceded by an automatic backup (`da"
+  },
+  "12b87c875380edd8": {
+   "file": "CLAUDE.md",
+   "starts": "Hand `routine-builder` whole tasks, such as a full screen or a set of "
+  },
+  "f7563770a8c42965": {
+   "file": "CLAUDE.md",
+   "starts": "Every handoff is complete: the task, the files involved, the relevant "
+  },
+  "9e5335324139ba60": {
+   "file": "CLAUDE.md",
+   "starts": "Review everything `routine-builder` returns before it goes into a rele"
+  },
+  "592144ab9c1b62f0": {
+   "file": "CLAUDE.md",
+   "starts": "Send work to `cold-auditor` by class: every D change before integratio"
+  },
+  "8ffda62f755c5a15": {
+   "file": "CLAUDE.md",
+   "starts": "Never set the `CLAUDE_CODE_EFFORT_LEVEL` environment variable: it over"
+  },
+  "0c91831d0eba42f6": {
+   "file": "CLAUDE.md",
+   "starts": "Explicit paths, never `git add -A`; never `git reset --hard` with unco"
+  },
+  "2b643bb791cbae22": {
+   "file": "CLAUDE.md",
+   "starts": "Stop processes by their PID only (never `pkill -f` or `pgrep -f`)."
+  },
+  "e0fdd6808491f75a": {
+   "file": "CLAUDE.md",
+   "starts": "GitHub Actions minutes count: run what a change needs, nothing more."
+  },
+  "f55f1abb2c3af480": {
+   "file": "CLAUDE.md",
+   "starts": "**A session ends clean:** CI green, no work on a branch that isn't wri"
+  },
+  "fbbe5106accb8774": {
+   "file": ".claude/rules/browsing-speed.md",
+   "starts": "**No release may make browsing slower** (the restore-fast-pictures han"
+  },
+  "6a3d720ae45797c1": {
+   "file": ".claude/rules/browsing-speed.md",
+   "starts": "Hard gates, with no margin: a folder page under picture load never ans"
+  },
+  "e34e7bf79d3490fe": {
+   "file": ".claude/rules/browsing-speed.md",
+   "starts": "Timings: p95 may be at most 20% worse than the recorded baseline, and "
+  },
+  "a959180d09b18c46": {
+   "file": ".claude/rules/browsing-speed.md",
+   "starts": "Any change to pictures, browsing, the shell's grids or caching runs th"
+  },
+  "2bbed8033c8249f3": {
+   "file": ".claude/rules/browsing-speed.md",
+   "starts": "A new baseline is recorded only with the owner's OK."
+  },
+  "6d54250210958de4": {
+   "file": ".claude/rules/browsing-speed.md",
+   "starts": "**One exception, by the owner (October 21, DL283):** the picture rever"
+  },
+  "1c4b4ea45c619805": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Quality gates** (the owner, October 27; the release gate's table has"
+  },
+  "3e6fba07a6500819": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Flaky tests are defects:** never rerun to green or loosened; a new o"
+  },
+  "5f91704ae40656f8": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Changed core lines are covered,** and the key modules get mutation t"
+  },
+  "e1c7aad81bd30ecb": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Warnings fail the build;** strict type checking (mypy, strict) on ne"
+  },
+  "7763a9d336d44f81": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Changed screens are compared** with what the owner approved; a diffe"
+  },
+  "17a425082a7b7d24": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**CPU, memory and startup never get worse** without the owner's OK."
+  },
+  "9939a5c32a809181": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Accessibility audits** run on changed screens."
+  },
+  "1ccef19420cedda5": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Beside Jellyfin** (the owner, October 28, DL375): monthly and at eac"
+  },
+  "2ad873a1ed35fb50": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Halt and report** (the owner, October 28: \"halt and report if testin"
+  },
+  "db7b40ad4eb99931": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Dependencies are pinned and scanned,** with a license check and a bi"
+  },
+  "e538be59b3a0986d": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**A soak before a Class D release publishes,** on a CI server with rea"
+  },
+  "adc9794c3e7c14c3": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Heavy checks at the release candidate,** not on every push."
+  },
+  "a9e37ffe7e500a5a": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**The manual** (the owner, November 1, DL422; the plan's The manuals):"
+  },
+  "0997dea38de3b42b": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Remaining Development** (the owner, November 1, DL426): the two PDF "
+  },
+  "7a49a902ee44cf9e": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Releases are bundles:** compatible A to C work ships together when i"
+  },
+  "e2bd964eac5fc374": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Each release candidate,** by class (the plan's release gate has the "
+  },
+  "c6711c92f4de4148": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**The security suite, at every release candidate** (the owner, October"
+  },
+  "7b6acc27c52e8724": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Playback observability grows with every release** (DL289): a release"
+  },
+  "b73cf3eb1235e5e5": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Notes** (`docs/releases/v<version>.md`, line 2 `commit: <full ID>` o"
+  },
+  "7e653ef0cc4840be": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**The image is published** (the owner, October 12, later the same day:"
+  },
+  "f4f7be0f27ab2df4": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Report** to the owner, 5 lines, for each published release: version "
+  },
+  "e1cabca29bf4e387": {
+   "file": ".claude/rules/releases.md",
+   "starts": "**Every 3 releases, stop** and tell the owner, who runs an independent"
+  }
+ }
+}
