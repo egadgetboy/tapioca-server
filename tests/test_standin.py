@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from app.standin import blurhash_rgb24, blurhash_from_image
+from app.standin import blurhash_from_image, blurhash_rgb24
 
 
 class StandinVectors(unittest.TestCase):
@@ -35,16 +35,14 @@ class StandinVectors(unittest.TestCase):
             (b'\x00' * 12, 0, 2),
             (b'\x00' * 12, 2, -1),
         ):
-            with self.subTest(length=len(frame), width=width, height=height):
-                with self.assertRaises(ValueError):
-                    blurhash_rgb24(frame, width, height)
+            with self.subTest(length=len(frame), width=width, height=height), self.assertRaises(ValueError):
+                blurhash_rgb24(frame, width, height)
 
     def test_encoded_art_rejects_empty_or_oversized_input_before_ffmpeg(self):
         with patch('app.standin.subprocess.run') as run:
-            with self.assertRaises(ValueError):
-                blurhash_from_image(b'')
-            with self.assertRaises(ValueError):
-                blurhash_from_image(b'X' * (32 * 1024 * 1024 + 1))
+            for invalid_artwork in (b'', b'X' * (32 * 1024 * 1024 + 1)):
+                with self.subTest(length=len(invalid_artwork)), self.assertRaises(ValueError):
+                    blurhash_from_image(invalid_artwork)
             run.assert_not_called()
 
     def test_decoder_failure_and_timeout_do_not_leak_ffmpeg_details(self):
