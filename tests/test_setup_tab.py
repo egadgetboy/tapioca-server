@@ -59,6 +59,24 @@ def lines(call: str, script: str | None = None) -> dict:
     return json.loads(done.stdout)
 
 
+
+def test_first_time_setup_questionnaire_has_one_name_and_route():
+    """Both rerun controls open the same questionnaire; Setup stays a separate tab."""
+    html = (JS.parent.parent / "index.html").read_text(encoding="utf-8")
+    script = JS.read_text(encoding="utf-8")
+    setup = (JS.parent / "setup.js").read_text(encoding="utf-8")
+    readme = (JS.parents[3] / "README.md").read_text(encoding="utf-8")
+    label = "Run First-Time Setup Q&A Again"
+
+    assert f'id="runSetup">{label}</button>' in html
+    assert f'id="footSetup">{label}</button>' in html
+    assert html.count(f">{label}</button>") == 2
+    assert 'data-tab="setup">Setup</button>' in html
+    assert "$('#runSetup').addEventListener('click', runSetup);" in script
+    assert "$('#footSetup').addEventListener('click', runSetup);" in script
+    assert f"choose {label} on the Setup tab or at the foot of the page." in setup
+    assert f"**{label}**" in readme
+
 NOTHING_THERE = json.dumps(
     {"direct": 0, "viaPlex": 0, "mappings": [], "mediaDir": "/mnt/tank/media",
      "mediaDirPresent": False}
@@ -69,7 +87,7 @@ GUIDE = json.dumps({"plexDownloadedGuide": None, "canRefreshPlexGuide": False})
 def test_nothing_at_media_dir_with_plex():
     said = lines(f"renderMediaAccess({NOTHING_THERE}, true); renderGuideState({GUIDE}, true);")
     assert said["#mediaAccess"]["text"] == (
-        "Nothing is at /mnt/tank/media inside tapiOca. Run setup again: its first step says "
+        "Nothing is at /mnt/tank/media inside tapiOca. Choose Run First-Time Setup Q&A Again: its first step says "
         "what to change. Until then, Plex’s files are streamed from Plex."
     )
     assert "Mount your media folder" not in said["#mediaAccess"]["text"]
@@ -80,7 +98,7 @@ def test_nothing_at_media_dir_with_plex():
 def test_without_plex_nothing_is_said_about_it():
     said = lines(f"renderMediaAccess({NOTHING_THERE}, false); renderGuideState({GUIDE}, false);")
     assert said["#mediaAccess"]["text"] == (
-        "Nothing is at /mnt/tank/media inside tapiOca. Run setup again: its first step says "
+        "Nothing is at /mnt/tank/media inside tapiOca. Choose Run First-Time Setup Q&A Again: its first step says "
         "what to change."
     )
     assert said["#guideState"]["hidden"]
