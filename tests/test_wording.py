@@ -562,6 +562,23 @@ def test_plex_token_stays_private_but_admin_can_see_tuner_connection_address():
     assert "Plex uses tapiOca's tuner from" in tuner
 
 
+def test_restricted_program_says_station_as_a_feature_name():
+    """CG-07, DL424 item 3 and Capitals DL342: the server and live docs agree."""
+    source = (ROOT / "app/main.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    declarations = [node for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "RESTRICTED_PROGRAM"
+                            for target in node.targets)]
+    assert len(declarations) == 1
+    expected = "This program is restricted. Your Station will resume automatically when permitted programming returns."
+    assert ast.literal_eval(declarations[0].value) == expected
+
+    for path in ("docs/internal-api.md", "docs/users.md"):
+        content = " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        assert expected in content, path
+        assert "Your station will resume automatically" not in content, path
+
+
 def test_every_allowed_phrase_is_still_used(hits):
     used = {h.excused_by for h in hits if h.excused_by}
     stale = [p for p in allowed_phrases() if p not in used]

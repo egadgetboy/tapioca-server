@@ -224,7 +224,7 @@ alerts).
 7. **A restricted program (from 1.39.0).** For someone with limits, while a
    program they may not watch is on a station, its HLS playlist and its
    pieces answer 403 with `{"detail": "This program is restricted. Your
-   station will resume automatically when permitted programming returns.",
+   Station will resume automatically when permitted programming returns.",
    "code": "restricted", "resumesAtMs": ...}` (`resumesAtMs`: when the
    schedule says permitted programming is back, or null). Keep the station
    selected, show the sentence over its picture, and ask for the playlist

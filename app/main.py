@@ -162,7 +162,7 @@ STATION_GUIDE_MAX_HOURS = GUIDE_FUTURE_MS / 3_600_000
 # (1.39.0, the owner's words, October 17), and how far ahead the schedule is
 # looked at for when their station is back.
 RESTRICTED_PROGRAM = (
-    "This program is restricted. Your station will resume automatically when permitted "
+    "This program is restricted. Your Station will resume automatically when permitted "
     "programming returns."
 )
 RESUME_LOOK_MS = 24 * 3_600_000
