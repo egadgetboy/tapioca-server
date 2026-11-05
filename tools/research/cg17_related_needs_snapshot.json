@@ -1,0 +1,67 @@
+{
+  "task": "CG-17 Related titles and trailers from the files — dependency evidence only",
+  "observed_at": "2026-11-05",
+  "plan_is_single_spec": true,
+  "plan": {
+    "repository": "egadgetboy/tapioca-apps",
+    "ref": "plan-update",
+    "path": "plan.md",
+    "blob_sha": "89a07f58674ad74a510f9e9bf1453d46411d89d4",
+    "release_row": 121,
+    "name": "Related titles and trailers from the files",
+    "class": "B",
+    "needs": "Where details come from",
+    "state": "Planned"
+  },
+  "dependency": {
+    "release": "Where details come from",
+    "plan_status": "Partly built (layers 2 and 3 in prototype), NOT completed/published on inspected main",
+    "action": "No server implementation before Claude verifies prerequisite"
+  },
+  "server_head": "269c32ccd0a3d3b2b30440ab010c39615a0fde9b",
+  "existing_code": [
+    {
+      "path": "app/ondemand.py",
+      "blob_sha": "c6f69884c7d08c77bff6d7d81cf03fd14dd6b4ec",
+      "symbol": "related(entry,pool,most)",
+      "observed": "Renders up to 12 genre/year matched same-kind related title entries, no genres => []"
+    },
+    {
+      "path": "app/applibrary.py",
+      "blob_sha": "9f240e9448e2f4638a43ae7a31e4b489cb5fea48",
+      "symbol": "GET /api/internal/items/{key}/related",
+      "observed": "Existing route enforces must_see and filters candidates with seen_only before ranking"
+    },
+    {
+      "path": "app/folderscan.py",
+      "blob_sha": "60b1defd804c9deda8f8985b00ad07dc748b414b",
+      "symbol": "walk",
+      "observed": "Standalone ingestion currently skips extras folders rather than exposing trailer extras as playable programs"
+    },
+    {
+      "path": "app/naming.py",
+      "blob_sha": "bfa1303a78582c38afb7845e4b0e7389dea16226",
+      "symbol": "EXTRAS, _EXTRA_FILE",
+      "observed": "Names trailer/extras folders and suffixes explicitly"
+    },
+    {
+      "path": "docs/internal-api.md",
+      "blob_sha": "504bf73bbdaf0716ac4bb8946b3d87f66c8f0455",
+      "symbol": "GET /api/internal/items/{key}/related",
+      "observed": "Current published API already documents related titles"
+    }
+  ],
+  "constraints": [
+    "Release 121 does not implement a new trailer finder: plan says trailers are Extras handled by folder reader and Trailers section",
+    "No external metadata service in CG-17",
+    "No extra API route/listing field or contract before prerequisite and Claude approval",
+    "No Class D/access code changes",
+    "No UI changes"
+  ],
+  "tests": {
+    "full_repo": "NOT RUN",
+    "dependency_suite": "NOT RUN",
+    "no_repo_code_changed": true
+  },
+  "state": "BLOCKED: Where details come from incomplete; source inventory only"
+}
