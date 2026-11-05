@@ -47,13 +47,11 @@ class StandinVectors(unittest.TestCase):
 
     def test_decoder_failure_and_timeout_do_not_leak_ffmpeg_details(self):
         failed = subprocess.CompletedProcess(args=['ffmpeg'], returncode=1, stdout=b'', stderr=b'secret path: /home/owner/poster.jpg')
-        with patch('app.standin.subprocess.run', return_value=failed):
-            with self.assertRaisesRegex(ValueError, 'could not decode') as caught:
-                blurhash_from_image(b'bad image')
+        with patch('app.standin.subprocess.run', return_value=failed), self.assertRaisesRegex(ValueError, 'could not decode') as caught:
+            blurhash_from_image(b'bad image')
             self.assertNotIn('/home/', str(caught.exception))
-        with patch('app.standin.subprocess.run', side_effect=subprocess.TimeoutExpired(['ffmpeg'], 10)):
-            with self.assertRaisesRegex(ValueError, 'could not decode'):
-                blurhash_from_image(b'bad image')
+        with patch('app.standin.subprocess.run', side_effect=subprocess.TimeoutExpired(['ffmpeg'], 10)), self.assertRaisesRegex(ValueError, 'could not decode'):
+            blurhash_from_image(b'bad image')
 
     @unittest.skipUnless(shutil.which('ffmpeg'), 'FFmpeg required for the image-to-raw integration test')
     def test_real_ffmpeg_raw_frame_is_decoded_without_a_new_library(self):
