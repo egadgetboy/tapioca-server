@@ -84,6 +84,9 @@ def test_first_time_setup_questionnaire_has_one_name_and_route():
     assert "Run setup again" not in readme
     assert "Run setup again" not in manual
     assert script.count("Run setup again") == 2
+    for page_script in sorted(JS.parent.glob("*.js")):
+        if page_script != JS:
+            assert "Run setup again" not in page_script.read_text(encoding="utf-8"), page_script
 
 
 NOTHING_THERE = json.dumps(
