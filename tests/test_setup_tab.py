@@ -77,6 +77,14 @@ def test_first_time_setup_questionnaire_has_one_name_and_route():
     assert f"**{label}**" in readme
     manual = (JS.parents[3] / "manual/src/04-first-setup.md").read_text(encoding="utf-8")
     assert f"**{label}**" in manual
+    # The page must no longer use the ambiguous old button name. The two
+    # Plex-path troubleshooting hints are explicitly excluded (DL425).
+    assert "Run setup again" not in html
+    assert "Run setup again" not in setup
+    assert "Run setup again" not in readme
+    assert "Run setup again" not in manual
+    assert script.count("Run setup again") == 2
+
 
 NOTHING_THERE = json.dumps(
     {"direct": 0, "viaPlex": 0, "mappings": [], "mediaDir": "/mnt/tank/media",
@@ -165,7 +173,7 @@ def test_who_can_use_tapioca_says_nobody_from_the_internet():
 def test_a_file_streamed_from_plex_never_brings_back_the_old_advice():
     """(The fourth audit of 1.35.0) Once a station has played with nothing
     at MEDIA_DIR, files have streamed from Plex: the Media files line still
-    points to first-time setup, never "mounting your media folder there"."""
+    says to run setup again, never "mounting your media folder there"."""
     gone = json.dumps(
         {"direct": 0, "viaPlex": 3, "mappings": [], "mediaDir": "/mnt/hddpool/mediashare/media",
          "mediaDirPresent": False}
