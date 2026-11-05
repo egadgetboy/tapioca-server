@@ -4,9 +4,9 @@
 // new: every question, with checks that what's set up is working. After an
 // update that brings new or changed questions: just those, once (and the
 // checks, if something needs a look). And everything, whenever it's run
-// again (Run setup again on the Setup tab, or Setup at the foot of the
-// page), with the current answers filled in. Each answer is saved as you go
-// on from it; Skip setup (or Close) keeps everything else as it is.
+// again (choose Run First-Time Setup Q&A Again on the Setup tab
+// or at the foot of the page), with the current answers filled in.
+// Each answer is saved as you go; Skip setup (or Close) leaves the rest unchanged.
 const SETUP_TITLES = {
   checks: 'Checking your server',
   playback: 'How stations play',
@@ -152,7 +152,7 @@ function watchSection(place, urls) {
     h(place === 'other' ? 'ul' : 'ol', { class: 'steps' }, ...steps),
     ...notes);
 }
-const SETUP_AGAIN = 'You can run setup again any time from the Setup tab, or the Setup link at the foot of the page.';
+const SETUP_AGAIN = 'To answer the first-time setup questions again, choose Run First-Time Setup Q&A Again on the Setup tab or at the foot of the page.';
 // `why`: "new" (a new tapiOca), "updated" (an update has new questions),
 // or "again" (run again).
 async function showSetup(st, why) {

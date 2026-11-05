@@ -687,7 +687,7 @@ The first time an Admin opens tapiOca's page, the setup opens right away. It doe
    - **Only tapiOca's own apps:** nothing else is needed.
 10. **All set:** your current settings, and anything that still needs attention. It also asks whether tapiOca should tell you when a new version is out (see [Updating](#updating)). The box is never ticked for you, and leaving it unticked is No.
 
-To open the setup at any time, choose **Run setup again** on the **Setup** tab, or **Setup** at the bottom of the page. Your current answers are filled in. The setup is the only place to change the settings for new stations. Everything else can also be changed on its own tab.
+To answer the first-time setup questions again, choose **Run First-Time Setup Q&A Again** on the **Setup** tab or use the button of the same name at the bottom of the page. Your current answers are filled in. The setup is the only place to change the settings for new stations. Everything else can also be changed on its own tab.
 
 **After an update.** When a new version brings a question for an Admin, such as a new feature to turn on or a new choice, the setup opens once by itself with just those questions. It also shows the checks if something needs attention. Everything else stays as you set it.
 

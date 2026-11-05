@@ -27,7 +27,7 @@ The first time someone opens tapiOca's page, the setup opens, titled **Welcome t
 
 ### Running it again
 
-Choose **Run setup again** on the **Setup** tab, or **Setup** at the bottom of the page. Your current answers are filled in. When an update brings a new question for an Admin, the setup opens once by itself, titled **What's new in tapiOca**, with just that question.
+Choose **Run First-Time Setup Q&A Again** on the **Setup** tab or the button of the same name at the bottom of the page. Your current answers are filled in. When an update brings a new question for an Admin, the setup opens once by itself, titled **What's new in tapiOca**, with just that question.
 
 ### The INFO station
 

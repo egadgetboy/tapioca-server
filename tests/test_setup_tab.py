@@ -59,6 +59,36 @@ def lines(call: str, script: str | None = None) -> dict:
     return json.loads(done.stdout)
 
 
+def test_first_time_setup_questionnaire_has_one_name_and_route():
+    """Both rerun controls open the same questionnaire; Setup stays a separate tab."""
+    html = (JS.parent.parent / "index.html").read_text(encoding="utf-8")
+    script = JS.read_text(encoding="utf-8")
+    setup = (JS.parent / "setup.js").read_text(encoding="utf-8")
+    readme = (JS.parents[3] / "README.md").read_text(encoding="utf-8")
+    label = "Run First-Time Setup Q&A Again"
+
+    assert f'id="runSetup">{label}</button>' in html
+    assert f'id="footSetup">{label}</button>' in html
+    assert html.count(f">{label}</button>") == 2
+    assert 'data-tab="setup">Setup</button>' in html
+    assert "$('#runSetup').addEventListener('click', runSetup);" in script
+    assert "$('#footSetup').addEventListener('click', runSetup);" in script
+    assert f"choose {label} on the Setup tab or at the foot of the page." in setup
+    assert f"**{label}**" in readme
+    manual = (JS.parents[3] / "manual/src/04-first-setup.md").read_text(encoding="utf-8")
+    assert f"**{label}**" in manual
+    # The page must no longer use the ambiguous old button name. The two
+    # Plex-path troubleshooting hints are explicitly excluded (DL425).
+    assert "Run setup again" not in html
+    assert "Run setup again" not in setup
+    assert "Run setup again" not in readme
+    assert "Run setup again" not in manual
+    assert script.count("Run setup again") == 2
+    for page_script in sorted(JS.parent.glob("*.js")):
+        if page_script != JS:
+            assert "Run setup again" not in page_script.read_text(encoding="utf-8"), page_script
+
+
 NOTHING_THERE = json.dumps(
     {"direct": 0, "viaPlex": 0, "mappings": [], "mediaDir": "/mnt/tank/media",
      "mediaDirPresent": False}
