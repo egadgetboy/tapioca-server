@@ -215,7 +215,7 @@ counts; allowing the station never allows what's on it):
   schedule: see hls.py). While a piece they may not watch is in it, their
   app's playlist and that piece answer 403 (`code: "restricted"`, with
   `resumesAtMs`, when the schedule says permitted programming is back),
-  and the app says "This program is restricted. Your station will resume
+  and the app says "This program is restricted. Your Station will resume
   automatically when permitted programming returns." It asks again on its
   own. To be safe, a few seconds before it and about 15 seconds after it
   are kept from them too (up to about 35 if a still card follows), and so
