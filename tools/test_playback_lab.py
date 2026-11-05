@@ -1,6 +1,7 @@
 """CG-12: one failing fixture per owner's ten playback lab scenarios."""
 
 import unittest
+
 from playback_lab import validate
 
 
