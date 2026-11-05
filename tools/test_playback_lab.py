@@ -1,8 +1,7 @@
 """CG-12: one failing fixture per owner's ten playback lab scenarios."""
 
-from playback_lab import validate
-
 import unittest
+from playback_lab import validate
 
 
 # Independently frozen lab-event samples. This fixture is NOT a real lab run.
