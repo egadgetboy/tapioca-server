@@ -149,7 +149,7 @@ def test_setup_who_sees_what_describes_actual_access_controls():
     assert "set ? `What they see (${set} set)` : 'What they see'" in access
     assert "onclick: () => openUserDevices(u) }, 'Devices'" in access
     assert "'Make an invite code'" in access
-    assert "'They’re on a device once they sign in on it with their password or an invite code.'" in access
+    assert "They’re on a device once they sign in on it with their password or an invite code." in access
 
     guidance = setup.split("  async viewing() {", 1)[1].split("\n  async ", 1)[0]
     # Both branches, with and without existing Users, must direct Admins to
