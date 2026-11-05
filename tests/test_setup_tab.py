@@ -140,6 +140,32 @@ def test_skipping_intros_says_what_your_own_folders_get():
     assert "`${plural(p.removed, 'program')} gone — needs your review`" in stations
 
 
+def test_setup_who_sees_what_describes_actual_access_controls():
+    """DL424 item 2: setup's advice agrees with the current Access UI."""
+    setup = (JS.parent / "setup.js").read_text(encoding="utf-8")
+    access = (JS.parent / "access.js").read_text(encoding="utf-8")
+
+    # Exact button labels on the Access page, including its current casing.
+    assert "set ? `What they see (${set} set)` : 'What they see'" in access
+    assert "onclick: () => openUserDevices(u) }, 'Devices'" in access
+    assert "'Make an invite code'" in access
+    assert "'They’re on a device once they sign in on it with their password or an invite code.'" in access
+
+    guidance = setup.split("  async viewing() {", 1)[1].split("\n  async ", 1)[0]
+    # Both branches, with and without existing Users, must direct Admins to
+    # the live controls and describe the actual device-list membership.
+    assert "On the Access tab, choose What they see beside" in guidance
+    assert "Add a User on the Access tab, then choose What they see" in guidance
+    assert guidance.count("Devices shows") == 2
+    assert "PIN" in guidance
+    assert "invite code" in guidance
+    assert "signing in" in guidance
+    # Devices is not a chooser that assigns someone to a device.
+    assert "Stations beside someone’s name" not in guidance
+    assert "Devices chooses which devices" not in guidance
+    assert "choose the devices they’re on there" not in guidance
+
+
 def test_who_can_use_tapioca_says_nobody_from_the_internet():
     """(The owner, October 13: "Does the first one allow remote users too?")
     With signing in off, nobody can use tapiOca's page or apps from the
