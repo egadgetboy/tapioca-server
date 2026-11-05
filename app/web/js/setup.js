@@ -512,8 +512,8 @@ const SETUP_PAGES = {
     });
     return { node: h('div', { class: 'playback' }, intro, newRow, ...rows,
       h('p', { class: 'hint', style: 'margin:0' }, people.length
-        ? 'On the Access tab, Stations beside someone’s name allows or blocks a station for them, and Devices chooses which devices they’re on and gives them a PIN.'
-        : 'Everyone who signs in now is an Admin. When you add people on the Access tab, choose the devices they’re on there. On a shared TV, tapiOca’s apps ask Who’s tuning in? The first time, each person signs in on it with their password or an invite code. After that, they pick themselves, with their PIN if they have one.')),
+        ? 'On the Access tab, choose What they see beside a User’s name to allow or block stations and choose which titles they can see. Devices shows where they’ve signed in, lets you manage their PIN, and lets you make an invite code. People appear on a device’s list only after signing in there.'
+        : 'Everyone who signs in now is an Admin. Add a User on the Access tab, then choose What they see beside their name to choose what they can watch. Devices shows where they’ve signed in, lets you manage their PIN, and lets you make an invite code. On a shared TV, tapiOca’s apps ask Who’s tuning in? Each person signs in on that device first, with their password or an invite code. After that, they pick themselves, with their PIN if they have one.')),
     save: async () => {
       if (startsOn.value !== startsWas) {
         try { viewing.newLevel = (await api('/api/access/new-level', { method: 'PUT', body: { level: Number(startsOn.value) } })).newLevel; }
