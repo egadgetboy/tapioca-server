@@ -152,7 +152,7 @@ function watchSection(place, urls) {
     h(place === 'other' ? 'ul' : 'ol', { class: 'steps' }, ...steps),
     ...notes);
 }
-const SETUP_AGAIN = 'To run the questionnaire again, choose Run First-Time Setup Q&A Again on the Setup tab or at the foot of the page.';
+const SETUP_AGAIN = 'To answer the first-time setup questions again, choose Run First-Time Setup Q&A Again on the Setup tab or at the foot of the page.';
 // `why`: "new" (a new tapiOca), "updated" (an update has new questions),
 // or "again" (run again).
 async function showSetup(st, why) {
