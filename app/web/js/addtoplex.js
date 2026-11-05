@@ -69,12 +69,12 @@ function renderMediaAccess(m, plex = true) {
     // the folder, inside its container, and that advice sent the owner to
     // his server's own path, October 13. Setup's first step finds where it
     // is instead.)
-    text = `Nothing is at ${m.mediaDir} inside tapiOca. Run setup again: its first step says what to change.${plex ? ' Until then, Plex’s files are streamed from Plex.' : ''}`;
+    text = `Nothing is at ${m.mediaDir} inside tapiOca. Choose Run First-Time Setup Q&A Again: its first step says what to change.${plex ? ' Until then, Plex’s files are streamed from Plex.' : ''}`;
     cls = 'chip accent';
   } else if (m.direct && !m.viaPlex) {
     text = `Read directly from disk${maps ? ` (${maps})` : ''}.`; cls = 'chip good';
   } else if (m.viaPlex) {
-    text = `${m.viaPlex} of ${m.direct + m.viaPlex} files were streamed from Plex because tapiOca couldn’t find them. That works, but reading them from disk is faster and puts less load on Plex. Run setup again: its Tuner step says what to change.`;
+    text = `${m.viaPlex} of ${m.direct + m.viaPlex} files were streamed from Plex because tapiOca couldn’t find them. That works, but reading them from disk is faster and puts less load on Plex. Choose Run First-Time Setup Q&A Again: its Tuner step says what to change.`;
     cls = 'chip bad';
   } else if (!m.mediaDirPresent) {
     text = `Nothing is at ${m.mediaDir} inside tapiOca, so files are read from the folders PATH_MAPPINGS names.`;
