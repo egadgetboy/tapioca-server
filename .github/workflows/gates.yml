@@ -6,7 +6,7 @@ name: gates
 # dependencies scanned. Minutes, Ubuntu; the tools are pinned, and never ship.
 on:
   push:
-    branches: [main]
+    branches: [main, 'chatgpt/**']  # (ChatGPT's branches run on each push)
   workflow_dispatch:
 permissions:
   contents: read
