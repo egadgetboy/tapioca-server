@@ -5,8 +5,8 @@
 // update that brings new or changed questions: just those, once (and the
 // checks, if something needs a look). And everything, whenever it's run
 // again (choose Run First-Time Setup Q&A Again on the Setup tab
-// or at the foot of the page), with the current answers filled in. Each answer is saved as you go
-// on from it; Skip setup (or Close) keeps everything else as it is.
+// or at the foot of the page), with the current answers filled in.
+// Each answer is saved as you go; Skip setup (or Close) leaves the rest unchanged.
 const SETUP_TITLES = {
   checks: 'Checking your server',
   playback: 'How stations play',
