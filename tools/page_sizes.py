@@ -1852,6 +1852,60 @@ def waiting_media_step(context: Any, base: str, look: Look, sp: Running) -> None
     sp.call(restore)
 
 
+def setup_label_phone_width(page: Page, look: Look) -> None:
+    """CG-02: both long Setup buttons stay complete on narrow phone screens.
+
+    This is a rendered-font check, not a fixed character-count estimate.
+    It permits wrapping, but fails if a glyph is clipped by its button or
+    pushed beyond the viewport. The existing whole-page check still catches
+    horizontal scrolling from anything else.
+    """
+    width = (page.viewport_size or {}).get("width", 0)
+    if width > 430:
+        return
+    page.evaluate("() => document.fonts.ready.then(() => true)")
+    measured = page.evaluate(
+        """() => ['runSetup', 'footSetup'].map(id => {
+          const element = document.getElementById(id);
+          const expected = 'Run First-Time Setup Q&A Again';
+          if (!element) return { id, present: false };
+          const text = element.textContent.trim().replace(/\\s+/g, ' ');
+          const rect = element.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          const parts = Array.from(range.getClientRects());
+          const viewport = document.documentElement.clientWidth;
+          // Glyphs must fit the *drawn* button as well as the phone; the
+          // button being wholly present alone cannot detect cut-off words.
+          const textFits = parts.length > 0 && parts.every(p =>
+            p.width > 0 && p.left >= rect.left - 1 &&
+            p.right <= rect.right + 1 &&
+            p.left >= -1 && p.right <= viewport + 1);
+          return {
+            id, present: true, textCorrect: text === expected,
+            visible: element.checkVisibility() && !element.closest('[hidden]'),
+            buttonFits: rect.width > 0 && rect.left >= -1 &&
+              rect.right <= viewport + 1,
+            textFits,
+          };
+        })"""
+    )
+    for item in measured:
+        name = "Setup tab" if item["id"] == "runSetup" else "footer"
+        for field, why in (
+            ("present", "button exists"),
+            ("textCorrect", "full CG-02 wording"),
+            ("visible", "button visible to Admin"),
+            ("buttonFits", "button inside phone width"),
+            ("textFits", "no letters clipped at phone width"),
+        ):
+            look.expect(
+                f"{name} at {width}px: {why}",
+                item.get(field, False),
+                True,
+            )
+
+
 def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> None:
     """What an Admin sees: every tab, and every dialog and panel they open."""
 
@@ -1922,6 +1976,8 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         link_code(page, look)
         close_dialogs(page)
     if wanted("setup"):
+        tab(page, "setup")
+        setup_label_phone_width(page, look)
         # (As if no Admin had said whether the update check may look: its
         # box in the last step isn't ticked.)
         sp.unanswered()
