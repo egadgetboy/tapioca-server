@@ -75,6 +75,8 @@ def test_first_time_setup_questionnaire_has_one_name_and_route():
     assert "$('#footSetup').addEventListener('click', runSetup);" in script
     assert f"choose {label} on the Setup tab or at the foot of the page." in setup
     assert f"**{label}**" in readme
+    manual = (JS.parents[3] / "manual/src/04-first-setup.md").read_text(encoding="utf-8")
+    assert f"**{label}**" in manual
 
 NOTHING_THERE = json.dumps(
     {"direct": 0, "viaPlex": 0, "mappings": [], "mediaDir": "/mnt/tank/media",
