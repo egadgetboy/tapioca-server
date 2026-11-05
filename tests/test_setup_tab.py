@@ -163,14 +163,14 @@ def test_who_can_use_tapioca_says_nobody_from_the_internet():
 def test_a_file_streamed_from_plex_never_brings_back_the_old_advice():
     """(The fourth audit of 1.35.0) Once a station has played with nothing
     at MEDIA_DIR, files have streamed from Plex: the Media files line still
-    says to run setup again, never "mounting your media folder there"."""
+    points to first-time setup, never "mounting your media folder there"."""
     gone = json.dumps(
         {"direct": 0, "viaPlex": 3, "mappings": [], "mediaDir": "/mnt/hddpool/mediashare/media",
          "mediaDirPresent": False}
     )  # fmt: skip
     said = lines(f"renderMediaAccess({gone}, true); renderGuideState({GUIDE}, true);")
     assert said["#mediaAccess"]["text"] == (
-        "Nothing is at /mnt/hddpool/mediashare/media inside tapiOca. Run setup again: its first "
+        "Nothing is at /mnt/hddpool/mediashare/media inside tapiOca. Choose Run First-Time Setup Q&A Again: its first "
         "step says what to change. Until then, Plex’s files are streamed from Plex."
     )
 
