@@ -88,7 +88,7 @@ GUIDE = json.dumps({"plexDownloadedGuide": None, "canRefreshPlexGuide": False})
 def test_nothing_at_media_dir_with_plex():
     said = lines(f"renderMediaAccess({NOTHING_THERE}, true); renderGuideState({GUIDE}, true);")
     assert said["#mediaAccess"]["text"] == (
-        "Nothing is at /mnt/tank/media inside tapiOca. Choose Run First-Time Setup Q&A Again: its first step says "
+        "Nothing is at /mnt/tank/media inside tapiOca. Run setup again: its first step says "
         "what to change. Until then, Plex’s files are streamed from Plex."
     )
     assert "Mount your media folder" not in said["#mediaAccess"]["text"]
@@ -99,7 +99,7 @@ def test_nothing_at_media_dir_with_plex():
 def test_without_plex_nothing_is_said_about_it():
     said = lines(f"renderMediaAccess({NOTHING_THERE}, false); renderGuideState({GUIDE}, false);")
     assert said["#mediaAccess"]["text"] == (
-        "Nothing is at /mnt/tank/media inside tapiOca. Choose Run First-Time Setup Q&A Again: its first step says "
+        "Nothing is at /mnt/tank/media inside tapiOca. Run setup again: its first step says "
         "what to change."
     )
     assert said["#guideState"]["hidden"]
@@ -172,7 +172,7 @@ def test_a_file_streamed_from_plex_never_brings_back_the_old_advice():
     )  # fmt: skip
     said = lines(f"renderMediaAccess({gone}, true); renderGuideState({GUIDE}, true);")
     assert said["#mediaAccess"]["text"] == (
-        "Nothing is at /mnt/hddpool/mediashare/media inside tapiOca. Choose Run First-Time Setup Q&A Again: its first "
+        "Nothing is at /mnt/hddpool/mediashare/media inside tapiOca. Run setup again: its first "
         "step says what to change. Until then, Plex’s files are streamed from Plex."
     )
 
