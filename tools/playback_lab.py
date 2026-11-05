@@ -31,6 +31,25 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _event_names(events: object) -> list[str]:
+    """Reject private fields, malformed labels and nonmonotonic timestamps."""
+    if not isinstance(events, list) or not events:
+        raise ValueError("no measured events recorded")
+    names: list[str] = []
+    last_ms = -1
+    for event in events:
+        if not isinstance(event, dict) or set(event) != {"name", "at_ms"}:
+            raise ValueError("event has unknown or potentially private fields")
+        name, ms = event["name"], event["at_ms"]
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]{2,49}", name):
+            raise ValueError("invalid event label")
+        if type(ms) is not int or ms < last_ms or ms < 0:
+            raise ValueError("event times are invalid or out of order")
+        last_ms = ms
+        names.append(name)
+    return names
+
+
 def validate(record: dict) -> dict:
     """Require ordered and privacy-safe event evidence; NOT a lab certification.
 
@@ -48,21 +67,7 @@ def validate(record: dict) -> dict:
         raise ValueError("missing or invalid run identifier")
     if not isinstance(digest, str) or not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
         raise ValueError("image must be recorded by immutable SHA-256 digest")
-    events = record["events"]
-    if not isinstance(events, list) or not events:
-        raise ValueError("no measured events recorded")
-    names = []
-    last_ms = -1
-    for event in events:
-        if not isinstance(event, dict) or set(event) != {"name", "at_ms"}:
-            raise ValueError("event has unknown or potentially private fields")
-        name, ms = event["name"], event["at_ms"]
-        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]{2,49}", name):
-            raise ValueError("invalid event label")
-        if type(ms) is not int or ms < last_ms or ms < 0:
-            raise ValueError("event times are invalid or out of order")
-        last_ms = ms
-        names.append(name)
+    names = _event_names(record["events"])
     cursor = 0
     for expected in SCENARIOS[scenario]:
         try:
