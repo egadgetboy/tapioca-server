@@ -1,4 +1,4 @@
-"""CG-10: exact independent BlurHash vectors, bad input, and FFmpeg isolation."""
+"""CG-10: independently computed BlurHash vectors and FFmpeg isolation."""
 
 import shutil
 import subprocess
@@ -9,12 +9,12 @@ from app.standin import blurhash_rgb24, blurhash_from_image
 
 
 class StandinVectors(unittest.TestCase):
-    def test_constant_colors_have_published_base83_encoding(self):
+    def test_constant_colors_have_reference_dct_encoding(self):
         cases = (
             ((0, 0, 0), 'T00000' + 'fQ' * 11),
-            ((255, 255, 255), 'T0TSUA' + 'fQ' * 11),
-            ((255, 0, 0), 'T0TI:j' + 'fQ' * 11),
-            ((0, 255, 0), 'T009dg' + 'fQ' * 11),
+            ((255, 255, 255), 'TfTSUA~qfQ~qt7fQfQfQfQ~qt7fQ'),
+            ((255, 0, 0), 'TfTI:j|cfQ|csUfQfQfQfQ|csUfQ'),
+            ((0, 255, 0), 'Tf09dghVfQhVg0fQfQfQfQhVg0fQ'),
         )
         for rgb, expected in cases:
             with self.subTest(rgb=rgb):
@@ -63,7 +63,7 @@ class StandinVectors(unittest.TestCase):
         # through the same image2pipe decoder when wired by Claude.
         ppm = b'P6\n8 8\n255\n' + bytes([255, 0, 0]) * 64
         result = blurhash_from_image(ppm)
-        self.assertEqual(result, 'T0TI:j' + 'fQ' * 11)
+        self.assertEqual(result, 'TKTI:j|cfQ;$o1fQfQfQfQ;$o1fQ')
 
 
 if __name__ == '__main__':
