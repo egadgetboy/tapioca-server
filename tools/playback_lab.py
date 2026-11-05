@@ -16,7 +16,6 @@ import re
 import sys
 from pathlib import Path
 
-
 SCENARIOS: dict[str, tuple[str, ...]] = {
     "bandwidth_loss_recovery": ("play_started", "bandwidth_reduced", "stall_seen", "bandwidth_restored", "playback_resumed"),
     "brief_stalls": ("play_started", "brief_stall_seen", "playback_resumed"),
