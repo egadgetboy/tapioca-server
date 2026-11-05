@@ -59,7 +59,6 @@ def lines(call: str, script: str | None = None) -> dict:
     return json.loads(done.stdout)
 
 
-
 def test_first_time_setup_questionnaire_has_one_name_and_route():
     """Both rerun controls open the same questionnaire; Setup stays a separate tab."""
     html = (JS.parent.parent / "index.html").read_text(encoding="utf-8")
