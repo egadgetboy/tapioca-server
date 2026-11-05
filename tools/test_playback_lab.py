@@ -4,7 +4,6 @@ import unittest
 
 from playback_lab import validate
 
-
 # Independently frozen lab-event samples. This fixture is NOT a real lab run.
 SAMPLES = {
     'bandwidth_loss_recovery': ['play_started', 'bandwidth_reduced', 'stall_seen', 'bandwidth_restored', 'playback_resumed'],
