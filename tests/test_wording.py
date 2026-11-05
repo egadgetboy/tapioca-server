@@ -548,6 +548,20 @@ def test_nothing_people_see_says_what_it_mustnt(hits):
     assert not wrong, f"{len(wrong)} words people see mustn't be there:\n" + "\n".join(wrong)
 
 
+def test_plex_token_stays_private_but_admin_can_see_tuner_connection_address():
+    """DL424 item 4: README matches the Access page's Plex warning and confirmation."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    access = (ROOT / "app/web/js/apps.js").read_text(encoding="utf-8")
+    tuner = (ROOT / "app/tuner.py").read_text(encoding="utf-8")
+
+    assert "The page never sees the token or Plex's address." not in readme
+    assert "The page never sees your Plex token." in readme
+    assert "the address Plex uses to reach tapiOca’s tuner" in readme
+    assert "**Plex server only**" in readme
+    assert "Plex server only lists just ${where}" in access
+    assert "Plex uses tapiOca's tuner from" in tuner
+
+
 def test_every_allowed_phrase_is_still_used(hits):
     used = {h.excused_by for h in hits if h.excused_by}
     stale = [p for p in allowed_phrases() if p not in used]
