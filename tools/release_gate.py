@@ -541,6 +541,12 @@ def context_at(
 
 
 def check(platform: str, version: str, rev: str = "HEAD") -> list[str]:
+    from gates_run_check import require_success
+    release_sha = git("rev-parse", "--verify", f"{rev}^{{commit}}").strip()
+    repository = "egadgetboy/tapioca-server" if SERVER else "egadgetboy/tapioca-apps"
+    gate_problem = require_success(repository, release_sha)
+    if gate_problem:
+        return [gate_problem]
     path = f"{PLATFORMS[platform]}/v{version}.toml"
     text = at(rev, path)
     if text is None:
