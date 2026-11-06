@@ -6,9 +6,8 @@ Run: python3 -m unittest discover -s tools -p test_gates_run_check.py -v
 """
 from __future__ import annotations
 
-import unittest
-from urllib.error import URLError
-from unittest.mock import patch
+import unittest.mock
+import urllib.error
 
 import gates_run_check as gate
 
@@ -77,11 +76,11 @@ class GatesForExactReleaseCommit(unittest.TestCase):
         self.assertIsNotNone(gate.evaluate_runs([candidate], SHA))
 
     def test_api_error_refuses(self):
-        with patch.object(gate, "fetch_runs", side_effect=URLError("offline")):
+        with unittest.mock.patch.object(gate, "fetch_runs", side_effect=urllib.error.URLError("offline")):
             self.assertIsNotNone(gate.require_success("egadgetboy/tapioca-server", SHA))
 
     def test_api_timeout_refuses(self):
-        with patch.object(gate, "fetch_runs", side_effect=TimeoutError("timed out")):
+        with unittest.mock.patch.object(gate, "fetch_runs", side_effect=TimeoutError("timed out")):
             self.assertIsNotNone(gate.require_success("egadgetboy/tapioca-apps", SHA))
 
 
