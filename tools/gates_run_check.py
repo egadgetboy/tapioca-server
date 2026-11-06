@@ -11,11 +11,25 @@ WORKFLOW = ".github/workflows/gates.yml"
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
+
+def _is_gates_path(path: object) -> bool:
+    """Match GitHub's repository-qualified workflow path, including its ref.
+
+    GitHub Actions returns owner/repo/.github/workflows/gates.yml@refs/heads/X;
+    accept the legacy bare path for deterministic fixtures, never another repo.
+    """
+    if not isinstance(path, str):
+        return False
+    if path == WORKFLOW:
+        return True
+    return any(path.startswith(repo + "/" + WORKFLOW + "@refs/")
+               for repo in ("egadgetboy/tapioca-apps", "egadgetboy/tapioca-server"))
+
 def evaluate_runs(runs: list[dict], sha: str) -> str | None:
     if not SHA_RE.fullmatch(sha):
         return "Gates refused: release commit is not a full SHA."
     matching = [r for r in runs if isinstance(r, dict)
-                and r.get("head_sha") == sha and r.get("path") == WORKFLOW]
+                and r.get("head_sha") == sha and _is_gates_path(r.get("path"))]
     if any(r.get("status") != "completed" for r in matching):
         return "Gates refused: a run for the release commit is not completed."
     if not matching:
