@@ -74,7 +74,7 @@ class GatesForExactReleaseCommit(unittest.TestCase):
 
     def test_malformed_run_id_refuses_instead_of_crashing(self):
         candidate = run("not-a-number", "success")
-        self.assertIsNotNone(gate.require_success("egadgetboy/tapioca-server", SHA) if False else gate.evaluate_runs([candidate], SHA))
+        self.assertIsNotNone(gate.evaluate_runs([candidate], SHA))
 
     def test_api_error_refuses(self):
         with patch.object(gate, "fetch_runs", side_effect=URLError("offline")):
