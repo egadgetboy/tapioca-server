@@ -13,7 +13,6 @@ from urllib import error
 
 import gates_run_check as gate
 
-
 SHA = "a" * 40
 OTHER = "b" * 40
 
