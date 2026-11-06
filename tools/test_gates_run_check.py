@@ -4,6 +4,7 @@ RED-first contract. This test module deliberately imports a helper not yet
 implemented. The implementation must preserve the existing release-gate checks.
 Run: python3 -m unittest discover -s tools -p test_gates_run_check.py -v
 """
+
 from __future__ import annotations
 
 import unittest.mock
