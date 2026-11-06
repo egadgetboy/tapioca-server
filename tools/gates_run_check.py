@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import re
-from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 WORKFLOW = ".github/workflows/gates.yml"
