@@ -57,6 +57,16 @@ class GatesForExactReleaseCommit(unittest.TestCase):
         candidate["name"] = "Something Else"
         self.assertIsNone(gate.evaluate_runs([candidate], SHA))
 
+    def test_github_api_path_with_repository_and_ref_passes(self):
+        candidate = run(10, "success")
+        candidate["path"] = "egadgetboy/tapioca-server/.github/workflows/gates.yml@refs/heads/chatgpt/cg22-release-gates-required"
+        self.assertIsNone(gate.evaluate_runs([candidate], SHA))
+
+    def test_other_repository_workflow_path_refuses(self):
+        candidate = run(10, "success")
+        candidate["path"] = "other/repository/.github/workflows/gates.yml@refs/heads/main"
+        self.assertIsNotNone(gate.evaluate_runs([candidate], SHA))
+
     def test_unrelated_workflow_cannot_authorize_publication(self):
         candidate = run(10, "success")
         candidate["path"] = ".github/workflows/quality.yml"
