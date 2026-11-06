@@ -7,8 +7,8 @@ Run: python3 -m unittest discover -s tools -p test_gates_run_check.py -v
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
 from urllib.error import URLError
+from unittest.mock import patch
 
 import gates_run_check as gate
 
