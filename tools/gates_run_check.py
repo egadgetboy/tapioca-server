@@ -12,7 +12,7 @@ SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 
-def _is_gates_path(path: object) -> bool:
+def _is_gates_path(path: object, repository: str) -> bool:
     """Match GitHub's repository-qualified workflow path, including its ref.
 
     GitHub Actions returns owner/repo/.github/workflows/gates.yml@refs/heads/X;
@@ -22,14 +22,13 @@ def _is_gates_path(path: object) -> bool:
         return False
     if path == WORKFLOW:
         return True
-    return any(path.startswith(repo + "/" + WORKFLOW + "@refs/")
-               for repo in ("egadgetboy/tapioca-apps", "egadgetboy/tapioca-server"))
+    return path.startswith(repository + "/" + WORKFLOW + "@refs/")
 
-def evaluate_runs(runs: list[dict], sha: str) -> str | None:
+def evaluate_runs(runs: list[dict], sha: str, repository: str = "egadgetboy/tapioca-server") -> str | None:
     if not SHA_RE.fullmatch(sha):
         return "Gates refused: release commit is not a full SHA."
     matching = [r for r in runs if isinstance(r, dict)
-                and r.get("head_sha") == sha and _is_gates_path(r.get("path"))]
+                and r.get("head_sha") == sha and _is_gates_path(r.get("path"), repository)]
     if any(r.get("status") != "completed" for r in matching):
         return "Gates refused: a run for the release commit is not completed."
     if not matching:
@@ -69,6 +68,6 @@ def fetch_runs(repository: str, sha: str) -> list[dict]:
 
 def require_success(repository: str, sha: str) -> str | None:
     try:
-        return evaluate_runs(fetch_runs(repository, sha), sha)
+        return evaluate_runs(fetch_runs(repository, sha), sha, repository)
     except (OSError, ValueError, TypeError, KeyError, TimeoutError):
         return "Gates refused: GitHub evidence is unavailable or invalid."
