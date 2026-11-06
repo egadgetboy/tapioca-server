@@ -71,8 +71,6 @@ jobs:
           fail() { echo "::error::$1"; exit 1; }
           python3 -m venv "$RUNNER_TEMP/lint"
           "$RUNNER_TEMP/lint/bin/pip" install --quiet ruff==0.14.2 vulture==2.14 mypy==2.4.0 -r requirements.txt || fail "couldn't install the linters"
-          # CG-22 diagnostic: print the exact Ruff import-order edit; remove after correction.
-          "$RUNNER_TEMP/lint/bin/ruff" check --diff --select I tools/test_gates_run_check.py || true
           # (ruff's rules and complexity, on lines changed since the last release.)
           { "$RUNNER_TEMP/lint/bin/ruff" check --output-format concise --extend-select C901 . || true; } | python3 tools/changed_lines.py server || fail "ruff found something on a changed line (above)"
           # (Dead code, at vulture's high confidence: none, so all of it.)
