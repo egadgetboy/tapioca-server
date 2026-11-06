@@ -540,7 +540,14 @@ def context_at(
     return ctx
 
 
-def check(platform: str, version: str, rev: str = "HEAD") -> list[str]:
+def check(platform: str, version: str, rev: str = "HEAD", *, require_gates: bool = True) -> list[str]:
+    if require_gates:
+        from gates_run_check import require_success
+        release_sha = git("rev-parse", "--verify", f"{rev}^{{commit}}").strip()
+        repository = "egadgetboy/tapioca-server" if SERVER else "egadgetboy/tapioca-apps"
+        gate_problem = require_success(repository, release_sha)
+        if gate_problem:
+            return [gate_problem]
     path = f"{PLATFORMS[platform]}/v{version}.toml"
     text = at(rev, path)
     if text is None:
@@ -558,7 +565,7 @@ def lint() -> list[str]:
     out = []
     for platform, folder in PLATFORMS.items():
         for f in sorted((ROOT / folder).glob("v*.toml")):
-            out += check(platform, f.stem[1:], "HEAD")
+            out += check(platform, f.stem[1:], "HEAD", require_gates=False)
     return out
 
 
