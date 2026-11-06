@@ -33,7 +33,9 @@ def evaluate_runs(runs: list[dict], sha: str, repository: str = "egadgetboy/tapi
         return "Gates refused: a run for the release commit is not completed."
     if not matching:
         return "Gates refused: no completed Gates run exists for the release commit."
-    newest = max(matching, key=lambda r: int(r.get("id", 0)))
+    if any(not isinstance(r.get("id"), int) or isinstance(r.get("id"), bool) or r["id"] <= 0 for r in matching):
+        return "Gates refused: workflow run evidence has an invalid ID."
+    newest = max(matching, key=lambda r: r["id"])
     if newest.get("conclusion") != "success":
         return "Gates refused: the newest completed Gates run did not succeed."
     return None
